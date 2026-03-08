@@ -72,6 +72,8 @@ let _fitView       = null;
 let _graphVersion  = 0;
 // fullscreen source: 'workflow' | 'step'
 let _jfsSource     = null;
+let _providersConfig  = {};   // loaded from /json_schemas/providers.json
+let _providerKeyStatus = {};  // loaded from /api/auth/me { anthropic: true, ... }
 
 // ══════════════════════════════════════════════════════════════════
 //  REACT FLOW — CUSTOM NODE
@@ -582,9 +584,8 @@ function populateEditor(s) {
   document.getElementById('f-name').value      = s.ws_name||'';
   document.getElementById('f-type').value      = s.ws_type||'prompt';
   document.getElementById('f-provider').value  = s.ws_llm?.provider||'anthropic';
-  document.getElementById('f-model').value     = s.ws_llm?.model||'';
   document.getElementById('f-temp').value      = s.ws_llm?.temperature??0;
-  onProviderChange();
+  onProviderChange(s.ws_llm?.model||''); // peupler le select modèle avec la valeur du step
   document.getElementById('f-sysprompt').value = s.ws_system_prompt||'';
   document.getElementById('f-template').value  = s.ws_prompt_template||'';
   document.getElementById('f-method').value    = s.ws_api?.method||'GET';
@@ -603,7 +604,7 @@ function onTypeChange() {
   document.getElementById('api-section').style.display       = a?'':'none';
 }
 
-// ── Model placeholder hints per provider ─────────────────────────
+// ── Model default per provider (fallback si providers.json non chargé) ──
 const PROVIDER_MODEL_HINTS = {
   anthropic:  'claude-sonnet-4-20250514',
   openai:     'gpt-4o',
@@ -611,10 +612,19 @@ const PROVIDER_MODEL_HINTS = {
   mistral:    'mistral-large-latest',
 };
 
-function onProviderChange() {
+function onProviderChange(currentModel) {
   const p = document.getElementById('f-provider')?.value || 'anthropic';
-  const modelEl = document.getElementById('f-model');
-  if (modelEl) modelEl.placeholder = PROVIDER_MODEL_HINTS[p] || '';
+  const sel = document.getElementById('f-model');
+  if (!sel) return;
+  const models = _providersConfig[p]?.models || [PROVIDER_MODEL_HINTS[p] || ''];
+  const target = currentModel || sel.value || models[0] || '';
+  sel.innerHTML = models.map(m =>
+    `<option value="${m}"${m===target?' selected':''}>${m}</option>`
+  ).join('');
+  // Si le modèle cible n'est pas dans le catalogue, l'insérer en tête
+  if (target && !models.includes(target)) {
+    sel.insertAdjacentHTML('afterbegin', `<option value="${target}" selected>${target}</option>`);
+  }
 }
 
 function renderSchemaFields(containerId,props,required) {
@@ -882,23 +892,29 @@ function onSettingsProviderChange() {
   const p = document.getElementById('s-provider')?.value || 'anthropic';
   const el = document.getElementById('s-apikey');
   if (el) { el.value = ''; el.placeholder = PROVIDER_KEY_PLACEHOLDERS[p] || '…'; }
-  const msg = document.getElementById('s-apikey-msg');
-  if (msg) msg.textContent = '';
+  updateKeyStatusIndicator();
 }
 
 async function loadProviderKeyStatus() {
   try {
     const data = await api('/api/auth/me', 'GET');
     if (!data.providerKeys) return;
-    const msg = document.getElementById('s-apikey-msg');
-    if (!msg) return;
-    const labels = { anthropic:'Anthropic', openai:'OpenAI', perplexity:'Perplexity', mistral:'Mistral' };
-    const saved = Object.entries(data.providerKeys).filter(([,v])=>v).map(([k])=>labels[k]||k);
-    if (saved.length) {
-      msg.className = 'settings-ok';
-      msg.textContent = `Keys saved: ${saved.join(', ')}`;
-    }
+    _providerKeyStatus = data.providerKeys;
+    updateKeyStatusIndicator();
   } catch { /* ignore */ }
+}
+
+function updateKeyStatusIndicator() {
+  const p = document.getElementById('s-provider')?.value || 'anthropic';
+  const msg = document.getElementById('s-apikey-msg');
+  if (!msg) return;
+  if (_providerKeyStatus[p]) {
+    msg.className = 'settings-ok';
+    msg.textContent = `✓ Clé enregistrée pour ${p}`;
+  } else {
+    msg.className = '';
+    msg.textContent = '';
+  }
 }
 
 async function saveApiKey() {
@@ -908,7 +924,11 @@ async function saveApiKey() {
   if (!key) { msg.className='settings-err'; msg.textContent='Enter an API key'; return; }
   const res = await api('/api/auth/apikey','PUT',{ provider, apiKey:key });
   if (res.error) { msg.className='settings-err'; msg.textContent=res.error; }
-  else { msg.className='settings-ok'; msg.textContent=`${provider} key saved and encrypted`; document.getElementById('s-apikey').value=''; }
+  else {
+    _providerKeyStatus[provider] = true;
+    document.getElementById('s-apikey').value='';
+    updateKeyStatusIndicator();
+  }
 }
 
 async function deleteApiKey() {
@@ -916,7 +936,10 @@ async function deleteApiKey() {
   const msg = document.getElementById('s-apikey-msg');
   const res = await api('/api/auth/apikey','DELETE',{ provider });
   if (res.error) { msg.className='settings-err'; msg.textContent=res.error; }
-  else { msg.className='settings-ok'; msg.textContent=`${provider} key removed`; }
+  else {
+    _providerKeyStatus[provider] = false;
+    updateKeyStatusIndicator();
+  }
 }
 
 async function changePassword() {
@@ -974,7 +997,8 @@ Object.assign(window,{
   runStep, closeModal, showSignupCTA,
   deleteWorkflow, copyWfJson, applyWfJson, closeWfJson, onWfJsonInput, copyWfJsonByName,
   openJsonFullscreen, closeJsonFullscreen, jfsCopy, jfsApply, jfsValidate,
-  saveApiKey, changePassword
+  saveApiKey, deleteApiKey, changePassword,
+  onProviderChange, onSettingsProviderChange
 });
 
 // ── KEYBOARD ────────────────────────────────────────────────────
@@ -994,6 +1018,12 @@ window.addEventListener('load', async () => {
     document.documentElement.classList.add('light');
     document.getElementById('btn-theme').textContent='☾';
   }
+
+  // Load providers config (model catalogue)
+  try {
+    const cfg = await fetch('/json_schemas/providers.json').then(r=>r.json());
+    _providersConfig = cfg;
+  } catch { /* fallback sur PROVIDER_MODEL_HINTS */ }
 
   // Mount React Flow
   const root = createRoot(document.getElementById('rf-container'));
