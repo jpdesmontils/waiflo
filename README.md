@@ -32,7 +32,7 @@ ANTHROPIC_API_KEY=    # optional — for managed plan
 docker compose up -d
 ```
 
-Open **http://localhost:3000**, create an account, add your Anthropic key in ⚙ Settings.
+Open **http://localhost:3001**, create an account, add your Anthropic key in ⚙ Settings.
 
 ---
 
