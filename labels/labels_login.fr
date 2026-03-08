@@ -1,0 +1,21 @@
+{
+  "page_title":     "Waiflo — Connexion",
+  "brand_logo":     "waiflo",
+  "brand_editor":   "éditeur",
+  "brand_tagline":  "AI Workflow Language",
+  "tab_login":      "Connexion",
+  "tab_register":   "Inscription",
+  "label_email":    "Email",
+  "label_password": "Mot de passe",
+  "label_confirm":  "Confirmation",
+  "placeholder_email":    "vous@exemple.com",
+  "placeholder_password": "••••••••",
+  "placeholder_min8":     "min. 8 caractères",
+  "placeholder_repeat":   "répéter le mot de passe",
+  "btn_login":      "Connexion →",
+  "btn_register":   "Créer un compte →",
+  "divider_or":     "ou",
+  "btn_guest":      "Continuer sans compte →",
+  "err_fill_all":   "Veuillez remplir tous les champs",
+  "err_no_match":   "Les mots de passe ne correspondent pas"
+}

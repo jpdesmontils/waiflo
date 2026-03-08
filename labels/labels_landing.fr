@@ -1,0 +1,153 @@
+{
+  "meta_title":       "Waiflo — Livrez vos fonctionnalités IA plus vite, sans perdre le contrôle",
+  "meta_description": "Waiflo est un standard JSON ouvert et versionnable pour les workflows IA multi-étapes. Éditeur visuel, API REST, self-hostable. Zéro vendor lock-in.",
+
+  "hero_eyebrow":      "Open-source · Self-hostable · Licence MIT",
+  "hero_h1_line1":     "Vos pipelines IA méritent",
+  "hero_h1_line2":     "la même rigueur",
+  "hero_h1_line3":     "que votre",
+  "hero_h1_accent":    "code.",
+  "hero_sub":          "Waiflo est un standard JSON versionnable pour les workflows IA multi-étapes — avec un éditeur visuel, une API REST et zéro vendor lock-in. Livrez des fonctionnalités IA plus vite sans perdre le contrôle.",
+  "hero_cta_editor":   "⬡ Ouvrir l'éditeur — sans inscription",
+  "hero_cta_github":   "★ GitHub",
+  "hero_cta_quickstart": "⚡ Démarrage rapide",
+  "trust_1": "Workflows JSON compatibles Git",
+  "trust_2": "Self-hosted, votre infra",
+  "trust_3": "API-first, s'intègre partout",
+  "trust_4": "Compatible avec tout fournisseur LLM",
+
+  "pain_label": "Ça vous parle ?",
+  "pain_cards": [
+    {
+      "label_class": "red",
+      "label": "Prompts dans le code applicatif",
+      "title": "Impossible à versionner, tester ou réutiliser",
+      "desc": "Votre logique LLM vit dans un script Python, une constante de string ou un fichier de config que personne n'ose toucher. Aucune structure. Aucun contrat entre les étapes. Aucune visibilité sur ce qui a changé."
+    },
+    {
+      "label_class": "orange",
+      "label": "LangChain / LlamaIndex",
+      "title": "Puissant, mais vous êtes enfermé dans leurs abstractions",
+      "desc": "Vous écrivez leur code, pas le vôtre. Les mises à jour cassent tout. La logique du pipeline est cachée dans des objets Python, pas dans un fichier que vous pouvez lire, differ ou déployer indépendamment."
+    },
+    {
+      "label_class": "purple",
+      "label": "Dify / Flowise / n8n",
+      "title": "Visuel mais opaque — pas de Git, pas d'API, pas de contrôle",
+      "desc": "Parfait pour prototyper. Catastrophique en production. Vos workflows vivent dans une base de données que vous ne pouvez pas versionner. Le vendeur s'interpose entre vous et votre propre logique."
+    }
+  ],
+
+  "code_kicker":   "L'approche Waiflo",
+  "code_h2":       "Un seul fichier JSON.",
+  "code_h2_span":  "Le pipeline complet.",
+  "code_desc":     "Définissez les étapes, reliez-les, exécutez tout avec un seul appel API. Chaque workflow est un fichier <code>.waiflo.json</code> que vous commitez, relisez et déployez comme n'importe quel autre artefact.",
+  "code_badge":    "git diff-able · CI/CD ready",
+
+  "how_kicker": "Comment ça marche",
+  "how_h2":     "Définissez une fois.",
+  "how_h2_span":"Exécutez partout.",
+  "how_sub":    "Trois primitives. Pas de magie, pas d'état caché, pas de framework à apprendre.",
+  "how_cards": [
+    {
+      "num":   "01",
+      "title": "Les étapes — l'unité atomique",
+      "desc":  "Chaque étape a un type (<code>prompt</code>, <code>api</code>, <code>transform</code>, <code>tool</code>, <code>script</code>), des schémas d'entrée/sortie typés et sa configuration complète. Réutilisable entre les pipelines.",
+      "tag":   "ws_name · ws_type · ws_inputs_schema"
+    },
+    {
+      "num":   "02",
+      "title": "Les workflows — le DAG",
+      "desc":  "Reliez les étapes dans un graphe acyclique dirigé via <code>wf_nodes</code> et <code>depends_on</code>. Le runtime résout l'ordre d'exécution. Vous définissez l'intention.",
+      "tag":   "wf_nodes · depends_on · step_id"
+    },
+    {
+      "num":   "03",
+      "title": "Exécution via API REST",
+      "desc":  "Un seul appel <code>POST /api/exec/step</code> avec les entrées. Streaming SSE pour les étapes prompt. Réponse JSON pour les étapes API. Votre backend reste maître — Waiflo est le moteur, pas le propriétaire.",
+      "tag":   "SSE streaming · réponse JSON · sorties typées"
+    }
+  ],
+
+  "diff_kicker":    "Pourquoi Waiflo",
+  "diff_h2":        "Arrêtez de choisir entre",
+  "diff_h2_span":   "vitesse et contrôle.",
+  "diff_sub":       "Toutes les autres approches imposent un compromis. Waiflo non.",
+  "diff_col1_label": "Développement maison",
+  "diff_col1_rows": [
+    { "icon": "✓", "icon_class": "check", "text": "Contrôle total" },
+    { "icon": "—", "icon_class": "cross", "text": "Réécrit de zéro à chaque projet" },
+    { "icon": "—", "icon_class": "cross", "text": "Aucune réutilisabilité entre équipes" },
+    { "icon": "—", "icon_class": "cross", "text": "Logique de prompts enfouie dans le code" },
+    { "icon": "—", "icon_class": "cross", "text": "Aucun dev ne comprend les pipelines" }
+  ],
+  "diff_col2_label": "LangChain / Dify / Flowise",
+  "diff_col2_rows": [
+    { "icon": "✓", "icon_class": "check", "text": "Rapide à démarrer" },
+    { "icon": "—", "icon_class": "cross", "text": "Enfermé dans les abstractions du vendeur" },
+    { "icon": "—", "icon_class": "cross", "text": "Workflows non versionnables avec Git" },
+    { "icon": "—", "icon_class": "cross", "text": "Self-hosting difficile ou impossible" },
+    { "icon": "—", "icon_class": "cross", "text": "L'intégration API est une réflexion après coup" }
+  ],
+  "diff_col3_label": "Waiflo",
+  "diff_col3_rows": [
+    { "text": "JSON pur — faites <code>git diff</code> sur vos pipelines" },
+    { "text": "Self-hostable, zéro vendor lock-in" },
+    { "text": "API-first — s'intègre dans n'importe quelle stack" },
+    { "text": "Éditeur visuel inclus, sans compte requis" },
+    { "text": "Compatible avec tout fournisseur LLM" }
+  ],
+
+  "design_kicker":  "Design API",
+  "design_h2":      "Modifications chirurgicales.",
+  "design_h2_span": "Sans écrasement.",
+  "design_desc":    "Les endpoints <code>PATCH</code> utilisent une fusion profonde récursive — seuls les champs envoyés sont mis à jour. Conçu pour l'autosave, les éditeurs inline et les constructeurs de pipelines assistés par IA.",
+  "merge_current":  "Étape actuelle",
+  "merge_patch":    "Corps PATCH",
+  "merge_result":   "Résultat",
+
+  "types_kicker":  "Types d'étapes",
+  "types_h2":      "5 primitives.",
+  "types_h2_span": "Tous les cas d'usage couverts.",
+  "types_sub":     "Chaque étape a un <code>ws_type</code> qui détermine le comportement à l'exécution, les champs requis et la sémantique d'exécution.",
+  "step_types": [
+    { "color": "#f59e0b", "name": "prompt",    "desc": "Appel LLM. System prompt, template <code>{{var}}</code>, schéma de sortie typé. Streaming via SSE.",          "fields": "ws_llm<br>ws_system_prompt<br>ws_prompt_template" },
+    { "color": "#2dd4bf", "name": "api",       "desc": "Appel HTTP. L'URL supporte la substitution <code>{{input}}</code>. Retourne du JSON parsé ou du texte brut.", "fields": "ws_api.method<br>ws_api.url<br>ws_api.headers" },
+    { "color": "#60a5fa", "name": "transform", "desc": "Remise en forme de données entre étapes. Filtrer, calculer ou dériver des champs depuis les sorties amont.",  "fields": "ws_transform_fn<br>— bientôt disponible" },
+    { "color": "#a78bfa", "name": "tool",      "desc": "Appel d'outil MCP. Google Maps, Asana, Gmail, Slack… via le tableau <code>ws_tools</code>.",                 "fields": "ws_tools: [<br>\"maps_search\"<br>]" },
+    { "color": "#fb923c", "name": "script",    "desc": "Exécution de code personnalisé dans un runtime sandboxé avec entrées liées et sorties typées.",               "fields": "ws_script<br>— bientôt disponible" }
+  ],
+
+  "qs_kicker":  "Démarrer",
+  "qs_h2":      "Opérationnel",
+  "qs_h2_span": "en 3 minutes.",
+  "qs_sub":     "Self-host avec Docker. Zéro service externe — juste un secret JWT et votre clé Anthropic.",
+  "qs_steps": [
+    {
+      "num":   "1",
+      "title": "Cloner et configurer",
+      "desc":  "Deux secrets à générer : un pour la signature JWT, un pour le chiffrement des clés API au repos.",
+      "code":  "git clone https://github.com/jpdesmontils/waiflo<br>cd waiflo &amp;&amp; cp .env.example .env<br><span class=\"dc\"># Définir JWT_SECRET et MASTER_SECRET dans .env</span>"
+    },
+    {
+      "num":   "2",
+      "title": "Démarrer le serveur",
+      "desc":  "Lance l'API + l'éditeur visuel. Persiste les fichiers de workflow dans un volume monté — aucune base de données requise.",
+      "code":  "docker compose up -d<br><span class=\"dc\"># Éditeur disponible sur http://localhost:3001/editor</span>"
+    },
+    {
+      "num":   "3",
+      "title": "Ouvrir l'éditeur — ou appeler l'API directement",
+      "desc":  "Explorez l'éditeur visuel sans compte. Ou inscrivez-vous et commencez à pousser des workflows par programme depuis votre pipeline CI, votre agent ou votre backend.",
+      "code":  "<span class=\"dc\"># Essayez d'abord l'éditeur — sans compte requis</span><br>open http://localhost:3001/editor<br><br><span class=\"dc\"># Ou commencez par l'API</span><br>curl -X POST http://localhost:3001/api/auth/register \\<br>&nbsp;&nbsp;-d '{\"email\":\"vous@exemple.com\",\"password\":\"secret\"}'"
+    }
+  ],
+
+  "cta_h2":         "La plupart des équipes sont opérationnelles",
+  "cta_h2_span":    "en moins de 10 minutes.",
+  "cta_sub":        "Éditeur visuel inclus. Pas d'inscription pour explorer. Vos clés API ne quittent jamais votre infrastructure.",
+  "cta_note_label": "Sur la pérennité :",
+  "cta_note":       "Sous licence MIT. Vos workflows sont de simples fichiers JSON — ils survivront à n'importe quel SaaS, framework ou vendeur. Si Waiflo disparaissait demain, vos pipelines continueraient à fonctionner.",
+  "cta_editor":     "⬡ Ouvrir l'éditeur",
+  "cta_github":     "★ GitHub"
+}

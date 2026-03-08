@@ -1,0 +1,15 @@
+{
+  "meta_title":       "Blog — Waiflo",
+  "meta_description": "Articles about AI workflow engineering, version control for prompts, and self-hosted AI pipelines.",
+  "blog_kicker":      "Blog",
+  "blog_h1":          "Insights on AI workflow engineering",
+  "blog_sub":         "Best practices, tutorials and in-depth articles on structuring, versioning and shipping AI pipelines.",
+  "read_more":        "Read article",
+  "no_posts":         "No articles yet. Check back soon.",
+  "post_back":        "← Back to blog",
+  "post_by":          "By",
+  "cta_h3":           "Ready to build structured AI pipelines?",
+  "cta_p":            "Open the editor — no signup required. Your workflows, your infrastructure.",
+  "cta_editor":       "⬡ Open Editor",
+  "cta_github":       "★ GitHub"
+}

@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="{{lang}}">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{#post}}{{title}}{{/post}} — Waiflo Blog</title>
+<meta name="description" content="{{#post}}{{excerpt}}{{/post}}">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800;900&family=JetBrains+Mono:wght@300;400;500;600;700&family=Figtree:ital,wght@0,300;0,400;0,500;1,300&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/landing.css">
+</head>
+<body>
+
+{{> nav}}
+
+<article class="blog-post">
+  <a class="blog-post-back" href="/blog">{{post_back}}</a>
+
+  {{#post}}
+  <h1 class="blog-post-title">{{title}}</h1>
+  <div class="blog-post-meta">
+    <span>{{date}}</span>
+    <span>{{post_by}} {{author}}</span>
+  </div>
+  <div class="blog-post-tags">
+    {{#tags}}<span class="blog-tag">{{.}}</span>{{/tags}}
+  </div>
+  <div class="blog-post-content">
+    {{{content}}}
+  </div>
+  {{/post}}
+
+  <div class="blog-post-cta">
+    <h3>{{cta_h3}}</h3>
+    <p>{{cta_p}}</p>
+    <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;">
+      <a class="btn-primary" href="/editor">{{cta_editor}}</a>
+      <a class="btn-secondary" href="https://github.com/jpdesmontils/waiflo" target="_blank">{{cta_github}}</a>
+    </div>
+  </div>
+</article>
+
+{{> footer}}
+
+</body>
+</html>
