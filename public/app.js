@@ -582,8 +582,9 @@ function populateEditor(s) {
   document.getElementById('f-name').value      = s.ws_name||'';
   document.getElementById('f-type').value      = s.ws_type||'prompt';
   document.getElementById('f-provider').value  = s.ws_llm?.provider||'anthropic';
-  document.getElementById('f-model').value     = s.ws_llm?.model||'claude-sonnet-4-20250514';
+  document.getElementById('f-model').value     = s.ws_llm?.model||'';
   document.getElementById('f-temp').value      = s.ws_llm?.temperature??0;
+  onProviderChange();
   document.getElementById('f-sysprompt').value = s.ws_system_prompt||'';
   document.getElementById('f-template').value  = s.ws_prompt_template||'';
   document.getElementById('f-method').value    = s.ws_api?.method||'GET';
@@ -600,6 +601,20 @@ function onTypeChange() {
   document.getElementById('sysprompt-section').style.display = p?'':'none';
   document.getElementById('template-section').style.display  = p?'':'none';
   document.getElementById('api-section').style.display       = a?'':'none';
+}
+
+// ── Model placeholder hints per provider ─────────────────────────
+const PROVIDER_MODEL_HINTS = {
+  anthropic:  'claude-sonnet-4-20250514',
+  openai:     'gpt-4o',
+  perplexity: 'sonar-pro',
+  mistral:    'mistral-large-latest',
+};
+
+function onProviderChange() {
+  const p = document.getElementById('f-provider')?.value || 'anthropic';
+  const modelEl = document.getElementById('f-model');
+  if (modelEl) modelEl.placeholder = PROVIDER_MODEL_HINTS[p] || '';
 }
 
 function renderSchemaFields(containerId,props,required) {
@@ -638,7 +653,9 @@ function collectStep() {
   const s={ ws_name:document.getElementById('f-name').value.trim(), ws_type:type,
     ws_inputs_schema:readSchemaFields('inputs-fields'), ws_output_schema:readSchemaFields('outputs-fields') };
   if (type==='prompt') {
-    s.ws_llm={ provider:document.getElementById('f-provider').value, model:document.getElementById('f-model').value.trim(), temperature:parseFloat(document.getElementById('f-temp').value)||0 };
+    const _prov=document.getElementById('f-provider').value;
+    const _model=document.getElementById('f-model').value.trim() || PROVIDER_MODEL_HINTS[_prov] || '';
+    s.ws_llm={ provider:_prov, model:_model, temperature:parseFloat(document.getElementById('f-temp').value)||0 };
     s.ws_system_prompt  =document.getElementById('f-sysprompt').value;
     s.ws_prompt_template=document.getElementById('f-template').value;
   }
@@ -822,15 +839,29 @@ async function runStep() {
 
 
 // ── SETTINGS ─────────────────────────────────────────────────────
+const PROVIDER_KEY_PLACEHOLDERS = {
+  anthropic:  'sk-ant-api03-…',
+  openai:     'sk-…',
+  perplexity: 'pplx-…',
+  mistral:    'your-mistral-key',
+};
+
 function openSettings() {
   if (guestMode) { showSignupCTA(); return; }
   openModal('Settings',`
     <div class="settings-section">
-      <div class="settings-title">Anthropic API Key</div>
-      <div class="settings-desc">Encrypted AES-256 on server, never exposed to the browser.</div>
-      <div class="settings-row">
+      <div class="settings-title">API Keys</div>
+      <div class="settings-desc">Keys are encrypted AES-256 on the server, never exposed to the browser.</div>
+      <div class="settings-row" style="margin-bottom:6px">
+        <select class="settings-input" id="s-provider" onchange="onSettingsProviderChange()" style="max-width:140px;flex:none">
+          <option value="anthropic">anthropic</option>
+          <option value="openai">openai (ChatGPT)</option>
+          <option value="perplexity">perplexity</option>
+          <option value="mistral">mistral</option>
+        </select>
         <input class="settings-input" id="s-apikey" type="password" placeholder="sk-ant-api03-…">
         <button class="settings-btn" onclick="saveApiKey()">Save</button>
+        <button class="settings-btn danger" onclick="deleteApiKey()" title="Remove key" style="padding:0 8px">✕</button>
       </div>
       <div id="s-apikey-msg"></div>
     </div>
@@ -843,13 +874,49 @@ function openSettings() {
     </div>`,
     [{ label:'Close', action:closeModal }]
   );
+  // Load provider key status from /me
+  loadProviderKeyStatus();
+}
+
+function onSettingsProviderChange() {
+  const p = document.getElementById('s-provider')?.value || 'anthropic';
+  const el = document.getElementById('s-apikey');
+  if (el) { el.value = ''; el.placeholder = PROVIDER_KEY_PLACEHOLDERS[p] || '…'; }
+  const msg = document.getElementById('s-apikey-msg');
+  if (msg) msg.textContent = '';
+}
+
+async function loadProviderKeyStatus() {
+  try {
+    const data = await api('/api/auth/me', 'GET');
+    if (!data.providerKeys) return;
+    const msg = document.getElementById('s-apikey-msg');
+    if (!msg) return;
+    const labels = { anthropic:'Anthropic', openai:'OpenAI', perplexity:'Perplexity', mistral:'Mistral' };
+    const saved = Object.entries(data.providerKeys).filter(([,v])=>v).map(([k])=>labels[k]||k);
+    if (saved.length) {
+      msg.className = 'settings-ok';
+      msg.textContent = `Keys saved: ${saved.join(', ')}`;
+    }
+  } catch { /* ignore */ }
 }
 
 async function saveApiKey() {
-  const key=document.getElementById('s-apikey').value.trim(), msg=document.getElementById('s-apikey-msg');
-  const res=await api('/api/auth/apikey','PUT',{ apiKey:key });
-  if(res.error){ msg.className='settings-err'; msg.textContent=res.error; }
-  else { msg.className='settings-ok'; msg.textContent='Key saved and encrypted'; }
+  const provider = document.getElementById('s-provider')?.value || 'anthropic';
+  const key = document.getElementById('s-apikey').value.trim();
+  const msg = document.getElementById('s-apikey-msg');
+  if (!key) { msg.className='settings-err'; msg.textContent='Enter an API key'; return; }
+  const res = await api('/api/auth/apikey','PUT',{ provider, apiKey:key });
+  if (res.error) { msg.className='settings-err'; msg.textContent=res.error; }
+  else { msg.className='settings-ok'; msg.textContent=`${provider} key saved and encrypted`; document.getElementById('s-apikey').value=''; }
+}
+
+async function deleteApiKey() {
+  const provider = document.getElementById('s-provider')?.value || 'anthropic';
+  const msg = document.getElementById('s-apikey-msg');
+  const res = await api('/api/auth/apikey','DELETE',{ provider });
+  if (res.error) { msg.className='settings-err'; msg.textContent=res.error; }
+  else { msg.className='settings-ok'; msg.textContent=`${provider} key removed`; }
 }
 
 async function changePassword() {

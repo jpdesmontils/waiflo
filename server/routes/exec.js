@@ -4,6 +4,7 @@ import rateLimit  from 'express-rate-limit';
 import { authMiddleware } from './auth.js';
 import { getUser } from '../lib/users.js';
 import { runPromptStep, runApiStep } from '../lib/runner.js';
+import { PROVIDER_META } from '../lib/providers/index.js';
 
 const router = express.Router();
 
@@ -39,11 +40,16 @@ router.post('/step', execLimiter, async (req, res) => {
       user = await getUser(req.user.userId);
     }
     if (!user) {
-      // Guest: runner will fall back to process.env.ANTHROPIC_API_KEY
-      if (!process.env.ANTHROPIC_API_KEY) {
-        return res.status(401).json({ error: 'No API key available. Create an account and add your Anthropic key in Settings.' });
+      // Guest: check if server has a key for the requested provider
+      const provider = (step.ws_llm?.provider || 'anthropic').toLowerCase();
+      const meta = PROVIDER_META[provider];
+      const envKey = meta ? process.env[meta.envVar] : null;
+      if (!envKey) {
+        return res.status(401).json({
+          error: `No API key available for provider "${provider}". Create an account and add your key in Settings → API Keys.`
+        });
       }
-      user = { plan: 'guest', apiKeyEnc: null };
+      user = { plan: 'guest', apiKeyEnc: null, providerKeys: {} };
     }
 
     const wsType = (step.ws_type || 'prompt').toLowerCase();

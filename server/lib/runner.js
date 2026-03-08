@@ -1,14 +1,34 @@
-import Anthropic from '@anthropic-ai/sdk';
 import { decrypt } from './crypto.js';
+import { createProvider, PROVIDER_META } from './providers/index.js';
 
-async function resolveApiKey(user) {
-  if (user.plan === 'self-key' && user.apiKeyEnc) {
+/**
+ * Resolve the API key for a given provider from user record or env fallback.
+ * Supports the legacy single-key field (apiKeyEnc) for backward compatibility.
+ *
+ * @param {object} user
+ * @param {string} provider - anthropic | openai | perplexity | mistral
+ * @returns {Promise<string>}
+ */
+async function resolveApiKey(user, provider) {
+  const meta = PROVIDER_META[provider];
+
+  // 1. Per-provider key stored in providerKeys map
+  if (user.providerKeys?.[provider]) {
+    return decrypt(user.providerKeys[provider]);
+  }
+
+  // 2. Legacy: anthropic key stored in apiKeyEnc (backward compat)
+  if (provider === 'anthropic' && user.apiKeyEnc) {
     return decrypt(user.apiKeyEnc);
   }
-  if (process.env.ANTHROPIC_API_KEY) {
-    return process.env.ANTHROPIC_API_KEY;
-  }
-  throw new Error('No API key available. Set your own key in settings or contact the admin.');
+
+  // 3. Server-level env var (managed / guest plan)
+  const envKey = meta ? process.env[meta.envVar] : null;
+  if (envKey) return envKey;
+
+  throw new Error(
+    `No API key for provider "${provider}". Add your key in Settings → API Keys.`
+  );
 }
 
 function buildPrompt(template, inputs) {
@@ -28,15 +48,17 @@ function buildPrompt(template, inputs) {
  * Writes SSE events to res (Express response).
  */
 export async function runPromptStep(step, inputs, user, res) {
-  let apiKey = await resolveApiKey(user);
-  const client = new Anthropic({ apiKey });
-  apiKey = null; // Clear from memory after use
-
   const llm      = step.ws_llm || {};
-  const model    = llm.model       || 'claude-sonnet-4-20250514';
+  const provider = (llm.provider || 'anthropic').toLowerCase();
+  const meta     = PROVIDER_META[provider] || PROVIDER_META.anthropic;
+  const model    = llm.model       || meta.defaultModel;
   const temp     = llm.temperature ?? 0;
   const maxTok   = llm.max_tokens  || 2048;
   const system   = step.ws_system_prompt || '';
+
+  let apiKey = await resolveApiKey(user, provider);
+  const llmProvider = createProvider(provider, apiKey);
+  apiKey = null; // Clear from memory after use
 
   // Inject ws_output_schema into inputs so {{ws_output_schema}} resolves
   const allInputs = {
@@ -54,22 +76,11 @@ export async function runPromptStep(step, inputs, user, res) {
   };
 
   try {
-    const stream = client.messages.stream({
-      model,
-      max_tokens: maxTok,
-      temperature: temp,
-      system,
-      messages: [{ role: 'user', content: userPrompt }]
-    });
-
-    for await (const chunk of stream) {
-      if (chunk.type === 'content_block_delta' && chunk.delta?.type === 'text_delta') {
-        send('token', { text: chunk.delta.text });
-      }
+    let fullText = '';
+    for await (const chunk of llmProvider.stream({ model, system, userPrompt, temperature: temp, maxTokens: maxTok })) {
+      send('token', { text: chunk.text });
+      fullText += chunk.text;
     }
-
-    const final = await stream.finalMessage();
-    const fullText = final.content.map(b => b.text || '').join('');
 
     // Try to parse as JSON
     let parsed = null;
@@ -78,7 +89,7 @@ export async function runPromptStep(step, inputs, user, res) {
       parsed = JSON.parse(clean);
     } catch { /* not JSON */ }
 
-    send('done', { full: fullText, parsed, usage: final.usage });
+    send('done', { full: fullText, parsed });
     res.end();
 
   } catch (err) {
