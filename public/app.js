@@ -144,7 +144,8 @@ function FlowInner({ nodes, edges, onNodesChange, onEdgesChange, version }) {
     fitView:true, fitViewOptions:{ padding:0.12 },
     minZoom:0.08, maxZoom:2,
     proOptions:{ hideAttribution:true },
-    deleteKeyCode:null, selectionKeyCode:null
+    deleteKeyCode:null, selectionKeyCode:null,
+    dragHandle:'.rf-card-header'
   },
     h(Background,{ color:'#1a2740', gap:40, size:1, variant:'dots' }),
     h(Controls,{ position:'bottom-right', showInteractive:false }),
