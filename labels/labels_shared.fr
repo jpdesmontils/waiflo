@@ -1,0 +1,18 @@
+{
+  "nav_how":        "Comment ça marche",
+  "nav_quickstart": "Démarrage",
+  "nav_blog":       "Blog",
+  "nav_docs":       "Docs",
+  "nav_github":     "GitHub",
+  "nav_login":      "Connexion →",
+  "nav_badge":      "BETA",
+  "footer_how":        "Comment ça marche",
+  "footer_types":      "Types d'étapes",
+  "footer_quickstart": "Démarrage rapide",
+  "footer_editor":     "Éditeur",
+  "footer_github":     "GitHub",
+  "footer_blog":       "Blog",
+  "footer_copyright":  "Licence MIT · © 2025 Waiflo",
+  "lang_en_label": "EN",
+  "lang_fr_label": "FR"
+}

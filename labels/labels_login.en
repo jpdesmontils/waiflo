@@ -1,0 +1,21 @@
+{
+  "page_title":     "Waiflo — Login",
+  "brand_logo":     "waiflo",
+  "brand_editor":   "editor",
+  "brand_tagline":  "AI Workflow Language",
+  "tab_login":      "Login",
+  "tab_register":   "Register",
+  "label_email":    "Email",
+  "label_password": "Password",
+  "label_confirm":  "Confirm",
+  "placeholder_email":    "you@example.com",
+  "placeholder_password": "••••••••",
+  "placeholder_min8":     "min. 8 characters",
+  "placeholder_repeat":   "repeat password",
+  "btn_login":      "Login →",
+  "btn_register":   "Create account →",
+  "divider_or":     "or",
+  "btn_guest":      "Continue without account →",
+  "err_fill_all":   "Please fill all fields",
+  "err_no_match":   "Passwords do not match"
+}

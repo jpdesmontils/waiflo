@@ -7,14 +7,6 @@ process.on('unhandledRejection', (reason) => {
   console.error('[UNHANDLED REJECTION]', reason);
   process.exit(1);
 });
-
-import 'dotenv/config';
-import express          from 'express';
-import cors             from 'cors';
-import path             from 'path';
-import fs               from 'fs/promises';
-import { fileURLToPath } from 'url';
-
 // ── Validate required env vars before anything else ───────────────
 if (!process.env.JWT_SECRET) {
   console.error('FATAL: JWT_SECRET environment variable is not set');
@@ -25,33 +17,34 @@ if (!process.env.MASTER_SECRET) {
   process.exit(1);
 }
 
+import 'dotenv/config';
+import express          from 'express';
+import cors             from 'cors';
+import path             from 'path';
+import fs               from 'fs/promises';
+import { fileURLToPath } from 'url';
+import { langMiddleware }       from './middleware/lang.js';
+import pageRoutes               from './routes/pages.js';
 import authRoutes               from './routes/auth.js';
 import workflowRoutes           from './routes/workflows.js';
 import execRoutes               from './routes/exec.js';
 import { wfRouter, stepRouter } from './routes/design.js';
+import authRoutes               from './routes/auth.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT      = process.env.PORT || 3001;
 const DATA_DIR  = process.env.DATA_DIR || './waiflo-data';
 
-// ── Startup: clean up any stale lock files left by a previous crash ──
-// proper-lockfile creates a .lock directory; if the process died while
-// holding the lock it never gets removed, causing all subsequent writes
-// to hang. Even though we've removed proper-lockfile, this guards against
-// any residual files from previous deployments.
+// ── Startup: clean stale locks ────────────────────────────────────
 async function cleanupStaleLocks() {
   const candidates = [
     path.join(DATA_DIR, 'users.json.lock'),
     path.join(DATA_DIR, 'users.json.lock.tmp'),
   ];
   for (const p of candidates) {
-    try {
-      await fs.rm(p, { recursive: true, force: true });
-      console.log(`[startup] removed stale lock: ${p}`);
-    } catch { /* nothing to remove */ }
+    try { await fs.rm(p, { recursive: true, force: true }); } catch { /* ok */ }
   }
 }
-
 await cleanupStaleLocks();
 
 // ── Express ───────────────────────────────────────────────────────
@@ -63,13 +56,15 @@ const corsOrigin = process.env.CORS_ORIGIN
 app.use(cors({ origin: corsOrigin, credentials: true }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.text({ limit: '10mb' }));
+
+// Static assets (CSS, JS, images) — served before page routes
 app.use(express.static(path.join(__dirname, '../public')));
 
-// ── Pages ─────────────────────────────────────────────────────────
-app.get('/',       (_, res) => res.sendFile(path.join(__dirname, '../public/landing.html')));
-app.get('/editor', (_, res) => res.sendFile(path.join(__dirname, '../public/editor.html')));
-app.get('/login',  (_, res) => res.sendFile(path.join(__dirname, '../public/login.html')));
-app.get('/docs',   (_, res) => res.sendFile(path.join(__dirname, '../public/docs.html')));
+// ── Language detection ────────────────────────────────────────────
+app.use(langMiddleware);
+
+// ── Page routes (server-rendered with Mustache / label substitution)
+app.use('/', pageRoutes);
 
 // ── API ───────────────────────────────────────────────────────────
 app.use('/api/auth',                 authRoutes);
@@ -82,7 +77,7 @@ app.get('/api/health', (_, res) => res.json({ ok: true }));
 // ── Fallback ──────────────────────────────────────────────────────
 app.get('*', (req, res) => {
   if (req.path.startsWith('/api')) return res.status(404).json({ error: 'Not found' });
-  res.sendFile(path.join(__dirname, '../public/landing.html'));
+  res.redirect('/');
 });
 
 // ── Start ─────────────────────────────────────────────────────────

@@ -1,0 +1,153 @@
+{
+  "meta_title":       "Waiflo — Ship AI features faster, without losing control",
+  "meta_description": "Waiflo is an open, versionable JSON standard for multi-step AI workflows. Visual editor, REST API, self-hostable. Zero vendor lock-in.",
+
+  "hero_eyebrow":      "Open-source · Self-hostable · MIT License",
+  "hero_h1_line1":     "Your AI pipelines deserve",
+  "hero_h1_line2":     "the same rigor",
+  "hero_h1_line3":     "as your",
+  "hero_h1_accent":    "code.",
+  "hero_sub":          "Waiflo is a versionable JSON standard for multi-step AI workflows — with a visual editor, a REST API, and zero vendor lock-in. Ship AI features faster without losing control.",
+  "hero_cta_editor":   "⬡ Open Editor — no signup",
+  "hero_cta_github":   "★ GitHub",
+  "hero_cta_quickstart": "⚡ Quickstart",
+  "trust_1": "Git-friendly JSON workflows",
+  "trust_2": "Self-hosted, your infra",
+  "trust_3": "API-first, integrates anywhere",
+  "trust_4": "Works with any LLM provider",
+
+  "pain_label": "Sound familiar?",
+  "pain_cards": [
+    {
+      "label_class": "red",
+      "label": "Prompts in application code",
+      "title": "Impossible to version, test, or reuse",
+      "desc": "Your LLM logic lives in a Python script, a string constant, or a config file that nobody dares touch. No structure. No contracts between steps. No visibility on what changed."
+    },
+    {
+      "label_class": "orange",
+      "label": "LangChain / LlamaIndex",
+      "title": "Powerful, but you're locked into their abstractions",
+      "desc": "You're writing their code, not yours. Upgrades break things. The pipeline logic is hidden in Python objects, not in a file you can read, diff, or deploy independently."
+    },
+    {
+      "label_class": "purple",
+      "label": "Dify / Flowise / n8n",
+      "title": "Visual but opaque — no Git, no API, no control",
+      "desc": "Great for prototyping. Terrible for production. Your workflows live in a database you can't version. The vendor is between you and your own logic."
+    }
+  ],
+
+  "code_kicker":   "The Waiflo way",
+  "code_h2":       "One JSON file.",
+  "code_h2_span":  "The full pipeline.",
+  "code_desc":     "Define steps, wire them together, run the whole thing with a single API call. Every workflow is a plain <code>.waiflo.json</code> file you can commit, review, and deploy like any other artifact.",
+  "code_badge":    "git diff-able · CI/CD ready",
+
+  "how_kicker": "How it works",
+  "how_h2":     "Define once.",
+  "how_h2_span":"Run anywhere.",
+  "how_sub":    "Three primitives. No magic, no hidden state, no framework to learn.",
+  "how_cards": [
+    {
+      "num":   "01",
+      "title": "Steps — the atomic unit",
+      "desc":  "Each step has a type (<code>prompt</code>, <code>api</code>, <code>transform</code>, <code>tool</code>, <code>script</code>), typed input/output schemas, and its full configuration. Reusable across pipelines.",
+      "tag":   "ws_name · ws_type · ws_inputs_schema"
+    },
+    {
+      "num":   "02",
+      "title": "Workflows — the DAG",
+      "desc":  "Wire steps into a directed acyclic graph via <code>wf_nodes</code> and <code>depends_on</code>. The runtime resolves execution order. You define the intent.",
+      "tag":   "wf_nodes · depends_on · step_id"
+    },
+    {
+      "num":   "03",
+      "title": "Execute via REST API",
+      "desc":  "One <code>POST /api/exec/step</code> call with inputs. SSE streaming for prompt steps. JSON response for API steps. Your backend stays in control — Waiflo is the engine, not the owner.",
+      "tag":   "SSE streaming · JSON response · typed outputs"
+    }
+  ],
+
+  "diff_kicker":    "Why Waiflo",
+  "diff_h2":        "Stop choosing between",
+  "diff_h2_span":   "speed and control.",
+  "diff_sub":       "Every other approach forces a trade-off. Waiflo doesn't.",
+  "diff_col1_label": "Roll your own",
+  "diff_col1_rows": [
+    { "icon": "✓", "icon_class": "check", "text": "Full control" },
+    { "icon": "—", "icon_class": "cross", "text": "Rewritten from scratch every project" },
+    { "icon": "—", "icon_class": "cross", "text": "No reusability between teams" },
+    { "icon": "—", "icon_class": "cross", "text": "Prompt logic buried in application code" },
+    { "icon": "—", "icon_class": "cross", "text": "New dev has no way to understand pipelines" }
+  ],
+  "diff_col2_label": "LangChain / Dify / Flowise",
+  "diff_col2_rows": [
+    { "icon": "✓", "icon_class": "check", "text": "Fast to start" },
+    { "icon": "—", "icon_class": "cross", "text": "Locked into vendor abstractions" },
+    { "icon": "—", "icon_class": "cross", "text": "Workflows not Git-versionable" },
+    { "icon": "—", "icon_class": "cross", "text": "Hard or impossible to self-host cleanly" },
+    { "icon": "—", "icon_class": "cross", "text": "API integration is an afterthought" }
+  ],
+  "diff_col3_label": "Waiflo",
+  "diff_col3_rows": [
+    { "text": "Plain JSON — <code>git diff</code> your pipelines" },
+    { "text": "Self-hostable, zero vendor lock-in" },
+    { "text": "API-first — integrates in any stack" },
+    { "text": "Visual editor included, no account needed" },
+    { "text": "Works with any LLM provider" }
+  ],
+
+  "design_kicker":  "Design API",
+  "design_h2":      "Surgical edits.",
+  "design_h2_span": "No clobbering.",
+  "design_desc":    "<code>PATCH</code> endpoints use recursive deep merge — only the fields you send are updated. Built for autosave, inline editors, and AI-assisted pipeline builders that need to modify one field without touching the rest.",
+  "merge_current":  "Current step",
+  "merge_patch":    "PATCH body",
+  "merge_result":   "Result",
+
+  "types_kicker":  "Step types",
+  "types_h2":      "5 primitives.",
+  "types_h2_span": "Every use case covered.",
+  "types_sub":     "Each step has a <code>ws_type</code> that determines runtime behavior, required fields, and execution semantics.",
+  "step_types": [
+    { "color": "#f59e0b", "name": "prompt",    "desc": "LLM call. System prompt, <code>{{var}}</code> template, typed output schema. Streams via SSE.",              "fields": "ws_llm<br>ws_system_prompt<br>ws_prompt_template" },
+    { "color": "#2dd4bf", "name": "api",       "desc": "HTTP call. URL supports <code>{{input}}</code> substitution. Returns parsed JSON or raw text.",             "fields": "ws_api.method<br>ws_api.url<br>ws_api.headers" },
+    { "color": "#60a5fa", "name": "transform", "desc": "Data reshape between steps. Filter, compute, or derive fields from upstream outputs.",                     "fields": "ws_transform_fn<br>— coming soon" },
+    { "color": "#a78bfa", "name": "tool",      "desc": "MCP tool call. Google Maps, Asana, Gmail, Slack… via <code>ws_tools</code> array.",                        "fields": "ws_tools: [<br>\"maps_search\"<br>]" },
+    { "color": "#fb923c", "name": "script",    "desc": "Custom code execution in a sandboxed runtime with bound inputs and typed outputs.",                        "fields": "ws_script<br>— coming soon" }
+  ],
+
+  "qs_kicker":  "Get started",
+  "qs_h2":      "Up and running",
+  "qs_h2_span": "in 3 minutes.",
+  "qs_sub":     "Self-host with Docker. Zero external services — just a JWT secret and your Anthropic key.",
+  "qs_steps": [
+    {
+      "num":   "1",
+      "title": "Clone and configure",
+      "desc":  "Two secrets to generate: one for JWT signing, one for API key encryption at rest.",
+      "code":  "git clone https://github.com/jpdesmontils/waiflo<br>cd waiflo &amp;&amp; cp .env.example .env<br><span class=\"dc\"># Set JWT_SECRET and MASTER_SECRET in .env</span>"
+    },
+    {
+      "num":   "2",
+      "title": "Start the server",
+      "desc":  "Spins up the API + visual editor. Persists workflow files to a mounted volume — no database required.",
+      "code":  "docker compose up -d<br><span class=\"dc\"># Editor available at http://localhost:3001/editor</span>"
+    },
+    {
+      "num":   "3",
+      "title": "Open the editor — or call the API directly",
+      "desc":  "Explore the visual editor without an account. Or register and start pushing workflows programmatically from your CI pipeline, your agent, or your backend.",
+      "code":  "<span class=\"dc\"># Try the editor first — no account needed</span><br>open http://localhost:3001/editor<br><br><span class=\"dc\"># Or go API-first</span><br>curl -X POST http://localhost:3001/api/auth/register \\<br>&nbsp;&nbsp;-d '{\"email\":\"you@example.com\",\"password\":\"secret\"}'"
+    }
+  ],
+
+  "cta_h2":         "Most teams are up",
+  "cta_h2_span":    "and running in under 10 minutes.",
+  "cta_sub":        "Visual editor included. No signup to explore. Your API keys never leave your infrastructure.",
+  "cta_note_label": "On durability:",
+  "cta_note":       "MIT licensed. Your workflows are plain JSON files — they'll outlive any SaaS, any framework, any vendor. If Waiflo disappeared tomorrow, your pipelines would still run.",
+  "cta_editor":     "⬡ Open Editor",
+  "cta_github":     "★ GitHub"
+}
