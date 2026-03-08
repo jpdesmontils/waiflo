@@ -1,24 +1,26 @@
-import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'crypto';
+import { createCipheriv, createDecipheriv, randomBytes, scrypt } from 'crypto';
+import { promisify } from 'util';
 
-const ALGORITHM = 'aes-256-cbc';
+const scryptAsync = promisify(scrypt);
+const ALGORITHM   = 'aes-256-cbc';
 
-function getKey() {
+async function getKey() {
   const secret = process.env.MASTER_SECRET;
   if (!secret) throw new Error('MASTER_SECRET not set in environment');
-  return scryptSync(secret, 'waiflo-salt', 32);
+  return scryptAsync(secret, 'waiflo-salt', 32);
 }
 
-export function encrypt(plaintext) {
+export async function encrypt(plaintext) {
   const iv  = randomBytes(16);
-  const key = getKey();
+  const key = await getKey();
   const cipher = createCipheriv(ALGORITHM, key, iv);
   const encrypted = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
   return `${iv.toString('hex')}:${encrypted.toString('hex')}`;
 }
 
-export function decrypt(ciphertext) {
+export async function decrypt(ciphertext) {
   const [ivHex, encHex] = ciphertext.split(':');
-  const key = getKey();
+  const key = await getKey();
   const decipher = createDecipheriv(ALGORITHM, key, Buffer.from(ivHex, 'hex'));
   const decrypted = Buffer.concat([
     decipher.update(Buffer.from(encHex, 'hex')),

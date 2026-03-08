@@ -11,23 +11,9 @@
 
 import express from 'express';
 import fs      from 'fs/promises';
-import path    from 'path';
 import { authMiddleware } from './auth.js';
-import { workflowDir, ensureUserDir } from '../lib/users.js';
-
-// ── HELPERS ───────────────────────────────────────────────────────
-
-function safeName(name) {
-  return String(name).replace(/[^a-zA-Z0-9_\-\.]/g, '').replace(/\.+/g, '.').slice(0, 120);
-}
-
-function wfPath(userId, name) {
-  const dir  = workflowDir(userId);
-  const safe = safeName(name);
-  if (!safe) throw new Error('Invalid workflow name');
-  const filename = safe.endsWith('.waiflo.json') ? safe : `${safe}.waiflo.json`;
-  return path.join(dir, filename);
-}
+import { ensureUserDir } from '../lib/users.js';
+import { wfPath } from '../lib/utils.js';
 
 async function readWf(userId, name) {
   const fp  = wfPath(userId, name);
@@ -93,7 +79,9 @@ wfRouter.post('/', async (req, res) => {
     try {
       await fs.access(fp);
       return res.status(409).json({ error: `Workflow "${workflow_name}" already exists — use PATCH to update` });
-    } catch { /* doesn't exist, safe to create */ }
+    } catch (err) {
+      if (err.code !== 'ENOENT') throw err; // Only ignore "file not found"
+    }
 
     const wfData = data || {};
     if (!wfData.lang_name)                wfData.lang_name  = workflow_name;

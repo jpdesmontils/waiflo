@@ -1,12 +1,11 @@
 // ── Global crash handlers — must be first ─────────────────────────
-// Without these, an unhandled rejection or uncaught exception in Node 15+
-// silently kills the process, leaving Apache with "connection reset by peer".
 process.on('uncaughtException',  (err) => {
   console.error('[UNCAUGHT EXCEPTION]', err);
-  // Don't exit — keep the server alive for subsequent requests
+  process.exit(1); // Let Docker/PM2 restart cleanly
 });
 process.on('unhandledRejection', (reason) => {
   console.error('[UNHANDLED REJECTION]', reason);
+  process.exit(1);
 });
 
 import 'dotenv/config';
@@ -15,6 +14,16 @@ import cors             from 'cors';
 import path             from 'path';
 import fs               from 'fs/promises';
 import { fileURLToPath } from 'url';
+
+// ── Validate required env vars before anything else ───────────────
+if (!process.env.JWT_SECRET) {
+  console.error('FATAL: JWT_SECRET environment variable is not set');
+  process.exit(1);
+}
+if (!process.env.MASTER_SECRET) {
+  console.error('FATAL: MASTER_SECRET environment variable is not set');
+  process.exit(1);
+}
 
 import authRoutes               from './routes/auth.js';
 import workflowRoutes           from './routes/workflows.js';
@@ -48,7 +57,10 @@ await cleanupStaleLocks();
 // ── Express ───────────────────────────────────────────────────────
 const app = express();
 
-app.use(cors({ origin: true, credentials: true }));
+const corsOrigin = process.env.CORS_ORIGIN
+  ? process.env.CORS_ORIGIN.split(',').map(s => s.trim())
+  : true; // Allow all if not configured — set CORS_ORIGIN in production
+app.use(cors({ origin: corsOrigin, credentials: true }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.text({ limit: '10mb' }));
 app.use(express.static(path.join(__dirname, '../public')));
@@ -65,7 +77,7 @@ app.use('/api/workflows',            workflowRoutes);
 app.use('/api/exec',                 execRoutes);
 app.use('/api/workflow/design',      wfRouter);
 app.use('/api/workflow-step/design', stepRouter);
-app.get('/api/health', (_, res) => res.json({ ok: true, version: '0.1.0' }));
+app.get('/api/health', (_, res) => res.json({ ok: true }));
 
 // ── Fallback ──────────────────────────────────────────────────────
 app.get('*', (req, res) => {
