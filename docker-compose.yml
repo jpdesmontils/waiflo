@@ -1,0 +1,22 @@
+services:
+  waiflo:
+    image: node:20-alpine
+    working_dir: /app
+    command: sh -c "npm install && node server/index.js"
+    volumes:
+      - .:/app
+      - waiflo-data:/data
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - DATA_DIR=/data
+      - JWT_SECRET=${JWT_SECRET}
+      - MASTER_SECRET=${MASTER_SECRET}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+    restart: unless-stopped
+
+volumes:
+  waiflo-data:
+    driver: local

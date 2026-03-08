@@ -1,0 +1,881 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Waiflo — API Documentation</title>
+<meta name="description" content="Full API reference for Waiflo. Auth, workflow CRUD, design API, execution with SSE streaming.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800;900&family=JetBrains+Mono:wght@300;400;500;600;700&family=Figtree:ital,wght@0,300;0,400;0,500;0,600;1,300&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/landing.css">
+<style>
+.docs-layout{
+  display:grid;
+  grid-template-columns:260px 1fr;
+  min-height:100vh;
+  padding-top:56px;
+}
+
+/* Sidebar */
+#docs-sidebar{
+  position:sticky;
+  top:56px;
+  height:calc(100vh - 56px);
+  overflow:auto;
+  border-right:1px solid var(--border);
+  background:var(--bg2);
+}
+
+/* Main content */
+#docs-main{
+  padding:48px 64px 80px;
+  max-width:1000px;
+}
+
+/* Responsive */
+@media(max-width:900px){
+  .docs-layout{
+    grid-template-columns:1fr;
+  }
+
+  #docs-sidebar{
+    position:relative;
+    height:auto;
+    border-right:none;
+    border-bottom:1px solid var(--border);
+  }
+
+  #docs-main{
+    padding:32px 20px 60px;
+  }
+}
+
+.sidebar-section { padding:0 20px; margin-bottom:8px; }
+.sidebar-group {
+  font-family:'JetBrains Mono',monospace; font-size:9px; letter-spacing:1.5px;
+  color:var(--dim); text-transform:uppercase; padding:16px 20px 6px;
+}
+.sidebar-link {
+  display:flex; align-items:center; gap:8px;
+  font-family:'JetBrains Mono',monospace; font-size:11px;
+  color:var(--text); text-decoration:none; padding:6px 20px;
+  border-left:2px solid transparent; transition:all .12s;
+  line-height:1.4;
+}
+.sidebar-link:hover { color:var(--hi); border-left-color:var(--border2); background:rgba(255,255,255,.02); }
+.sidebar-link.active { color:var(--amber); border-left-color:var(--amber); background:rgba(245,158,11,.04); }
+.sidebar-method {
+  font-size:9px; font-weight:700; letter-spacing:.5px; padding:1px 5px;
+  border-radius:2px; flex-shrink:0;
+}
+.m-post { color:var(--green); background:rgba(52,211,153,.1); }
+.m-get  { color:var(--blue);  background:rgba(96,165,250,.1); }
+.m-put  { color:var(--coral); background:rgba(251,146,60,.1); }
+.m-patch{ color:var(--amber); background:rgba(245,158,11,.1); }
+.m-del  { color:var(--red);   background:rgba(248,113,113,.1); }
+
+/* main content */
+#docs-main {
+  margin-left:260px;
+  padding:48px 64px 80px;
+  max-width:900px;
+}
+
+/* docs page hero */
+.docs-hero { margin-bottom:64px; padding-bottom:40px; border-bottom:1px solid var(--border); }
+.docs-hero-kicker {
+  font-family:'JetBrains Mono',monospace; font-size:10px; letter-spacing:2px;
+  color:var(--amber); text-transform:uppercase; margin-bottom:16px;
+  display:flex; align-items:center; gap:10px;
+}
+.docs-hero-kicker::before { content:''; width:20px; height:1px; background:var(--amber); }
+.docs-hero h1 {
+  font-family:'Syne',sans-serif; font-weight:900;
+  font-size:clamp(32px,4vw,52px); line-height:1.05;
+  letter-spacing:-.03em; color:var(--hi); margin-bottom:18px;
+}
+.docs-hero p { font-size:16px; color:var(--text); max-width:560px; line-height:1.75; font-weight:300; }
+.docs-pills { display:flex; gap:10px; flex-wrap:wrap; margin-top:24px; }
+.docs-pill {
+  font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--dim);
+  background:var(--bg3); border:1px solid var(--border); border-radius:3px;
+  padding:4px 12px; letter-spacing:.3px;
+}
+.docs-pill span { color:var(--teal); }
+
+/* endpoint sections */
+.endpoint-group { margin-bottom:72px; }
+.endpoint-group-title {
+  font-family:'Syne',sans-serif; font-weight:800; font-size:22px;
+  color:var(--hi); letter-spacing:-.02em; margin-bottom:6px;
+}
+.endpoint-group-desc { font-size:14px; color:var(--text); line-height:1.6; margin-bottom:32px; max-width:560px; }
+
+/* endpoint card */
+.endpoint {
+  background:var(--bg2); border:1px solid var(--border); border-radius:8px;
+  overflow:hidden; margin-bottom:16px; transition:border-color .15s;
+}
+.endpoint:hover { border-color:var(--border2); }
+.endpoint.highlight { border-color:rgba(245,158,11,.3); background:rgba(245,158,11,.02); }
+
+.endpoint-head {
+  display:flex; align-items:center; gap:14px;
+  padding:16px 20px; cursor:pointer; user-select:none;
+}
+.endpoint-head:hover .endpoint-path { color:var(--hi); }
+.method-badge {
+  font-family:'JetBrains Mono',monospace; font-size:11px; font-weight:700;
+  letter-spacing:.5px; padding:4px 10px; border-radius:3px; flex-shrink:0; min-width:64px; text-align:center;
+}
+.badge-post   { color:var(--green); background:rgba(52,211,153,.1);  border:1px solid rgba(52,211,153,.2); }
+.badge-get    { color:var(--blue);  background:rgba(96,165,250,.1);  border:1px solid rgba(96,165,250,.2); }
+.badge-put    { color:var(--coral); background:rgba(251,146,60,.1);  border:1px solid rgba(251,146,60,.2); }
+.badge-patch  { color:var(--amber); background:rgba(245,158,11,.1);  border:1px solid rgba(245,158,11,.2); }
+.badge-delete { color:var(--red);   background:rgba(248,113,113,.1); border:1px solid rgba(248,113,113,.2); }
+
+.endpoint-path {
+  font-family:'JetBrains Mono',monospace; font-size:13px; color:var(--text); flex:1;
+  transition:color .12s;
+}
+.endpoint-path em { color:var(--amber); font-style:normal; }
+.endpoint-summary { font-size:12.5px; color:var(--dim); flex:0 0 auto; text-align:right; max-width:260px; }
+.endpoint-arrow { color:var(--dim); font-size:12px; flex-shrink:0; transition:transform .2s; }
+.endpoint.open .endpoint-arrow { transform:rotate(90deg); }
+
+.endpoint-body { display:none; border-top:1px solid var(--border); }
+.endpoint.open .endpoint-body { display:block; }
+
+/* tabs inside endpoint */
+.ep-tabs { display:flex; gap:0; border-bottom:1px solid var(--border); }
+.ep-tab {
+  font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--dim);
+  padding:9px 18px; cursor:pointer; border-bottom:2px solid transparent;
+  transition:all .12s; letter-spacing:.3px;
+}
+.ep-tab:hover { color:var(--text); }
+.ep-tab.active { color:var(--amber); border-bottom-color:var(--amber); }
+
+.ep-panel { display:none; padding:24px; }
+.ep-panel.active { display:block; }
+
+/* field tables */
+.field-table { width:100%; border-collapse:collapse; margin-bottom:16px; }
+.field-table th {
+  font-family:'JetBrains Mono',monospace; font-size:9px; letter-spacing:1px;
+  color:var(--dim); text-transform:uppercase; text-align:left;
+  padding:6px 12px; border-bottom:1px solid var(--border);
+}
+.field-table td { padding:10px 12px; border-bottom:1px solid rgba(27,37,64,.5); font-size:13px; line-height:1.5; }
+.field-table tr:last-child td { border-bottom:none; }
+.field-name { font-family:'JetBrains Mono',monospace; font-size:11px; color:var(--blue); }
+.field-type { font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--purple); }
+.field-req  { font-family:'JetBrains Mono',monospace; font-size:9px; color:var(--amber); background:rgba(245,158,11,.08); border-radius:2px; padding:1px 5px; }
+.field-opt  { font-family:'JetBrains Mono',monospace; font-size:9px; color:var(--dim); }
+.field-desc { color:var(--text); }
+
+/* code blocks inside docs */
+.doc-code {
+  background:var(--bg); border:1px solid var(--border); border-radius:6px;
+  padding:18px 22px; font-family:'JetBrains Mono',monospace;
+  font-size:11px; line-height:1.85; color:var(--green);
+  overflow-x:auto; margin:16px 0; white-space:pre;
+}
+.doc-code .dc { color:var(--dim); }
+.doc-code .dk { color:#7dd3fc; }
+.doc-code .ds { color:#86efac; }
+.doc-code .dn { color:#fb923c; }
+.doc-code .da { color:#f59e0b; }
+
+/* note boxes */
+.doc-note {
+  display:flex; gap:12px; align-items:flex-start;
+  background:rgba(245,158,11,.06); border:1px solid rgba(245,158,11,.2);
+  border-radius:6px; padding:14px 18px; margin:16px 0;
+  font-size:13px; color:var(--text); line-height:1.6;
+}
+.doc-note-icon { font-size:14px; flex-shrink:0; margin-top:1px; }
+.doc-note.info { background:rgba(96,165,250,.06); border-color:rgba(96,165,250,.2); }
+.doc-note.success { background:rgba(52,211,153,.06); border-color:rgba(52,211,153,.2); }
+
+/* section anchor */
+.section-anchor { scroll-margin-top:80px; }
+
+/* inline response badge */
+.res-badge {
+  font-family:'JetBrains Mono',monospace; font-size:9px; letter-spacing:.5px;
+  padding:2px 7px; border-radius:2px; margin-right:6px;
+}
+.res-2xx { color:var(--green); background:rgba(52,211,153,.1); border:1px solid rgba(52,211,153,.2); }
+.res-4xx { color:var(--red);   background:rgba(248,113,113,.1); border:1px solid rgba(248,113,113,.2); }
+
+/* NEW badge */
+.new-badge {
+  font-family:'JetBrains Mono',monospace; font-size:8px; letter-spacing:.5px;
+  color:var(--amber); background:rgba(245,158,11,.12); border:1px solid rgba(245,158,11,.25);
+  padding:1px 6px; border-radius:2px; margin-left:8px; vertical-align:middle;
+}
+
+/* responsive */
+@media(max-width:900px) {
+  .docs-layout { grid-template-columns:1fr; }
+  #docs-sidebar { display:none; }
+  #docs-main { margin-left:0; padding:32px 20px 60px; }
+}
+</style>
+
+</head>
+<body>
+
+<!-- NAV -->
+<nav>
+  <a class="nav-logo" href="/">waiflo <span class="nav-badge">DOCS</span></a>
+  <div class="nav-links">
+    <a class="nav-link" href="/">Home</a>
+    <a class="nav-link" href="/docs" style="color:var(--hi)">API Docs</a>
+    <a class="nav-link" href="https://github.com/yourorg/waiflo" target="_blank">GitHub</a>
+    <a class="nav-cta" href="/editor">Open Editor →</a>
+  </div>
+</nav>
+
+<div class="docs-layout">
+
+  <!-- SIDEBAR -->
+  <aside id="docs-sidebar">
+    <div class="sidebar-group">Overview</div>
+    <a class="sidebar-link active" href="#overview">Introduction</a>
+    <a class="sidebar-link" href="#auth-overview">Authentication</a>
+    <a class="sidebar-link" href="#base-url">Base URL</a>
+    <a class="sidebar-link" href="#errors">Errors</a>
+
+    <div class="sidebar-group">Auth</div>
+    <a class="sidebar-link" href="#post-register"><span class="sidebar-method m-post">POST</span>/auth/register</a>
+    <a class="sidebar-link" href="#post-login"><span class="sidebar-method m-post">POST</span>/auth/login</a>
+    <a class="sidebar-link" href="#get-me"><span class="sidebar-method m-get">GET</span>/auth/me</a>
+    <a class="sidebar-link" href="#put-apikey"><span class="sidebar-method m-put">PUT</span>/auth/apikey</a>
+    <a class="sidebar-link" href="#put-password"><span class="sidebar-method m-put">PUT</span>/auth/password</a>
+
+    <div class="sidebar-group">Workflows</div>
+    <a class="sidebar-link" href="#get-workflows"><span class="sidebar-method m-get">GET</span>/workflows</a>
+    <a class="sidebar-link" href="#get-workflow"><span class="sidebar-method m-get">GET</span>/workflows/:name</a>
+    <a class="sidebar-link" href="#put-workflow"><span class="sidebar-method m-put">PUT</span>/workflows/:name</a>
+    <a class="sidebar-link" href="#delete-workflow"><span class="sidebar-method m-del">DEL</span>/workflows/:name</a>
+    <a class="sidebar-link" href="#get-export"><span class="sidebar-method m-get">GET</span>/workflows/:name/export</a>
+
+    <div class="sidebar-group">Design API</div>
+    <a class="sidebar-link" href="#post-wf-design"><span class="sidebar-method m-post">POST</span>/workflow/design</a>
+    <a class="sidebar-link" href="#patch-wf-design"><span class="sidebar-method m-patch">PATCH</span>/workflow/design</a>
+    <a class="sidebar-link" href="#post-step-design"><span class="sidebar-method m-post">POST</span>/workflow-step/design</a>
+    <a class="sidebar-link" href="#patch-step-design"><span class="sidebar-method m-patch">PATCH</span>/workflow-step/design</a>
+    <a class="sidebar-link" href="#delete-step-design"><span class="sidebar-method m-del">DEL</span>/workflow-step/design</a>
+
+    <div class="sidebar-group">Execution</div>
+    <a class="sidebar-link" href="#post-exec-step"><span class="sidebar-method m-post">POST</span>/exec/step</a>
+  </aside>
+
+  <!-- MAIN CONTENT -->
+  <main id="docs-main">
+
+    <!-- HERO -->
+    <div class="docs-hero section-anchor" id="overview">
+      <div class="docs-hero-kicker">API Reference</div>
+      <h1>Waiflo<br>API Docs</h1>
+      <p>Complete reference for the Waiflo REST API. Manage workflows, design pipelines programmatically, and execute steps with real-time SSE streaming.</p>
+      <div class="docs-pills">
+        <span class="docs-pill">Base URL: <span>http://localhost:3000</span></span>
+        <span class="docs-pill">Auth: <span>Bearer JWT</span></span>
+        <span class="docs-pill">Format: <span>application/json</span></span>
+        <span class="docs-pill">Streaming: <span>text/event-stream</span></span>
+      </div>
+    </div>
+
+    <!-- AUTH OVERVIEW -->
+    <div class="endpoint-group section-anchor" id="auth-overview">
+      <div class="endpoint-group-title">Authentication</div>
+      <div class="endpoint-group-desc">All endpoints except <code>/auth/register</code> and <code>/auth/login</code> require a valid JWT token passed as a Bearer header.</div>
+      <div class="doc-code"><span class="dc"># Include in every authenticated request</span>
+Authorization: Bearer &lt;your_jwt_token&gt;</div>
+      <div class="doc-note">
+        <span class="doc-note-icon">⏱</span>
+        Tokens are valid for <strong>30 days</strong>. Re-authenticate via <code>POST /api/auth/login</code> to get a fresh token.
+      </div>
+    </div>
+
+    <!-- BASE URL -->
+    <div class="endpoint-group section-anchor" id="base-url">
+      <div class="endpoint-group-title">Base URL &amp; Errors</div>
+      <div class="endpoint-group-desc">All paths below are relative to your server root. Default port is <code>3000</code>.</div>
+      <div class="doc-code">http://your-host:3000/api</div>
+      <div class="doc-note info">
+        <span class="doc-note-icon">ℹ</span>
+        Error responses always return a JSON object with an <code>error</code> string field. HTTP status codes follow standard conventions: <code>400</code> bad request, <code>401</code> unauthorized, <code>404</code> not found, <code>409</code> conflict.
+      </div>
+      <div class="doc-code"><span class="dc">// Error response shape</span>
+{ <span class="dk">"error"</span>: <span class="ds">"Workflow already exists"</span> }</div>
+    </div>
+
+    <!-- ═══ AUTH ENDPOINTS ═══ -->
+    <div class="endpoint-group section-anchor" id="post-register">
+      <div class="endpoint-group-title">Auth</div>
+      <div class="endpoint-group-desc">Register, login, and manage credentials. API keys are encrypted AES-256 at rest and never returned in responses.</div>
+
+      <!-- POST /auth/register -->
+      <div class="endpoint open" id="post-register">
+        <div class="endpoint-head" onclick="toggleEndpoint(this)">
+          <span class="method-badge badge-post">POST</span>
+          <span class="endpoint-path">/api/auth/register</span>
+          <span class="endpoint-summary">Create account — returns JWT</span>
+          <span class="endpoint-arrow">›</span>
+        </div>
+        <div class="endpoint-body">
+          <div class="ep-tabs">
+            <div class="ep-tab active" onclick="switchTab(this,'body')">Body</div>
+            <div class="ep-tab" onclick="switchTab(this,'response')">Response</div>
+            <div class="ep-tab" onclick="switchTab(this,'example')">Example</div>
+          </div>
+          <div class="ep-panel active" data-panel="body">
+            <table class="field-table">
+              <tr><th>Field</th><th>Type</th><th></th><th>Description</th></tr>
+              <tr><td class="field-name">email</td><td class="field-type">string</td><td><span class="field-req">required</span></td><td class="field-desc">Valid email address</td></tr>
+              <tr><td class="field-name">password</td><td class="field-type">string</td><td><span class="field-req">required</span></td><td class="field-desc">Min. 8 characters</td></tr>
+            </table>
+          </div>
+          <div class="ep-panel" data-panel="response">
+            <span class="res-badge res-2xx">201</span> Returns a signed JWT token valid 30 days.
+            <div class="doc-code">{ <span class="dk">"token"</span>: <span class="ds">"eyJhbGciOiJIUzI1NiIs..."</span> }</div>
+            <span class="res-badge res-4xx">409</span> Email already registered.
+          </div>
+          <div class="ep-panel" data-panel="example">
+            <div class="doc-code">curl -X POST http://localhost:3000/api/auth/register \
+  -H <span class="ds">"Content-Type: application/json"</span> \
+  -d '{ <span class="dk">"email"</span>: <span class="ds">"you@example.com"</span>, <span class="dk">"password"</span>: <span class="ds">"mypassword"</span> }'</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- POST /auth/login -->
+      <div class="endpoint" id="post-login">
+        <div class="endpoint-head" onclick="toggleEndpoint(this)">
+          <span class="method-badge badge-post">POST</span>
+          <span class="endpoint-path">/api/auth/login</span>
+          <span class="endpoint-summary">Login — returns JWT</span>
+          <span class="endpoint-arrow">›</span>
+        </div>
+        <div class="endpoint-body">
+          <div class="ep-tabs">
+            <div class="ep-tab active" onclick="switchTab(this,'body')">Body</div>
+            <div class="ep-tab" onclick="switchTab(this,'response')">Response</div>
+            <div class="ep-tab" onclick="switchTab(this,'example')">Example</div>
+          </div>
+          <div class="ep-panel active" data-panel="body">
+            <table class="field-table">
+              <tr><th>Field</th><th>Type</th><th></th><th>Description</th></tr>
+              <tr><td class="field-name">email</td><td class="field-type">string</td><td><span class="field-req">required</span></td><td class="field-desc">Registered email</td></tr>
+              <tr><td class="field-name">password</td><td class="field-type">string</td><td><span class="field-req">required</span></td><td class="field-desc">Account password</td></tr>
+            </table>
+          </div>
+          <div class="ep-panel" data-panel="response">
+            <span class="res-badge res-2xx">200</span> JWT token.
+            <div class="doc-code">{ <span class="dk">"token"</span>: <span class="ds">"eyJhbGciOiJIUzI1NiIs..."</span> }</div>
+            <span class="res-badge res-4xx">401</span> Invalid credentials.
+          </div>
+          <div class="ep-panel" data-panel="example">
+            <div class="doc-code">curl -X POST http://localhost:3000/api/auth/login \
+  -H <span class="ds">"Content-Type: application/json"</span> \
+  -d '{ <span class="dk">"email"</span>: <span class="ds">"you@example.com"</span>, <span class="dk">"password"</span>: <span class="ds">"mypassword"</span> }'</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- GET /auth/me -->
+      <div class="endpoint" id="get-me">
+        <div class="endpoint-head" onclick="toggleEndpoint(this)">
+          <span class="method-badge badge-get">GET</span>
+          <span class="endpoint-path">/api/auth/me</span>
+          <span class="endpoint-summary">Current user info</span>
+          <span class="endpoint-arrow">›</span>
+        </div>
+        <div class="endpoint-body">
+          <div class="ep-tabs">
+            <div class="ep-tab active" onclick="switchTab(this,'response')">Response</div>
+          </div>
+          <div class="ep-panel active" data-panel="response">
+            <span class="res-badge res-2xx">200</span>
+            <div class="doc-code">{
+  <span class="dk">"email"</span>:     <span class="ds">"you@example.com"</span>,
+  <span class="dk">"hasApiKey"</span>: <span class="dn">true</span>
+}</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- PUT /auth/apikey -->
+      <div class="endpoint" id="put-apikey">
+        <div class="endpoint-head" onclick="toggleEndpoint(this)">
+          <span class="method-badge badge-put">PUT</span>
+          <span class="endpoint-path">/api/auth/apikey</span>
+          <span class="endpoint-summary">Save Anthropic API key (AES-256 encrypted)</span>
+          <span class="endpoint-arrow">›</span>
+        </div>
+        <div class="endpoint-body">
+          <div class="ep-tabs">
+            <div class="ep-tab active" onclick="switchTab(this,'body')">Body</div>
+            <div class="ep-tab" onclick="switchTab(this,'response')">Response</div>
+          </div>
+          <div class="ep-panel active" data-panel="body">
+            <table class="field-table">
+              <tr><th>Field</th><th>Type</th><th></th><th>Description</th></tr>
+              <tr><td class="field-name">apiKey</td><td class="field-type">string</td><td><span class="field-req">required</span></td><td class="field-desc">Anthropic key <code>sk-ant-api03-…</code> — encrypted at rest, never returned</td></tr>
+            </table>
+            <div class="doc-note success"><span class="doc-note-icon">🔒</span>The key is encrypted using AES-256-GCM with a server-side <code>MASTER_SECRET</code> before being stored. It is never returned in any API response.</div>
+          </div>
+          <div class="ep-panel" data-panel="response">
+            <span class="res-badge res-2xx">200</span>
+            <div class="doc-code">{ <span class="dk">"ok"</span>: <span class="dn">true</span> }</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- PUT /auth/password -->
+      <div class="endpoint" id="put-password">
+        <div class="endpoint-head" onclick="toggleEndpoint(this)">
+          <span class="method-badge badge-put">PUT</span>
+          <span class="endpoint-path">/api/auth/password</span>
+          <span class="endpoint-summary">Change password</span>
+          <span class="endpoint-arrow">›</span>
+        </div>
+        <div class="endpoint-body">
+          <div class="ep-tabs">
+            <div class="ep-tab active" onclick="switchTab(this,'body')">Body</div>
+            <div class="ep-tab" onclick="switchTab(this,'response')">Response</div>
+          </div>
+          <div class="ep-panel active" data-panel="body">
+            <table class="field-table">
+              <tr><th>Field</th><th>Type</th><th></th><th>Description</th></tr>
+              <tr><td class="field-name">currentPassword</td><td class="field-type">string</td><td><span class="field-req">required</span></td><td class="field-desc">Current password for verification</td></tr>
+              <tr><td class="field-name">newPassword</td><td class="field-type">string</td><td><span class="field-req">required</span></td><td class="field-desc">New password, min. 8 characters</td></tr>
+            </table>
+          </div>
+          <div class="ep-panel" data-panel="response">
+            <span class="res-badge res-2xx">200</span> <code>{ "ok": true }</code>
+            &nbsp;&nbsp;<span class="res-badge res-4xx">401</span> Wrong current password.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ WORKFLOWS ═══ -->
+    <div class="endpoint-group section-anchor" id="get-workflows">
+      <div class="endpoint-group-title">Workflow files</div>
+      <div class="endpoint-group-desc">CRUD on <code>.waiflo.json</code> files. Each user has an isolated directory on the server. The <code>PUT</code> endpoint is used by the visual editor's autosave (Ctrl+S).</div>
+
+      <!-- GET /workflows -->
+      <div class="endpoint" id="get-workflows-ep">
+        <div class="endpoint-head" onclick="toggleEndpoint(this)">
+          <span class="method-badge badge-get">GET</span>
+          <span class="endpoint-path">/api/workflows</span>
+          <span class="endpoint-summary">List all workflows</span>
+          <span class="endpoint-arrow">›</span>
+        </div>
+        <div class="endpoint-body">
+          <div class="ep-tabs"><div class="ep-tab active" onclick="switchTab(this,'response')">Response</div></div>
+          <div class="ep-panel active" data-panel="response">
+            <span class="res-badge res-2xx">200</span> Array of workflow metadata.
+            <div class="doc-code">[
+  { <span class="dk">"name"</span>: <span class="ds">"support_triage"</span>, <span class="dk">"updatedAt"</span>: <span class="ds">"2025-06-01T10:32:00Z"</span> },
+  { <span class="dk">"name"</span>: <span class="ds">"lead_scoring"</span>,   <span class="dk">"updatedAt"</span>: <span class="ds">"2025-05-28T08:14:00Z"</span> }
+]</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- GET /workflows/:name -->
+      <div class="endpoint" id="get-workflow">
+        <div class="endpoint-head" onclick="toggleEndpoint(this)">
+          <span class="method-badge badge-get">GET</span>
+          <span class="endpoint-path">/api/workflows/<em>:name</em></span>
+          <span class="endpoint-summary">Read full workflow JSON</span>
+          <span class="endpoint-arrow">›</span>
+        </div>
+        <div class="endpoint-body">
+          <div class="ep-tabs">
+            <div class="ep-tab active" onclick="switchTab(this,'params')">Params</div>
+            <div class="ep-tab" onclick="switchTab(this,'response')">Response</div>
+          </div>
+          <div class="ep-panel active" data-panel="params">
+            <table class="field-table">
+              <tr><th>Param</th><th>Type</th><th></th><th>Description</th></tr>
+              <tr><td class="field-name">:name</td><td class="field-type">string</td><td><span class="field-req">required</span></td><td class="field-desc">Workflow name (no extension)</td></tr>
+            </table>
+          </div>
+          <div class="ep-panel" data-panel="response">
+            <span class="res-badge res-2xx">200</span> Full workflow object.
+            <div class="doc-code">{
+  <span class="dk">"lang_name"</span>: <span class="ds">"support_triage"</span>,
+  <span class="dk">"steps"</span>: [...],
+  <span class="dk">"workflows"</span>: [...]
+}</div>
+            <span class="res-badge res-4xx">404</span> Workflow not found.
+          </div>
+        </div>
+      </div>
+
+      <!-- PUT /workflows/:name -->
+      <div class="endpoint" id="put-workflow">
+        <div class="endpoint-head" onclick="toggleEndpoint(this)">
+          <span class="method-badge badge-put">PUT</span>
+          <span class="endpoint-path">/api/workflows/<em>:name</em></span>
+          <span class="endpoint-summary">Overwrite full workflow (autosave)</span>
+          <span class="endpoint-arrow">›</span>
+        </div>
+        <div class="endpoint-body">
+          <div class="ep-tabs">
+            <div class="ep-tab active" onclick="switchTab(this,'body')">Body</div>
+            <div class="ep-tab" onclick="switchTab(this,'response')">Response</div>
+          </div>
+          <div class="ep-panel active" data-panel="body">
+            Full workflow JSON object as request body. Replaces the stored file entirely.
+            <div class="doc-note"><span class="doc-note-icon">⚠</span>This is a full replace. To update a single step without clobbering the rest, use <code>PATCH /api/workflow-step/design</code>.</div>
+          </div>
+          <div class="ep-panel" data-panel="response">
+            <span class="res-badge res-2xx">200</span> <code>{ "ok": true }</code>
+          </div>
+        </div>
+      </div>
+
+      <!-- DELETE /workflows/:name -->
+      <div class="endpoint" id="delete-workflow">
+        <div class="endpoint-head" onclick="toggleEndpoint(this)">
+          <span class="method-badge badge-delete">DELETE</span>
+          <span class="endpoint-path">/api/workflows/<em>:name</em></span>
+          <span class="endpoint-summary">Delete workflow file</span>
+          <span class="endpoint-arrow">›</span>
+        </div>
+        <div class="endpoint-body">
+          <div class="ep-tabs"><div class="ep-tab active" onclick="switchTab(this,'response')">Response</div></div>
+          <div class="ep-panel active" data-panel="response">
+            <span class="res-badge res-2xx">200</span> <code>{ "ok": true }</code>
+            &nbsp;&nbsp;<span class="res-badge res-4xx">404</span> Not found.
+          </div>
+        </div>
+      </div>
+
+      <!-- GET /workflows/:name/export -->
+      <div class="endpoint" id="get-export">
+        <div class="endpoint-head" onclick="toggleEndpoint(this)">
+          <span class="method-badge badge-get">GET</span>
+          <span class="endpoint-path">/api/workflows/<em>:name</em>/export</span>
+          <span class="endpoint-summary">Download raw .waiflo.json file</span>
+          <span class="endpoint-arrow">›</span>
+        </div>
+        <div class="endpoint-body">
+          <div class="ep-tabs"><div class="ep-tab active" onclick="switchTab(this,'response')">Response</div></div>
+          <div class="ep-panel active" data-panel="response">
+            <span class="res-badge res-2xx">200</span> Returns the file as <code>application/json</code> with <code>Content-Disposition: attachment</code> header, triggering a browser download.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ DESIGN API ═══ -->
+    <div class="endpoint-group section-anchor" id="post-wf-design">
+      <div class="endpoint-group-title">Design API <span class="new-badge">GRANULAR</span></div>
+      <div class="endpoint-group-desc">Surgical read/write on workflow structure. These endpoints use <strong>recursive deep merge</strong> — only the fields you send are touched. Designed for autosave, programmatic pipeline builders, and AI agents that modify workflows without clobbering adjacent fields.</div>
+
+      <div class="doc-note info">
+        <span class="doc-note-icon">ℹ</span>
+        Deep merge is recursive: sending <code>{ "ws_llm": { "temperature": 0.4 } }</code> updates only <code>temperature</code>, leaving <code>provider</code> and <code>model</code> untouched. Arrays are replaced, not merged.
+      </div>
+
+      <!-- POST /workflow/design -->
+      <div class="endpoint highlight" id="post-wf-design-ep">
+        <div class="endpoint-head" onclick="toggleEndpoint(this)">
+          <span class="method-badge badge-post">POST</span>
+          <span class="endpoint-path">/api/workflow/<em>design</em></span>
+          <span class="endpoint-summary">Create a new workflow</span>
+          <span class="endpoint-arrow">›</span>
+        </div>
+        <div class="endpoint-body">
+          <div class="ep-tabs">
+            <div class="ep-tab active" onclick="switchTab(this,'body')">Body</div>
+            <div class="ep-tab" onclick="switchTab(this,'response')">Response</div>
+            <div class="ep-tab" onclick="switchTab(this,'example')">Example</div>
+          </div>
+          <div class="ep-panel active" data-panel="body">
+            <table class="field-table">
+              <tr><th>Field</th><th>Type</th><th></th><th>Description</th></tr>
+              <tr><td class="field-name">workflow_name</td><td class="field-type">string</td><td><span class="field-req">required</span></td><td class="field-desc">Unique name for this workflow. Used as the file name.</td></tr>
+              <tr><td class="field-name">data</td><td class="field-type">object</td><td><span class="field-opt">optional</span></td><td class="field-desc">Initial workflow data. Defaults to <code>{ lang_name, steps: [], workflows: [] }</code>.</td></tr>
+            </table>
+          </div>
+          <div class="ep-panel" data-panel="response">
+            <span class="res-badge res-2xx">201</span> Workflow created.
+            <div class="doc-code">{ <span class="dk">"ok"</span>: <span class="dn">true</span>, <span class="dk">"name"</span>: <span class="ds">"support_triage"</span> }</div>
+            <span class="res-badge res-4xx">409</span> Workflow already exists.
+          </div>
+          <div class="ep-panel" data-panel="example">
+            <div class="doc-code">curl -X POST http://localhost:3000/api/workflow/design \
+  -H <span class="ds">"Authorization: Bearer &lt;token&gt;"</span> \
+  -H <span class="ds">"Content-Type: application/json"</span> \
+  -d '{ <span class="dk">"workflow_name"</span>: <span class="ds">"support_triage"</span> }'</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- PATCH /workflow/design -->
+      <div class="endpoint highlight" id="patch-wf-design">
+        <div class="endpoint-head" onclick="toggleEndpoint(this)">
+          <span class="method-badge badge-patch">PATCH</span>
+          <span class="endpoint-path">/api/workflow/<em>design</em></span>
+          <span class="endpoint-summary">Deep merge on workflow root</span>
+          <span class="endpoint-arrow">›</span>
+        </div>
+        <div class="endpoint-body">
+          <div class="ep-tabs">
+            <div class="ep-tab active" onclick="switchTab(this,'body')">Body</div>
+            <div class="ep-tab" onclick="switchTab(this,'response')">Response</div>
+            <div class="ep-tab" onclick="switchTab(this,'example')">Example</div>
+          </div>
+          <div class="ep-panel active" data-panel="body">
+            <table class="field-table">
+              <tr><th>Field</th><th>Type</th><th></th><th>Description</th></tr>
+              <tr><td class="field-name">workflow_name</td><td class="field-type">string</td><td><span class="field-req">required</span></td><td class="field-desc">Target workflow</td></tr>
+              <tr><td class="field-name">patch</td><td class="field-type">object</td><td><span class="field-req">required</span></td><td class="field-desc">Fields to deep-merge onto the workflow root. Safely update <code>lang_name</code>, <code>wf_nodes</code>, metadata — without touching <code>steps</code>.</td></tr>
+            </table>
+          </div>
+          <div class="ep-panel" data-panel="response">
+            <span class="res-badge res-2xx">200</span> <code>{ "ok": true }</code>
+          </div>
+          <div class="ep-panel" data-panel="example">
+            <div class="doc-code"><span class="dc"># Rename a workflow without touching its steps</span>
+curl -X PATCH http://localhost:3000/api/workflow/design \
+  -H <span class="ds">"Authorization: Bearer &lt;token&gt;"</span> \
+  -d '{
+    <span class="dk">"workflow_name"</span>: <span class="ds">"support_triage"</span>,
+    <span class="dk">"patch"</span>: { <span class="dk">"lang_name"</span>: <span class="ds">"ticket_triage_v2"</span> }
+  }'</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- POST /workflow-step/design -->
+      <div class="endpoint highlight" id="post-step-design">
+        <div class="endpoint-head" onclick="toggleEndpoint(this)">
+          <span class="method-badge badge-post">POST</span>
+          <span class="endpoint-path">/api/workflow-step/<em>design</em></span>
+          <span class="endpoint-summary">Upsert a step by ws_name</span>
+          <span class="endpoint-arrow">›</span>
+        </div>
+        <div class="endpoint-body">
+          <div class="ep-tabs">
+            <div class="ep-tab active" onclick="switchTab(this,'body')">Body</div>
+            <div class="ep-tab" onclick="switchTab(this,'response')">Response</div>
+            <div class="ep-tab" onclick="switchTab(this,'example')">Example</div>
+          </div>
+          <div class="ep-panel active" data-panel="body">
+            <table class="field-table">
+              <tr><th>Field</th><th>Type</th><th></th><th>Description</th></tr>
+              <tr><td class="field-name">workflow_name</td><td class="field-type">string</td><td><span class="field-req">required</span></td><td class="field-desc">Target workflow</td></tr>
+              <tr><td class="field-name">step</td><td class="field-type">object</td><td><span class="field-req">required</span></td><td class="field-desc">Full step object. Must include <code>ws_name</code> and <code>ws_type</code>. If a step with this <code>ws_name</code> already exists, it is replaced in-place.</td></tr>
+              <tr><td class="field-name">position</td><td class="field-type">integer</td><td><span class="field-opt">optional</span></td><td class="field-desc">0-based insertion index. Defaults to end of steps array.</td></tr>
+            </table>
+          </div>
+          <div class="ep-panel" data-panel="response">
+            <span class="res-badge res-2xx">200</span> <code>{ "ok": true }</code>
+          </div>
+          <div class="ep-panel" data-panel="example">
+            <div class="doc-code">curl -X POST http://localhost:3000/api/workflow-step/design \
+  -H <span class="ds">"Authorization: Bearer &lt;token&gt;"</span> \
+  -d '{
+    <span class="dk">"workflow_name"</span>: <span class="ds">"support_triage"</span>,
+    <span class="dk">"step"</span>: {
+      <span class="dk">"ws_name"</span>:          <span class="ds">"classify_ticket"</span>,
+      <span class="dk">"ws_type"</span>:          <span class="ds">"prompt"</span>,
+      <span class="dk">"ws_llm"</span>:           { <span class="dk">"provider"</span>: <span class="ds">"anthropic"</span>, <span class="dk">"model"</span>: <span class="ds">"claude-sonnet-4-20250514"</span>, <span class="dk">"temperature"</span>: <span class="dn">0</span> },
+      <span class="dk">"ws_system_prompt"</span>: <span class="ds">"You are a support triage expert."</span>,
+      <span class="dk">"ws_inputs_schema"</span>: { <span class="dk">"required"</span>: [<span class="ds">"ticket_body"</span>], <span class="dk">"properties"</span>: { <span class="dk">"ticket_body"</span>: { <span class="dk">"type"</span>: <span class="ds">"string"</span> } } }
+    }
+  }'</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- PATCH /workflow-step/design -->
+      <div class="endpoint highlight" id="patch-step-design">
+        <div class="endpoint-head" onclick="toggleEndpoint(this)">
+          <span class="method-badge badge-patch">PATCH</span>
+          <span class="endpoint-path">/api/workflow-step/<em>design</em></span>
+          <span class="endpoint-summary">Deep merge on a single step</span>
+          <span class="endpoint-arrow">›</span>
+        </div>
+        <div class="endpoint-body">
+          <div class="ep-tabs">
+            <div class="ep-tab active" onclick="switchTab(this,'body')">Body</div>
+            <div class="ep-tab" onclick="switchTab(this,'response')">Response</div>
+            <div class="ep-tab" onclick="switchTab(this,'example')">Example</div>
+          </div>
+          <div class="ep-panel active" data-panel="body">
+            <table class="field-table">
+              <tr><th>Field</th><th>Type</th><th></th><th>Description</th></tr>
+              <tr><td class="field-name">workflow_name</td><td class="field-type">string</td><td><span class="field-req">required</span></td><td class="field-desc">Target workflow</td></tr>
+              <tr><td class="field-name">ws_name</td><td class="field-type">string</td><td><span class="field-req">required</span></td><td class="field-desc">Name of the step to patch</td></tr>
+              <tr><td class="field-name">patch</td><td class="field-type">object</td><td><span class="field-req">required</span></td><td class="field-desc">Fields to deep-merge onto the step. Only provided keys are updated.</td></tr>
+            </table>
+          </div>
+          <div class="ep-panel" data-panel="response">
+            <span class="res-badge res-2xx">200</span> <code>{ "ok": true }</code>
+            &nbsp;&nbsp;<span class="res-badge res-4xx">404</span> Step not found.
+          </div>
+          <div class="ep-panel" data-panel="example">
+            <div class="doc-code"><span class="dc"># Update only temperature — provider and model are untouched</span>
+curl -X PATCH http://localhost:3000/api/workflow-step/design \
+  -H <span class="ds">"Authorization: Bearer &lt;token&gt;"</span> \
+  -d '{
+    <span class="dk">"workflow_name"</span>: <span class="ds">"support_triage"</span>,
+    <span class="dk">"ws_name"</span>:       <span class="ds">"classify_ticket"</span>,
+    <span class="dk">"patch"</span>: { <span class="dk">"ws_llm"</span>: { <span class="dk">"temperature"</span>: <span class="dn">0.4</span> } }
+  }'</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- DELETE /workflow-step/design -->
+      <div class="endpoint highlight" id="delete-step-design">
+        <div class="endpoint-head" onclick="toggleEndpoint(this)">
+          <span class="method-badge badge-delete">DELETE</span>
+          <span class="endpoint-path">/api/workflow-step/<em>design</em></span>
+          <span class="endpoint-summary">Delete step + clean wf_nodes</span>
+          <span class="endpoint-arrow">›</span>
+        </div>
+        <div class="endpoint-body">
+          <div class="ep-tabs">
+            <div class="ep-tab active" onclick="switchTab(this,'body')">Body</div>
+            <div class="ep-tab" onclick="switchTab(this,'response')">Response</div>
+          </div>
+          <div class="ep-panel active" data-panel="body">
+            <table class="field-table">
+              <tr><th>Field</th><th>Type</th><th></th><th>Description</th></tr>
+              <tr><td class="field-name">workflow_name</td><td class="field-type">string</td><td><span class="field-req">required</span></td><td class="field-desc">Target workflow</td></tr>
+              <tr><td class="field-name">ws_name</td><td class="field-type">string</td><td><span class="field-req">required</span></td><td class="field-desc">Step to delete. Also removed from all <code>wf_nodes</code> and <code>depends_on</code> references.</td></tr>
+            </table>
+          </div>
+          <div class="ep-panel" data-panel="response">
+            <span class="res-badge res-2xx">200</span> <code>{ "ok": true }</code>
+            &nbsp;&nbsp;<span class="res-badge res-4xx">404</span> Step not found.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ EXECUTION ═══ -->
+    <div class="endpoint-group section-anchor" id="post-exec-step">
+      <div class="endpoint-group-title">Execution</div>
+      <div class="endpoint-group-desc">Execute a step in isolation with explicit inputs. <code>prompt</code> steps stream output via Server-Sent Events. <code>api</code> steps return a JSON response directly.</div>
+
+      <div class="endpoint open" id="post-exec-step-ep">
+        <div class="endpoint-head" onclick="toggleEndpoint(this)">
+          <span class="method-badge badge-post">POST</span>
+          <span class="endpoint-path">/api/exec/step</span>
+          <span class="endpoint-summary">Execute a step — SSE or JSON</span>
+          <span class="endpoint-arrow">›</span>
+        </div>
+        <div class="endpoint-body">
+          <div class="ep-tabs">
+            <div class="ep-tab active" onclick="switchTab(this,'body')">Body</div>
+            <div class="ep-tab" onclick="switchTab(this,'sse')">SSE Events</div>
+            <div class="ep-tab" onclick="switchTab(this,'example')">Example</div>
+          </div>
+          <div class="ep-panel active" data-panel="body">
+            <table class="field-table">
+              <tr><th>Field</th><th>Type</th><th></th><th>Description</th></tr>
+              <tr><td class="field-name">step</td><td class="field-type">object</td><td><span class="field-req">required</span></td><td class="field-desc">Full step definition (same shape as stored in <code>steps[]</code>)</td></tr>
+              <tr><td class="field-name">inputs</td><td class="field-type">object</td><td><span class="field-req">required</span></td><td class="field-desc">Key-value map of input values matching <code>ws_inputs_schema.properties</code></td></tr>
+            </table>
+            <div class="doc-note"><span class="doc-note-icon">⚠</span><strong>prompt</strong> steps stream via SSE (<code>text/event-stream</code>). <strong>api</strong> steps return <code>application/json</code> directly. Check <code>ws_type</code> to pick the right handler.</div>
+          </div>
+          <div class="ep-panel" data-panel="sse">
+            <p style="font-size:13px;color:var(--text);margin-bottom:16px;line-height:1.6">For <code>prompt</code> steps, the response is a Server-Sent Events stream. Three event types:</p>
+            <table class="field-table">
+              <tr><th>Event</th><th>Data shape</th><th>Description</th></tr>
+              <tr><td class="field-name">token</td><td class="field-type">{ text: string }</td><td class="field-desc">One LLM output token. Accumulate to build the full response.</td></tr>
+              <tr><td class="field-name">done</td><td class="field-type">{ usage, parsed? }</td><td class="field-desc">Stream complete. <code>usage</code> contains token counts. <code>parsed</code> contains the JSON-parsed output if the step has an <code>ws_output_schema</code>.</td></tr>
+              <tr><td class="field-name">error</td><td class="field-type">{ message: string }</td><td class="field-desc">Execution error. Handle and close the stream.</td></tr>
+            </table>
+            <div class="doc-code"><span class="dc"># SSE stream example</span>
+event: token
+data: {"text": "Priority:"}
+
+event: token
+data: {"text": " HIGH"}
+
+event: done
+data: {"usage": {"input_tokens": 142, "output_tokens": 38}, "parsed": {"priority": "HIGH", "category": "billing"}}</div>
+          </div>
+          <div class="ep-panel" data-panel="example">
+            <div class="doc-code"><span class="dc"># Execute a prompt step — stream the output</span>
+curl -X POST http://localhost:3000/api/exec/step \
+  -H <span class="ds">"Authorization: Bearer &lt;token&gt;"</span> \
+  -H <span class="ds">"Content-Type: application/json"</span> \
+  -d '{
+    <span class="dk">"step"</span>: {
+      <span class="dk">"ws_name"</span>: <span class="ds">"classify_ticket"</span>,
+      <span class="dk">"ws_type"</span>: <span class="ds">"prompt"</span>,
+      <span class="dk">"ws_llm"</span>: { <span class="dk">"provider"</span>: <span class="ds">"anthropic"</span>, <span class="dk">"model"</span>: <span class="ds">"claude-sonnet-4-20250514"</span>, <span class="dk">"temperature"</span>: <span class="dn">0</span> },
+      <span class="dk">"ws_system_prompt"</span>: <span class="ds">"You are a support triage expert."</span>,
+      <span class="dk">"ws_prompt_template"</span>: <span class="ds">"Classify: {{ticket_body}}\n\nOutput: {{ws_output_schema}}"</span>,
+      <span class="dk">"ws_output_schema"</span>: { <span class="dk">"properties"</span>: { <span class="dk">"priority"</span>: { <span class="dk">"type"</span>: <span class="ds">"string"</span> } } }
+    },
+    <span class="dk">"inputs"</span>: { <span class="dk">"ticket_body"</span>: <span class="ds">"My invoice is wrong and I need a refund immediately."</span> }
+  }'</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- FOOTER -->
+    <div style="border-top:1px solid var(--border); padding-top:32px; margin-top:40px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+      <span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--dim)">Waiflo API Docs · MIT License</span>
+      <div style="display:flex; gap:20px;">
+        <a href="/" class="footer-link">Home</a>
+        <a href="/editor" class="footer-link">Editor</a>
+        <a href="https://github.com/yourorg/waiflo" target="_blank" class="footer-link">GitHub</a>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<script>
+function toggleEndpoint(head) {
+  const card = head.closest('.endpoint');
+  card.classList.toggle('open');
+}
+
+function switchTab(tab, panel) {
+  const body = tab.closest('.endpoint-body');
+  body.querySelectorAll('.ep-tab').forEach(t => t.classList.remove('active'));
+  body.querySelectorAll('.ep-panel').forEach(p => p.classList.remove('active'));
+  tab.classList.add('active');
+  body.querySelector(`[data-panel="${panel}"]`)?.classList.add('active');
+}
+
+// Sidebar active state on scroll
+const anchors = document.querySelectorAll('.section-anchor, .endpoint');
+const links   = document.querySelectorAll('.sidebar-link');
+
+const observer = new IntersectionObserver(entries => {
+  entries.forEach(e => {
+    if (e.isIntersecting) {
+      const id = e.target.id;
+      links.forEach(l => {
+        l.classList.toggle('active', l.getAttribute('href') === `#${id}`);
+      });
+    }
+  });
+}, { rootMargin:'-56px 0px -60% 0px', threshold:0 });
+
+anchors.forEach(a => observer.observe(a));
+</script>
+
+</body>
+</html>

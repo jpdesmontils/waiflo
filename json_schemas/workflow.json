@@ -1,0 +1,249 @@
+{
+  "lang_name": "Analyse Annonce Immobilière",
+  "steps": [
+    {
+      "ws_name": "analyze_listing",
+      "ws_type": "prompt",
+      "ws_inputs_schema": {
+        "type": "object",
+        "required": [
+          "listing_text"
+        ],
+        "properties": {
+          "listing_text": {
+            "type": "string"
+          },
+          "photo_urls": {
+            "type": "array"
+          }
+        }
+      },
+      "ws_system_prompt": "Tu es un expert en analyse d annonces immobilières. Retourne UNIQUEMENT un objet JSON valide.",
+      "ws_prompt_template": "Analyse : {{{listing_text}}}\nPhotos : {{photo_urls}}\nRetourne : {{ws_output_schema}}",
+      "ws_llm": {
+        "provider": "anthropic",
+        "model": "claude-sonnet-4-20250514",
+        "temperature": 0.1
+      },
+      "ws_output_schema": {
+        "type": "object",
+        "properties": {
+          "commune": {
+            "type": "string"
+          },
+          "code_postal": {
+            "type": "string"
+          },
+          "type_bien": {
+            "type": "string"
+          },
+          "superficie": {
+            "type": "string"
+          },
+          "prix": {
+            "type": "string"
+          },
+          "etiquette_dpe": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "ws_name": "normalize_ademe_criteria",
+      "ws_type": "prompt",
+      "ws_inputs_schema": {
+        "type": "object",
+        "required": [
+          "listing_analysis"
+        ],
+        "properties": {
+          "listing_analysis": {
+            "type": "object"
+          }
+        }
+      },
+      "ws_system_prompt": "Tu es un expert en interrogation du dataset ADEME dpe03existant. Retourne UNIQUEMENT le JSON.",
+      "ws_prompt_template": "A partir de : {{listing_analysis}}\nConstruit les critères ADEME.\nRetourne : {{ws_output_schema}}",
+      "ws_llm": {
+        "provider": "anthropic",
+        "model": "claude-sonnet-4-20250514",
+        "temperature": 0
+      },
+      "ws_output_schema": {
+        "type": "object",
+        "properties": {
+          "criteres_ademe": {
+            "type": "array"
+          },
+          "score_global": {
+            "type": "number"
+          },
+          "requete_ademe": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "ws_name": "geolocate_listing",
+      "ws_type": "prompt",
+      "ws_inputs_schema": {
+        "type": "object",
+        "required": [
+          "listing_text",
+          "photo_urls"
+        ],
+        "properties": {
+          "listing_text": {
+            "type": "string"
+          },
+          "photo_urls": {
+            "type": "array"
+          }
+        }
+      },
+      "ws_system_prompt": "Tu es un expert en géolocalisation urbaine française. Utilise les outils Maps MCP disponibles.",
+      "ws_prompt_template": "Photos : {{photo_urls}}\nTexte : {{{listing_text}}}\nRetourne : {{ws_output_schema}}",
+      "ws_llm": {
+        "provider": "anthropic",
+        "model": "claude-sonnet-4-20250514",
+        "temperature": 0.1
+      },
+      "ws_tools": [
+        "maps_geocode",
+        "maps_search_places",
+        "search_nearby"
+      ],
+      "ws_output_schema": {
+        "type": "object",
+        "properties": {
+          "epicenter": {
+            "type": "object"
+          },
+          "candidate_streets": {
+            "type": "array"
+          },
+          "reasoning": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "ws_name": "fetch_ademe_records",
+      "ws_type": "api",
+      "ws_inputs_schema": {
+        "type": "object",
+        "required": [
+          "requete_ademe"
+        ],
+        "properties": {
+          "requete_ademe": {
+            "type": "string"
+          }
+        }
+      },
+      "ws_api": {
+        "method": "GET",
+        "url": "{{requete_ademe}}"
+      },
+      "ws_output_schema": {
+        "type": "object",
+        "properties": {
+          "results": {
+            "type": "array"
+          },
+          "total": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    {
+      "ws_name": "correlate_ademe_addresses",
+      "ws_type": "prompt",
+      "ws_inputs_schema": {
+        "type": "object",
+        "required": [
+          "geo_result",
+          "ademe_criteria",
+          "ademe_records"
+        ],
+        "properties": {
+          "geo_result": {
+            "type": "object"
+          },
+          "ademe_criteria": {
+            "type": "object"
+          },
+          "ademe_records": {
+            "type": "array"
+          }
+        }
+      },
+      "ws_system_prompt": "Tu es un expert en corrélation de données immobilières. Filtre par Haversine, score normalisé, JSON strict.",
+      "ws_prompt_template": "GEO : {{geo_result}}\nCRITERES : {{ademe_criteria}}\nRECORDS : {{ademe_records}}\nRetourne : {{ws_output_schema}}",
+      "ws_llm": {
+        "provider": "anthropic",
+        "model": "claude-sonnet-4-20250514",
+        "temperature": 0
+      },
+      "ws_output_schema": {
+        "type": "object",
+        "properties": {
+          "resultats": {
+            "type": "array"
+          },
+          "top3_detail": {
+            "type": "array"
+          }
+        }
+      }
+    }
+  ],
+  "workflows": [
+    {
+      "wf_name": "analyze_and_correlate",
+      "wf_nodes": [
+        {
+          "step_id": "s1",
+          "ws_ref": "analyze_listing"
+        },
+        {
+          "step_id": "s2",
+          "ws_ref": "normalize_ademe_criteria",
+          "depends_on": [
+            "s1"
+          ]
+        },
+        {
+          "step_id": "s3",
+          "ws_ref": "geolocate_listing",
+          "depends_on": [
+            "s1"
+          ]
+        },
+        {
+          "step_id": "s4",
+          "ws_ref": "fetch_ademe_records",
+          "depends_on": [
+            "s2"
+          ]
+        },
+        {
+          "step_id": "s5",
+          "ws_ref": "correlate_ademe_addresses",
+          "depends_on": [
+            "s2",
+            "s3",
+            "s4"
+          ]
+        }
+      ],
+      "wf_output": {
+        "from_step": "s5"
+      }
+    }
+  ]
+}

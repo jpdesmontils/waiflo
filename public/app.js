@@ -1,0 +1,945 @@
+// ═══════════════════════════════════════════════════════════════════
+//  WAIFLO EDITOR — app.js  (React Flow edition)
+// ═══════════════════════════════════════════════════════════════════
+import { createElement as h, useState, useEffect, memo } from 'react';
+import { createRoot } from 'react-dom/client';
+import {
+  ReactFlow, Background, Controls, MiniMap,
+  Handle, Position, MarkerType,
+  useNodesState, useEdgesState,
+  ReactFlowProvider, useReactFlow
+} from '@xyflow/react';
+import dagre from 'dagre';
+
+// ── CONSTANTS ────────────────────────────────────────────────────
+const FIELD_TYPES = ['string','number','integer','boolean','object','array'];
+const NODE_W = 280, NODE_H = 164;
+const TYPE_COLORS = {
+  prompt:'#f59e0b', api:'#2dd4bf', transform:'#60a5fa', tool:'#a78bfa', script:'#fb923c'
+};
+
+// ── DEMO WORKFLOW ────────────────────────────────────────────────
+const DEMO_WORKFLOW = {
+  lang_name: "demo_pipeline",
+  steps: [
+    {
+      ws_name: "extract_entities",
+      ws_type: "prompt",
+      ws_llm: { provider: "anthropic", model: "claude-sonnet-4-20250514", temperature: 0 },
+      ws_system_prompt: "You are an information extraction expert. Extract named entities from text with precision.",
+      ws_prompt_template: "Extract all named entities from the following text:\n\n{{text}}\n\nGroup them by type (person, org, location, etc).",
+      ws_inputs_schema: { type:"object", required:["text"], properties:{ text:{ type:"string" } } },
+      ws_output_schema: { type:"object", required:["entities"], properties:{ entities:{ type:"array" }, summary:{ type:"string" } } }
+    },
+    {
+      ws_name: "enrich_data",
+      ws_type: "api",
+      ws_api: { method: "GET", url: "https://api.example.com/enrich/{{entity_id}}" },
+      ws_inputs_schema: { type:"object", required:["entity_id"], properties:{ entity_id:{ type:"string" } } },
+      ws_output_schema: { type:"object", required:[], properties:{ enriched:{ type:"object" }, confidence:{ type:"number" } } }
+    },
+    {
+      ws_name: "generate_report",
+      ws_type: "prompt",
+      ws_llm: { provider: "anthropic", model: "claude-sonnet-4-20250514", temperature: 0.3 },
+      ws_system_prompt: "You are a professional report writer. Generate clear, structured, actionable reports.",
+      ws_prompt_template: "Write a report based on:\n- Entities: {{entities}}\n- Enriched data: {{enriched}}\n\nOutput format: {{ws_output_schema}}",
+      ws_inputs_schema: { type:"object", required:["entities","enriched"], properties:{ entities:{ type:"array" }, enriched:{ type:"object" } } },
+      ws_output_schema: { type:"object", required:["report"], properties:{ report:{ type:"string" }, confidence:{ type:"number" }, recommendations:{ type:"array" } } }
+    }
+  ],
+  workflows: [{
+    wf_name: "demo_pipeline",
+    wf_nodes: [
+      { step_id:"node_extract",  ws_ref:"extract_entities", depends_on:[] },
+      { step_id:"node_enrich",   ws_ref:"enrich_data",      depends_on:["node_extract"] },
+      { step_id:"node_report",   ws_ref:"generate_report",  depends_on:["node_enrich"] }
+    ]
+  }]
+};
+
+// ── STATE ────────────────────────────────────────────────────────
+let token          = localStorage.getItem('wf_token') || null;
+let currentUser    = null;
+let guestMode      = false;
+let guestWorkflows = [];
+let workflows      = [];
+let currentWf      = null;
+let currentStep    = null;
+let rankDir        = 'TB';
+let _setGraphData  = null;
+let _fitView       = null;
+let _graphVersion  = 0;
+// fullscreen source: 'workflow' | 'step'
+let _jfsSource     = null;
+
+// ══════════════════════════════════════════════════════════════════
+//  REACT FLOW — CUSTOM NODE
+// ══════════════════════════════════════════════════════════════════
+const StepNode = memo(function StepNode({ data, selected }) {
+  const [expanded, setExpanded] = useState(false);
+  const s      = data.step || {};
+  const wsType = (s.ws_type || 'prompt').toLowerCase();
+  const name   = s.ws_name || '—';
+  const sysPrmt = s.ws_system_prompt || s.ws_prompt_template || '';
+  const desc   = sysPrmt.length > 90 ? sysPrmt.slice(0,88)+'…' : (sysPrmt || '—');
+  const llm    = s.ws_llm;
+
+  const llmBadge = llm
+    ? h('span',{ className:'rf-llm-badge' }, `${llm.provider||''}·${(llm.model||'').split('-').slice(-1)[0]} t=${llm.temperature??'?'}`)
+    : (wsType==='api'&&s.ws_api ? h('span',{ className:'rf-llm-badge rf-api-badge' }, `HTTP ${s.ws_api?.method||'GET'}`) : null);
+  const toolsBadge = s.ws_tools?.length
+    ? h('span',{ className:'rf-tools-badge' }, `🔧 ${s.ws_tools.length} tool${s.ws_tools.length>1?'s':''}`) : null;
+
+  const inProps = s.ws_inputs_schema?.properties || {};
+  const inReq   = s.ws_inputs_schema?.required   || [];
+  const outProps= s.ws_output_schema?.properties  || {};
+  const outReq  = s.ws_output_schema?.required    || [];
+  const schemaRows = (props, req) =>
+    Object.keys(props).length
+      ? Object.keys(props).map(k => h('div',{ key:k, className:'rf-expand-field' },
+          h('span',{ className:'rf-field-name' },k),
+          h('span',{ className:'rf-field-type' },props[k].type||''),
+          req.includes(k)?h('span',{ className:'rf-field-req' },'req'):null))
+      : [h('div',{ key:'_', className:'rf-no-schema' },'—')];
+
+  return h('div',{
+    className:`rf-step-node rf-type-border-${wsType}${selected?' selected':''}`,
+    onClick: () => openStepEditor(data.nodeId)
+  },
+    h(Handle,{ type:'target', position:Position.Top, id:'top' }),
+    h(Handle,{ type:'source', position:Position.Bottom, id:'bottom' }),
+    h('div',{ className:'rf-card-header' },
+      h('span',{ className:`rf-type-badge rf-type-${wsType}` },wsType),
+      h('span',{ className:'rf-card-name' },name)
+    ),
+    h('div',{ className:'rf-card-desc' },desc),
+    h('div',{ className:'rf-card-meta-row' },llmBadge,toolsBadge),
+    h('div',{ className:'rf-card-footer' },
+      h('button',{ className:`rf-card-btn rf-btn-expand${expanded?' open':''}`,
+        onClick:e=>{ e.stopPropagation(); setExpanded(v=>!v); } }, expanded?'i/o ▴':'i/o ▾'),
+      h('button',{ className:'rf-card-btn rf-btn-edit',
+        onClick:e=>{ e.stopPropagation(); openStepEditor(data.nodeId); } },'edit'),
+      h('button',{ className:'rf-card-btn rf-btn-run',
+        onClick:e=>{ e.stopPropagation(); openStepEditor(data.nodeId,'run'); } },'▶')
+    ),
+    expanded && h('div',{ className:'rf-card-expand' },
+      h('div',null, h('div',{ className:'rf-expand-title' },'inputs'), ...schemaRows(inProps,inReq)),
+      h('div',null, h('div',{ className:'rf-expand-title' },'outputs'),...schemaRows(outProps,outReq))
+    )
+  );
+});
+
+const nodeTypes = { step: StepNode };
+
+function FlowInner({ nodes, edges, onNodesChange, onEdgesChange, version }) {
+  const { fitView } = useReactFlow();
+  _fitView = fitView;
+  useEffect(() => { setTimeout(()=>fitView({ padding:0.12, duration:400 }),60); }, [version]);
+  return h(ReactFlow,{
+    nodes, edges, onNodesChange, onEdgesChange, nodeTypes,
+    defaultEdgeOptions:{ type:'smoothstep', markerEnd:{ type:MarkerType.ArrowClosed, color:'#2a3f60' }, style:{ stroke:'#2a3f60', strokeWidth:1.5 } },
+    fitView:true, fitViewOptions:{ padding:0.12 },
+    minZoom:0.08, maxZoom:2,
+    proOptions:{ hideAttribution:true },
+    deleteKeyCode:null, selectionKeyCode:null
+  },
+    h(Background,{ color:'#1a2740', gap:40, size:1, variant:'dots' }),
+    h(Controls,{ position:'bottom-right', showInteractive:false }),
+    h(MiniMap,{ position:'bottom-left', nodeColor:n=>TYPE_COLORS[n.data?.step?.ws_type]||'#1e3050', maskColor:'rgba(8,12,18,.75)', style:{ background:'#0e1520', border:'1px solid #1a2740', borderRadius:'6px' } })
+  );
+}
+
+function AppGraph() {
+  const [gd, setGd] = useState({ nodes:[], edges:[], version:0 });
+  _setGraphData = setGd;
+  const [,,onNodesChange] = useNodesState([]);
+  const [,,onEdgesChange] = useEdgesState([]);
+  const [syncedNodes, setSyncedNodes] = useState([]);
+  const [syncedEdges, setSyncedEdges] = useState([]);
+  useEffect(()=>{ setSyncedNodes(gd.nodes); setSyncedEdges(gd.edges); }, [gd.version]);
+  return h(ReactFlowProvider,null,
+    h(FlowInner,{ nodes:syncedNodes, edges:syncedEdges, onNodesChange, onEdgesChange, version:gd.version })
+  );
+}
+
+// ── dagre layout ─────────────────────────────────────────────────
+function computeLayout(nodes, edges, direction) {
+  const g = new dagre.graphlib.Graph();
+  g.setDefaultEdgeLabel(()=>({}));
+  g.setGraph({ rankdir:direction, nodesep:60, ranksep:100, marginx:40, marginy:40 });
+  nodes.forEach(n=>g.setNode(n.id,{ width:NODE_W, height:NODE_H }));
+  edges.forEach(e=>g.setEdge(e.source,e.target));
+  dagre.layout(g);
+  return nodes.map(n=>{ const {x,y}=g.node(n.id); return {...n, position:{ x:x-NODE_W/2, y:y-NODE_H/2 }}; });
+}
+
+// ── buildGraph ───────────────────────────────────────────────────
+function buildGraph(data) {
+  const steps    = data.steps || [];
+  const wf       = (data.workflows||[]).find(w=>w.wf_nodes?.length) || null;
+  const stepsMap = {};
+  steps.forEach(s=>(stepsMap[s.ws_name]=s));
+  let rawNodes=[], rawEdges=[];
+
+  if (wf) {
+    wf.wf_nodes.forEach(node=>{
+      const s = stepsMap[node.ws_ref]||{ ws_name:node.ws_ref, ws_type:'prompt' };
+      rawNodes.push({ id:node.step_id, type:'step', position:{x:0,y:0}, data:{ step:s, nodeId:node.step_id } });
+      (node.depends_on||[]).forEach(dep=>rawEdges.push({ id:`${dep}->${node.step_id}`, source:dep, target:node.step_id }));
+    });
+    document.getElementById('meta-steps').textContent = wf.wf_nodes.length;
+    document.getElementById('meta-wf').textContent    = wf.wf_name||'—';
+    document.getElementById('meta-wf-pill').style.display = '';
+  } else {
+    steps.forEach((s,i)=>{
+      rawNodes.push({ id:s.ws_name, type:'step', position:{x:0,y:0}, data:{ step:s, nodeId:s.ws_name } });
+      if (i>0) rawEdges.push({ id:`${steps[i-1].ws_name}->${s.ws_name}`, source:steps[i-1].ws_name, target:s.ws_name });
+    });
+    document.getElementById('meta-steps').textContent = steps.length;
+    document.getElementById('meta-wf-pill').style.display = 'none';
+  }
+  const layoutedNodes = computeLayout(rawNodes, rawEdges, rankDir);
+  document.getElementById('meta-name').textContent = data.lang_name||currentWf?.name||'—';
+  document.getElementById('wf-meta').classList.remove('hidden');
+  document.getElementById('empty-state').classList.add('hidden');
+  _graphVersion++;
+  if (_setGraphData) _setGraphData({ nodes:layoutedNodes, edges:rawEdges, version:_graphVersion });
+}
+
+function fitGraph() { _fitView?.({ padding:0.12, duration:400 }); }
+function setLayout(dir) { rankDir=dir; if(currentWf) buildGraph(currentWf.data); }
+
+// ── AUTH / SESSION ────────────────────────────────────────────────
+function doLogout() {
+  token=null; currentUser=null; currentWf=null;
+  guestMode=false; guestWorkflows=[]; workflows=[];
+  localStorage.removeItem('wf_token');
+  window.location.href = '/login';
+}
+
+function enterGuestMode(withDemo = true) {
+  guestMode = true; token=null; currentUser=null;
+  document.getElementById('guest-banner').classList.remove('hidden');
+  document.getElementById('guest-badge').style.display = '';
+  document.getElementById('user-badge').textContent = '';
+  document.getElementById('btn-settings').style.display = 'none';
+  guestWorkflows = [];
+  if (withDemo) {
+    guestWorkflows.push({ name:'demo_pipeline', data: DEMO_WORKFLOW, updatedAt: new Date().toISOString() });
+  }
+  workflows = [];
+  loadWorkflowList();
+  // Auto-open the demo
+  if (withDemo) {
+    setTimeout(()=>{ selectWf('demo_pipeline'); }, 200);
+  }
+}
+
+function enterAuthUser(user) {
+  currentUser = user;
+  guestMode = false;
+  document.getElementById('guest-banner').classList.add('hidden');
+  document.getElementById('guest-badge').style.display = 'none';
+  document.getElementById('btn-settings').style.display = '';
+  document.getElementById('user-badge').textContent = user.email||'';
+  loadWorkflowList();
+}
+
+function showSignupCTA() {
+  openModal('Sauvegarder vos workflows', `
+    <div style="text-align:center;padding:8px 0 16px">
+      <div style="font-size:32px;margin-bottom:12px">&#x2B21;</div>
+      <div style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--hi);margin-bottom:8px">Mode invité — données non sauvegardées</div>
+      <div style="font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--dim);line-height:1.8">
+        Créez un compte gratuit pour persister vos workflows,<br>
+        exécuter des steps avec votre clé API, et y accéder depuis partout.
+      </div>
+    </div>`,
+    [
+      { label:'Continuer en invité', action:closeModal },
+      { label:'Créer un compte →', primary:true, action:()=>{ closeModal(); window.location.href='/login'; } }
+    ]
+  );
+}
+
+// ── API CLIENT ───────────────────────────────────────────────────
+async function api(path, method='GET', body=null, auth=true) {
+  const headers = { 'Content-Type':'application/json' };
+  if (auth && token) headers['Authorization'] = `Bearer ${token}`;
+  const opts = { method, headers };
+  if (body) opts.body = JSON.stringify(body);
+  try {
+    const res  = await fetch(path,opts);
+    const data = await res.json();
+    if (res.status===401 && auth) doLogout();
+    return data;
+  } catch(e) { return { error:e.message }; }
+}
+
+// ── WORKFLOW LIST ────────────────────────────────────────────────
+async function loadWorkflowList() {
+  if (guestMode) {
+    workflows = guestWorkflows.map(w=>({ name:w.name, updatedAt:w.updatedAt }));
+    renderWorkflowList(); return;
+  }
+  const list = await api('/api/workflows');
+  if (list.error) return toast(list.error,'err');
+  workflows = list; renderWorkflowList();
+}
+
+function renderWorkflowList() {
+  const el = document.getElementById('wf-list');
+  el.innerHTML='';
+  if (!workflows.length) {
+    el.innerHTML='<div style="padding:16px 14px;font-family:JetBrains Mono,monospace;font-size:10px;color:var(--dim)">No workflows yet</div>';
+    return;
+  }
+  workflows.forEach(wf=>{
+    const item = document.createElement('div');
+    item.className='wf-item'+(currentWf?.name===wf.name?' active':'');
+    const d = new Date(wf.updatedAt);
+    item.innerHTML=`
+      <span class="wf-item-icon">&#x2B21;</span>
+      <div class="wf-item-info">
+        <div class="wf-item-name">${wf.name}</div>
+        <div class="wf-item-date">${d.toLocaleDateString()} ${d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</div>
+      </div>
+      <div class="wf-item-actions">
+        <button class="wf-icon-btn" title="Copy JSON" onclick="copyWfJsonByName('${wf.name}',event)">&#x2398;</button>
+        <button class="wf-icon-btn" title="Delete" onclick="deleteWorkflow('${wf.name}',event)">&#x2715;</button>
+      </div>`;
+    item.addEventListener('click', ()=>selectWf(wf.name));
+    el.appendChild(item);
+  });
+}
+
+// ── WF SELECTION + JSON PANEL ────────────────────────────────────
+async function selectWf(name) { await openWorkflow(name); openWfJsonPanel(name); }
+
+function openWfJsonPanel(name) {
+  const data = currentWf?.name===name ? currentWf.data : null;
+  if (!data) return;
+  document.getElementById('wf-json-panel-name').textContent = name+'.waiflo.json';
+  const ta = document.getElementById('wf-json-textarea');
+  ta.value = JSON.stringify(data,null,2);
+  ta.classList.remove('err');
+  document.getElementById('wf-json-err').textContent='';
+  // open + expand list-inner
+  document.getElementById('left-inner').classList.add('json-open');
+}
+
+function closeWfJson() {
+  document.getElementById('left-inner').classList.remove('json-open');
+  document.getElementById('wf-json-err').textContent='';
+}
+
+function onWfJsonInput() {
+  const ta=document.getElementById('wf-json-textarea');
+  const errEl=document.getElementById('wf-json-err');
+  try { JSON.parse(ta.value); ta.classList.remove('err'); errEl.textContent=''; }
+  catch(e) { ta.classList.add('err'); errEl.textContent='✕ '+e.message; }
+}
+
+function applyWfJson() {
+  if (!currentWf) return;
+  const ta=document.getElementById('wf-json-textarea');
+  let parsed;
+  try { parsed=JSON.parse(ta.value); }
+  catch(e) { document.getElementById('wf-json-err').textContent='✕ '+e.message; return; }
+  currentWf.data=parsed; buildGraph(parsed);
+  if (guestMode) { _guestSync(); toast('Applied (not persisted)','ok'); } else saveWorkflow();
+}
+
+async function copyWfJson() {
+  if (!currentWf) return;
+  await navigator.clipboard.writeText(JSON.stringify(currentWf.data,null,2));
+  toast('JSON copied','ok');
+}
+
+async function copyWfJsonByName(name,e) {
+  e.stopPropagation();
+  let data;
+  if (currentWf?.name===name) { data=currentWf.data; }
+  else if (guestMode) { data=guestWorkflows.find(w=>w.name===name)?.data; }
+  else { const r=await api(`/api/workflows/${name}`); if(r.error) return toast(r.error,'err'); data=r; }
+  if (!data) return toast('Not found','err');
+  await navigator.clipboard.writeText(JSON.stringify(data,null,2));
+  toast('JSON copied','ok');
+}
+
+function _refreshWfJsonPanel() {
+  if (!document.getElementById('left-inner').classList.contains('json-open')||!currentWf) return;
+  const ta=document.getElementById('wf-json-textarea');
+  ta.value=JSON.stringify(currentWf.data,null,2);
+  ta.classList.remove('err');
+  document.getElementById('wf-json-err').textContent='';
+}
+
+// ── JSON FULLSCREEN ──────────────────────────────────────────────
+function openJsonFullscreen(source) {
+  _jfsSource = source;
+  const overlay = document.getElementById('json-fullscreen');
+  const ta      = document.getElementById('json-fullscreen-textarea');
+  const name    = document.getElementById('json-fullscreen-name');
+  const applyBtn= document.getElementById('jfs-apply-btn');
+  const errEl   = document.getElementById('json-fullscreen-err');
+
+  if (source === 'workflow') {
+    if (!currentWf) return;
+    name.textContent = currentWf.name+'.waiflo.json';
+    ta.value = JSON.stringify(currentWf.data,null,2);
+    applyBtn.style.display = '';
+  } else {
+    // step json — read from the pre element
+    const s = currentStep || collectStep();
+    name.textContent = (s.ws_name||'step')+' — JSON view';
+    ta.value = JSON.stringify(s,null,2);
+    applyBtn.style.display = 'none'; // step JSON is read-only in fullscreen
+  }
+  ta.classList.remove('err');
+  errEl.textContent = '';
+  overlay.classList.remove('hidden');
+  setTimeout(()=>ta.focus(),50);
+}
+
+function closeJsonFullscreen() {
+  document.getElementById('json-fullscreen').classList.add('hidden');
+  _jfsSource = null;
+}
+
+function jfsValidate() {
+  const ta=document.getElementById('json-fullscreen-textarea');
+  const errEl=document.getElementById('json-fullscreen-err');
+  try { JSON.parse(ta.value); ta.classList.remove('err'); errEl.textContent=''; }
+  catch(e) { ta.classList.add('err'); errEl.textContent='✕ '+e.message; }
+}
+
+async function jfsCopy() {
+  const ta=document.getElementById('json-fullscreen-textarea');
+  await navigator.clipboard.writeText(ta.value);
+  toast('JSON copied','ok');
+}
+
+function jfsApply() {
+  if (_jfsSource!=='workflow'||!currentWf) return;
+  const ta=document.getElementById('json-fullscreen-textarea');
+  let parsed;
+  try { parsed=JSON.parse(ta.value); }
+  catch(e) { document.getElementById('json-fullscreen-err').textContent='✕ '+e.message; return; }
+  currentWf.data=parsed; buildGraph(parsed); _refreshWfJsonPanel();
+  if (guestMode) { _guestSync(); toast('Applied (not persisted)','ok'); } else saveWorkflow();
+  closeJsonFullscreen();
+}
+
+// ── WORKFLOW CRUD ────────────────────────────────────────────────
+async function openWorkflow(name) {
+  let data;
+  if (guestMode) {
+    const entry=guestWorkflows.find(w=>w.name===name);
+    if (!entry) return toast('Workflow not found','err');
+    data=entry.data;
+  } else {
+    data=await api(`/api/workflows/${name}`);
+    if (data.error) return toast(data.error,'err');
+  }
+  currentWf={name,data};
+  closeEditor(); buildGraph(data); renderWorkflowList();
+  document.getElementById('btn-save').style.display='';
+  document.getElementById('btn-download').style.display='';
+  document.getElementById('btn-add-step').style.display='';
+}
+
+async function saveWorkflow() {
+  if (!currentWf) return;
+  if (guestMode) { showSignupCTA(); return; }
+  const res=await api(`/api/workflows/${currentWf.name}`,'PUT',currentWf.data);
+  if (res.error) return toast(res.error,'err');
+  toast('Saved','ok'); loadWorkflowList();
+}
+
+function _guestSync() {
+  if (!currentWf) return;
+  const idx=guestWorkflows.findIndex(w=>w.name===currentWf.name);
+  if (idx>=0) { guestWorkflows[idx].data=currentWf.data; guestWorkflows[idx].updatedAt=new Date().toISOString(); }
+}
+
+function downloadWorkflow() {
+  if (!currentWf) return;
+  const blob=new Blob([JSON.stringify(currentWf.data,null,2)],{ type:'application/json' });
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob); a.download=`${currentWf.name}.waiflo.json`; a.click();
+}
+
+function newWorkflow() {
+  openModal('New Workflow',`
+    <div class="form-section">
+      <div class="form-label">Workflow Name</div>
+      <input class="form-input" id="new-wf-name" placeholder="my_pipeline" style="width:100%">
+      <div class="form-hint" style="margin-top:6px">Lowercase, underscores only.</div>
+    </div>`,
+    [
+      { label:'Cancel', action:closeModal },
+      { label:'Create', primary:true, action:async()=>{
+        const name=document.getElementById('new-wf-name').value.trim();
+        if (!name) return;
+        const data={ lang_name:name, steps:[], workflows:[] };
+        if (guestMode) {
+          if (guestWorkflows.find(w=>w.name===name)) return toast('Name already exists','err');
+          guestWorkflows.push({ name,data,updatedAt:new Date().toISOString() });
+          closeModal(); await loadWorkflowList(); selectWf(name);
+        } else {
+          const res=await api(`/api/workflows/${name}`,'POST',data);
+          if (res.error) return toast(res.error,'err');
+          closeModal(); await loadWorkflowList(); selectWf(name);
+        }
+      }}
+    ]
+  );
+  setTimeout(()=>document.getElementById('new-wf-name')?.focus(),100);
+}
+
+function importWorkflow() {
+  const input=document.createElement('input');
+  input.type='file'; input.accept='.json,.waiflo';
+  input.onchange=async e=>{
+    const file=e.target.files[0]; if (!file) return;
+    const text=await file.text();
+    try {
+      const data=JSON.parse(text);
+      const name=file.name.replace('.waiflo.json','').replace('.json','');
+      if (guestMode) {
+        const idx=guestWorkflows.findIndex(w=>w.name===name);
+        if (idx>=0) guestWorkflows[idx]={ name,data,updatedAt:new Date().toISOString() };
+        else guestWorkflows.push({ name,data,updatedAt:new Date().toISOString() });
+        await loadWorkflowList(); selectWf(name); toast('Imported (not saved)','ok');
+      } else {
+        const res=await api(`/api/workflows/${name}`,'POST',data);
+        if (res.error) return toast(res.error,'err');
+        await loadWorkflowList(); selectWf(name); toast('Imported','ok');
+      }
+    } catch(err) { toast('Invalid JSON: '+err.message,'err'); }
+  };
+  input.click();
+}
+
+function deleteWorkflow(name,e) {
+  e.stopPropagation();
+  openConfirm(`Delete "${name}"?`,'This action cannot be undone.',async()=>{
+    if (guestMode) { guestWorkflows=guestWorkflows.filter(w=>w.name!==name); }
+    else { const res=await api(`/api/workflows/${name}`,'DELETE'); if(res.error) return toast(res.error,'err'); }
+    if (currentWf?.name===name) {
+      currentWf=null;
+      if (_setGraphData) _setGraphData({ nodes:[], edges:[], version:++_graphVersion });
+      document.getElementById('empty-state').classList.remove('hidden');
+      ['btn-save','btn-download','btn-add-step'].forEach(id=>document.getElementById(id).style.display='none');
+      document.getElementById('wf-meta').classList.add('hidden');
+      closeEditor(); closeWfJson();
+    }
+    closeModal(); loadWorkflowList(); toast('Deleted','ok');
+  });
+}
+
+// ── LEFT TOGGLE ──────────────────────────────────────────────────
+function toggleLeft() {
+  const p=document.getElementById('left-panel');
+  const col=p.classList.toggle('collapsed');
+  document.getElementById('btn-toggle-left').textContent=col?'›':'‹';
+  setTimeout(()=>fitGraph(),280);
+}
+
+// ── THEME ────────────────────────────────────────────────────────
+function toggleTheme() {
+  const light=document.documentElement.classList.toggle('light');
+  document.getElementById('btn-theme').textContent=light?'☾':'☀';
+  localStorage.setItem('wf_theme',light?'light':'dark');
+}
+
+// ── STEP EDITOR ──────────────────────────────────────────────────
+function openStepEditor(nodeId, tab='edit') {
+  if (!currentWf) return;
+  const steps=currentWf.data.steps||[];
+  let step=steps.find(s=>s.ws_name===nodeId);
+  if (!step) {
+    const wf=(currentWf.data.workflows||[]).find(w=>w.wf_nodes?.length);
+    if (wf) { const node=wf.wf_nodes.find(n=>n.step_id===nodeId); if(node) step=steps.find(s=>s.ws_name===node.ws_ref); }
+  }
+  if (!step) return;
+  currentStep=step;
+  populateEditor(currentStep);
+  document.getElementById('right-panel').classList.remove('hidden');
+  switchEditorTab(tab);
+}
+
+function openNewStepEditor() {
+  currentStep=null;
+  populateEditor({ ws_name:'',ws_type:'prompt', ws_llm:{ provider:'anthropic',model:'claude-sonnet-4-20250514',temperature:0 }, ws_inputs_schema:{ type:'object',required:[],properties:{} }, ws_output_schema:{ type:'object',required:[],properties:{} } });
+  document.getElementById('right-panel').classList.remove('hidden');
+  switchEditorTab('edit');
+}
+
+function populateEditor(s) {
+  document.getElementById('f-name').value      = s.ws_name||'';
+  document.getElementById('f-type').value      = s.ws_type||'prompt';
+  document.getElementById('f-provider').value  = s.ws_llm?.provider||'anthropic';
+  document.getElementById('f-model').value     = s.ws_llm?.model||'claude-sonnet-4-20250514';
+  document.getElementById('f-temp').value      = s.ws_llm?.temperature??0;
+  document.getElementById('f-sysprompt').value = s.ws_system_prompt||'';
+  document.getElementById('f-template').value  = s.ws_prompt_template||'';
+  document.getElementById('f-method').value    = s.ws_api?.method||'GET';
+  document.getElementById('f-url').value       = s.ws_api?.url||'';
+  renderSchemaFields('inputs-fields',  s.ws_inputs_schema?.properties||{},  s.ws_inputs_schema?.required||[]);
+  renderSchemaFields('outputs-fields', s.ws_output_schema?.properties||{}, s.ws_output_schema?.required||[]);
+  onTypeChange(); updateJsonTab(); updateRunTab(s);
+}
+
+function onTypeChange() {
+  const t=document.getElementById('f-type').value;
+  const p=t==='prompt', a=t==='api';
+  document.getElementById('llm-section').style.display       = p?'':'none';
+  document.getElementById('sysprompt-section').style.display = p?'':'none';
+  document.getElementById('template-section').style.display  = p?'':'none';
+  document.getElementById('api-section').style.display       = a?'':'none';
+}
+
+function renderSchemaFields(containerId,props,required) {
+  const container=document.getElementById(containerId);
+  container.innerHTML='';
+  Object.keys(props).forEach(k=>addSchemaRow(container,k,props[k].type||'string',required.includes(k)));
+}
+
+function addSchemaRow(container,name='',type='string',req=false) {
+  const row=document.createElement('div');
+  row.className='schema-field-row';
+  row.innerHTML=`
+    <input class="form-input" placeholder="field_name" value="${name}" style="flex:2">
+    <select class="form-select" style="flex:1">${FIELD_TYPES.map(t=>`<option ${t===type?'selected':''}>${t}</option>`).join('')}</select>
+    <input type="checkbox" class="schema-req-check" title="Required" ${req?'checked':''}>
+    <button class="schema-remove-btn" onclick="this.parentElement.remove()">&#x2715;</button>`;
+  container.appendChild(row);
+}
+
+function addInputField()  { addSchemaRow(document.getElementById('inputs-fields')); }
+function addOutputField() { addSchemaRow(document.getElementById('outputs-fields')); }
+
+function readSchemaFields(containerId) {
+  const rows=document.getElementById(containerId).querySelectorAll('.schema-field-row');
+  const props={},required=[];
+  rows.forEach(row=>{
+    const inputs=row.querySelectorAll('input,select');
+    const name=inputs[0].value.trim(),type=inputs[1].value,req=inputs[2].checked;
+    if(name){ props[name]={ type }; if(req) required.push(name); }
+  });
+  return { type:'object',required,properties:props };
+}
+
+function collectStep() {
+  const type=document.getElementById('f-type').value;
+  const s={ ws_name:document.getElementById('f-name').value.trim(), ws_type:type,
+    ws_inputs_schema:readSchemaFields('inputs-fields'), ws_output_schema:readSchemaFields('outputs-fields') };
+  if (type==='prompt') {
+    s.ws_llm={ provider:document.getElementById('f-provider').value, model:document.getElementById('f-model').value.trim(), temperature:parseFloat(document.getElementById('f-temp').value)||0 };
+    s.ws_system_prompt  =document.getElementById('f-sysprompt').value;
+    s.ws_prompt_template=document.getElementById('f-template').value;
+  }
+  if (type==='api') s.ws_api={ method:document.getElementById('f-method').value, url:document.getElementById('f-url').value.trim() };
+  return s;
+}
+
+function applyStepEdit() {
+  if (!currentWf) return;
+  const s=collectStep();
+  if (!s.ws_name) return toast('ws_name is required','err');
+  const steps=currentWf.data.steps||[];
+  if (currentStep) {
+    const idx=steps.findIndex(x=>x.ws_name===currentStep.ws_name);
+    if (idx>=0) steps[idx]=s; else steps.push(s);
+  } else {
+    if (steps.find(x=>x.ws_name===s.ws_name)) return toast('A step with this name already exists','err');
+    steps.push(s);
+  }
+  currentWf.data.steps=steps; currentStep=s;
+  buildGraph(currentWf.data); _refreshWfJsonPanel();
+  if (guestMode) { _guestSync(); toast('Step saved (not persisted)','ok'); }
+  else { saveWorkflow(); toast('Step saved','ok'); }
+}
+
+function deleteCurrentStep() {
+  if (!currentStep||!currentWf) return;
+  const name=currentStep.ws_name;
+  openConfirm(`Delete step "${name}"?`,'It will also be removed from workflow nodes.',()=>{
+    currentWf.data.steps=(currentWf.data.steps||[]).filter(s=>s.ws_name!==name);
+    (currentWf.data.workflows||[]).forEach(wf=>{
+      wf.wf_nodes=(wf.wf_nodes||[]).filter(n=>n.ws_ref!==name);
+      wf.wf_nodes.forEach(n=>{ n.depends_on=(n.depends_on||[]).filter(d=>d!==name); });
+    });
+    closeModal(); closeEditor(); buildGraph(currentWf.data); _refreshWfJsonPanel();
+    saveWorkflow(); toast('Step deleted','ok');
+  });
+}
+
+function closeEditor() {
+  document.getElementById('right-panel').classList.add('hidden');
+  currentStep=null;
+}
+
+function switchEditorTab(tab) {
+  document.querySelectorAll('.etab').forEach((b,i)=>b.classList.toggle('active',['edit','run','json'][i]===tab));
+  document.querySelectorAll('.etab-content').forEach(c=>c.classList.remove('active'));
+  document.getElementById(`etab-${tab}`)?.classList.add('active');
+  if (tab==='json') updateJsonTab();
+}
+
+function updateJsonTab() {
+  const s=currentStep||collectStep();
+  document.getElementById('step-json').innerHTML=syntaxHighlight(JSON.stringify(s,null,2));
+}
+
+// ── RUN ──────────────────────────────────────────────────────────
+function updateRunTab(s) {
+  const area=document.getElementById('run-inputs-area'); area.innerHTML='';
+  const inProps=s?.ws_inputs_schema?.properties||{}, inReq=s?.ws_inputs_schema?.required||[];
+  Object.keys(inProps).forEach(k=>{
+    const div=document.createElement('div');
+    div.innerHTML=`<div class="run-input-label">${k} <span class="field-type">${inProps[k].type||''}</span>${inReq.includes(k)?'<span class="run-input-req">req</span>':''}</div><textarea class="form-textarea" id="run-in-${k}" placeholder="Value for ${k}…"></textarea>`;
+    area.appendChild(div);
+  });
+}
+
+async function runStep() {
+  const s=currentStep||collectStep();
+  if (!s.ws_name) return toast('Save the step first','err');
+  const inProps=s.ws_inputs_schema?.properties||{}, inputs={};
+  for (const k of Object.keys(inProps)) {
+    const el=document.getElementById(`run-in-${k}`); if(!el) continue;
+    let val=el.value; try{ val=JSON.parse(val); }catch{} inputs[k]=val;
+  }
+
+  const outEl=document.getElementById('run-output'),metaEl=document.getElementById('run-meta'),btn=document.getElementById('run-btn');
+  outEl.textContent=''; outEl.className='run-output'; metaEl.innerHTML=''; btn.disabled=true; btn.textContent='Running…';
+
+  const tsStart = Date.now();
+  const ts = () => new Date().toISOString().slice(11,23); // HH:MM:SS.mmm
+
+  console.group(`[waiflo] runStep — ${s.ws_name} (${s.ws_type||'prompt'}) @ ${ts()}`);
+  console.log('step def:', s);
+  console.log('inputs:',   inputs);
+
+  // ── API step ──────────────────────────────────────────────────────────────
+  if ((s.ws_type||'').toLowerCase()==='api') {
+    const headers = { 'Content-Type':'application/json' };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    let res;
+    try {
+      const r = await fetch('/api/exec/step', { method:'POST', headers, body:JSON.stringify({ step:s, inputs }) });
+      res = await r.json();
+    } catch(e) { res = { error: e.message }; }
+    const elapsed = Date.now()-tsStart;
+    btn.disabled=false; btn.textContent='▶ Run Step';
+    if (res.error) {
+      outEl.className='run-output error'; outEl.textContent=res.error;
+      metaEl.innerHTML=`<span style="color:var(--red)">✕ error</span> · ${elapsed}ms · ${ts()}`;
+      console.error('[waiflo] api step error:', res.error);
+      console.groupEnd(); return;
+    }
+    outEl.textContent=JSON.stringify(res.result,null,2);
+    metaEl.innerHTML=`✓ api · ${elapsed}ms · ${ts()}`;
+    console.log('[waiflo] api result:', res.result);
+    console.groupEnd(); return;
+  }
+
+  // ── Prompt step (SSE) ─────────────────────────────────────────────────────
+  try {
+    const headers = { 'Content-Type':'application/json' };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    const resp = await fetch('/api/exec/step', { method:'POST', headers, body:JSON.stringify({ step:s, inputs }) });
+
+    if (!resp.ok) {
+      const errBody = await resp.json().catch(()=>({ error:`HTTP ${resp.status}` }));
+      throw new Error(errBody.error || `HTTP ${resp.status}`);
+    }
+
+    const reader=resp.body.getReader(), decoder=new TextDecoder();
+    let buffer='', full='';
+
+    while(true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream:true });
+      const parts = buffer.split('\n\n'); buffer = parts.pop();
+      for (const part of parts) {
+        const lines = part.split('\n');
+        const event = lines.find(l=>l.startsWith('event: '))?.slice(7) || 'message';
+        const data  = lines.find(l=>l.startsWith('data: '))?.slice(6);
+        if (!data) continue;
+        try {
+          const obj = JSON.parse(data);
+          if (event==='token') {
+            full += obj.text;
+            outEl.textContent = full;
+            outEl.scrollTop = outEl.scrollHeight;
+
+          } else if (event==='done') {
+            const elapsed = Date.now()-tsStart;
+            const usagePart = obj.usage
+              ? `in: <span>${obj.usage.input_tokens}</span> · out: <span>${obj.usage.output_tokens}</span> tok · `
+              : '';
+            if (obj.parsed) {
+              outEl.textContent = JSON.stringify(obj.parsed, null, 2);
+              metaEl.innerHTML  = `✓ parsed json · ${usagePart}${elapsed}ms · ${ts()}`;
+              console.log('[waiflo] done — parsed output:', obj.parsed);
+            } else {
+              outEl.textContent = full;
+              metaEl.innerHTML  = `<span style="color:var(--amber)">⚠ json parse failed — raw output</span> · ${usagePart}${elapsed}ms · ${ts()}`;
+              console.warn('[waiflo] done — JSON parse failed. Raw LLM output:', full);
+              console.warn('[waiflo] Expected ws_output_schema:', s.ws_output_schema);
+            }
+            if (obj.usage) console.log('[waiflo] usage:', obj.usage);
+            console.groupEnd();
+
+          } else if (event==='error') {
+            const elapsed = Date.now()-tsStart;
+            outEl.className='run-output error'; outEl.textContent=obj.message;
+            metaEl.innerHTML=`<span style="color:var(--red)">✕ ${ts()}</span> · ${elapsed}ms`;
+            console.error('[waiflo] SSE error:', obj.message);
+            console.groupEnd();
+          }
+        } catch(parseErr) {
+          console.warn('[waiflo] SSE frame parse error:', parseErr, '— raw:', data);
+        }
+      }
+    }
+  } catch(e) {
+    const elapsed = Date.now()-tsStart;
+    outEl.className='run-output error'; outEl.textContent=e.message;
+    metaEl.innerHTML=`<span style="color:var(--red)">✕ fetch error · ${ts()}</span> · ${elapsed}ms`;
+    console.error('[waiflo] fetch/stream error:', e);
+    console.groupEnd();
+  }
+  btn.disabled=false; btn.textContent='▶ Run Step';
+}
+
+
+// ── SETTINGS ─────────────────────────────────────────────────────
+function openSettings() {
+  if (guestMode) { showSignupCTA(); return; }
+  openModal('Settings',`
+    <div class="settings-section">
+      <div class="settings-title">Anthropic API Key</div>
+      <div class="settings-desc">Encrypted AES-256 on server, never exposed to the browser.</div>
+      <div class="settings-row">
+        <input class="settings-input" id="s-apikey" type="password" placeholder="sk-ant-api03-…">
+        <button class="settings-btn" onclick="saveApiKey()">Save</button>
+      </div>
+      <div id="s-apikey-msg"></div>
+    </div>
+    <div class="settings-section">
+      <div class="settings-title">Change Password</div>
+      <input class="settings-input" id="s-oldpw" type="password" placeholder="Current password" style="margin-bottom:6px">
+      <input class="settings-input" id="s-newpw" type="password" placeholder="New password (min. 8 chars)">
+      <button class="settings-btn" onclick="changePassword()" style="margin-top:8px">Change</button>
+      <div id="s-pw-msg"></div>
+    </div>`,
+    [{ label:'Close', action:closeModal }]
+  );
+}
+
+async function saveApiKey() {
+  const key=document.getElementById('s-apikey').value.trim(), msg=document.getElementById('s-apikey-msg');
+  const res=await api('/api/auth/apikey','PUT',{ apiKey:key });
+  if(res.error){ msg.className='settings-err'; msg.textContent=res.error; }
+  else { msg.className='settings-ok'; msg.textContent='Key saved and encrypted'; }
+}
+
+async function changePassword() {
+  const currentPassword=document.getElementById('s-oldpw').value, newPassword=document.getElementById('s-newpw').value;
+  const msg=document.getElementById('s-pw-msg');
+  const res=await api('/api/auth/password','PUT',{ currentPassword,newPassword });
+  if(res.error){ msg.className='settings-err'; msg.textContent=res.error; }
+  else { msg.className='settings-ok'; msg.textContent='Password updated'; }
+}
+
+// ── MODAL HELPERS ────────────────────────────────────────────────
+function openModal(title,bodyHtml,actions=[]) {
+  document.getElementById('modal-title').textContent=title;
+  document.getElementById('modal-body').innerHTML=bodyHtml;
+  const actEl=document.getElementById('modal-actions'); actEl.innerHTML='';
+  actions.forEach(a=>{ const btn=document.createElement('button'); btn.className='modal-btn'+(a.primary?' primary':''); btn.textContent=a.label; btn.onclick=a.action; actEl.appendChild(btn); });
+  document.getElementById('modal-overlay').classList.remove('hidden');
+}
+
+function openConfirm(title,sub,onConfirm) {
+  openModal(title,`<div class="confirm-text">${title}</div><div class="confirm-sub">${sub}</div>`,[
+    { label:'Cancel', action:closeModal },
+    { label:'Delete', action:onConfirm }
+  ]);
+  document.querySelector('.modal-btn:last-child').classList.add('danger');
+}
+
+function closeModal() { document.getElementById('modal-overlay').classList.add('hidden'); }
+
+// ── TOAST ────────────────────────────────────────────────────────
+let _toastTimer;
+function toast(msg,type='ok') {
+  const el=document.getElementById('toast');
+  el.textContent=msg; el.className=`show ${type}`;
+  clearTimeout(_toastTimer); _toastTimer=setTimeout(()=>(el.className=''),2500);
+}
+
+// ── UTILS ────────────────────────────────────────────────────────
+function syntaxHighlight(json) {
+  return json.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g,m=>{
+      if(/^"/.test(m)) return/:$/.test(m)?`<span class="jk">${m}</span>`:`<span class="js">${m}</span>`;
+      if(/true|false|null/.test(m)) return `<span class="jb">${m}</span>`;
+      return `<span class="jn">${m}</span>`;
+    });
+}
+
+// ── WINDOW EXPORTS ───────────────────────────────────────────────
+Object.assign(window,{
+  doLogout, openSettings, saveWorkflow, downloadWorkflow, newWorkflow, importWorkflow,
+  toggleLeft, toggleTheme, fitGraph, setLayout,
+  openNewStepEditor, openStepEditor,
+  applyStepEdit, deleteCurrentStep, closeEditor, switchEditorTab,
+  addInputField, addOutputField, onTypeChange,
+  runStep, closeModal, showSignupCTA,
+  deleteWorkflow, copyWfJson, applyWfJson, closeWfJson, onWfJsonInput, copyWfJsonByName,
+  openJsonFullscreen, closeJsonFullscreen, jfsCopy, jfsApply, jfsValidate,
+  saveApiKey, changePassword
+});
+
+// ── KEYBOARD ────────────────────────────────────────────────────
+document.addEventListener('keydown',e=>{
+  if (e.key==='Escape') {
+    if (!document.getElementById('json-fullscreen').classList.contains('hidden')) { closeJsonFullscreen(); return; }
+    closeModal();
+  }
+  if ((e.ctrlKey||e.metaKey)&&e.key==='s') { e.preventDefault(); saveWorkflow(); }
+});
+document.getElementById('modal-overlay').addEventListener('click',e=>{ if(e.target===document.getElementById('modal-overlay')) closeModal(); });
+
+// ── INIT ─────────────────────────────────────────────────────────
+window.addEventListener('load', async () => {
+  // Theme
+  if (localStorage.getItem('wf_theme')==='light') {
+    document.documentElement.classList.add('light');
+    document.getElementById('btn-theme').textContent='☾';
+  }
+
+  // Mount React Flow
+  const root = createRoot(document.getElementById('rf-container'));
+  root.render(h(AppGraph,null));
+
+  // Session check
+  if (token) {
+    const me=await api('/api/auth/me');
+    if (!me.error) { enterAuthUser(me); return; }
+    // token invalid
+    localStorage.removeItem('wf_token');
+    token=null;
+  }
+  // No valid session → demo mode
+  enterGuestMode(true);
+});
