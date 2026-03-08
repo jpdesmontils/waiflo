@@ -3,25 +3,12 @@ import fs      from 'fs/promises';
 import path    from 'path';
 import { authMiddleware } from './auth.js';
 import { workflowDir, ensureUserDir } from '../lib/users.js';
+import { safeName, wfPath } from '../lib/utils.js';
 
 const router = express.Router();
 
 // All routes require auth
 router.use(authMiddleware);
-
-function safeName(name) {
-  // Allow only alphanum, dash, underscore, dot — strip everything else
-  return name.replace(/[^a-zA-Z0-9_\-\.]/g, '').replace(/\.+/g, '.').slice(0, 120);
-}
-
-function wfPath(userId, name) {
-  const dir  = workflowDir(userId);
-  const safe = safeName(name);
-  if (!safe) throw new Error('Invalid workflow name');
-  // Ensure .waiflo.json extension
-  const filename = safe.endsWith('.waiflo.json') ? safe : `${safe}.waiflo.json`;
-  return path.join(dir, filename);
-}
 
 // ── LIST ──────────────────────────────────────────────────────────
 router.get('/', async (req, res) => {
@@ -54,7 +41,11 @@ router.get('/:name', async (req, res) => {
   try {
     const fp  = wfPath(req.user.userId, req.params.name);
     const raw = await fs.readFile(fp, 'utf8');
-    res.json(JSON.parse(raw));
+    try {
+      res.json(JSON.parse(raw));
+    } catch {
+      res.status(400).json({ error: 'Workflow file is corrupted (invalid JSON)' });
+    }
   } catch (err) {
     if (err.code === 'ENOENT') return res.status(404).json({ error: 'Workflow not found' });
     res.status(500).json({ error: 'Failed to read workflow' });
@@ -67,7 +58,12 @@ router.post('/:name', async (req, res) => {
     await ensureUserDir(req.user.userId);
     const fp = wfPath(req.user.userId, req.params.name);
     // Refuse overwrite on POST
-    try { await fs.access(fp); return res.status(409).json({ error: 'Workflow already exists — use PUT to update' }); } catch { /* ok */ }
+    try {
+      await fs.access(fp);
+      return res.status(409).json({ error: 'Workflow already exists — use PUT to update' });
+    } catch (err) {
+      if (err.code !== 'ENOENT') throw err; // Only ignore "file not found"
+    }
     const body = typeof req.body === 'object' ? JSON.stringify(req.body, null, 2) : req.body;
     await fs.writeFile(fp, body, 'utf8');
     res.status(201).json({ ok: true, name: req.params.name });

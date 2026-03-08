@@ -8,7 +8,8 @@ async function ensureUsersFile() {
   await fs.mkdir(DATA_DIR, { recursive: true });
   try {
     await fs.access(USERS_FILE);
-  } catch {
+  } catch (err) {
+    if (err.code !== 'ENOENT') throw err;
     await fs.writeFile(USERS_FILE, JSON.stringify({}, null, 2), 'utf8');
   }
 }

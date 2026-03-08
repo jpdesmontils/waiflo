@@ -1,7 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { decrypt } from './crypto.js';
 
-function resolveApiKey(user) {
+async function resolveApiKey(user) {
   if (user.plan === 'self-key' && user.apiKeyEnc) {
     return decrypt(user.apiKeyEnc);
   }
@@ -28,8 +28,9 @@ function buildPrompt(template, inputs) {
  * Writes SSE events to res (Express response).
  */
 export async function runPromptStep(step, inputs, user, res) {
-  const apiKey = resolveApiKey(user);
+  let apiKey = await resolveApiKey(user);
   const client = new Anthropic({ apiKey });
+  apiKey = null; // Clear from memory after use
 
   const llm      = step.ws_llm || {};
   const model    = llm.model       || 'claude-sonnet-4-20250514';
