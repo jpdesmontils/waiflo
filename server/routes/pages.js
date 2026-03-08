@@ -36,6 +36,15 @@ router.get('/editor', async (req, res) => {
   }
 });
 
+router.get('/docs', async (req, res) => {
+  try {
+    res.send(await render('docs', req.lang));
+  } catch (e) {
+    console.error('[pages] docs error:', e);
+    res.status(500).send('Server error');
+  }
+});
+
 router.get('/blog', async (req, res) => {
   try {
     const posts = await listPosts(req.lang);
