@@ -114,9 +114,10 @@
             <div class="form-row">
               <div class="form-section">
                 <div class="form-label">Provider</div>
-                <select class="form-select" id="f-provider">
+                <select class="form-select" id="f-provider" onchange="onProviderChange()">
                   <option value="anthropic">anthropic</option>
-                  <option value="openai">openai</option>
+                  <option value="openai">openai (ChatGPT)</option>
+                  <option value="perplexity">perplexity</option>
                   <option value="mistral">mistral</option>
                 </select>
               </div>
@@ -127,7 +128,7 @@
             </div>
             <div class="form-section">
               <div class="form-label">Model</div>
-              <input class="form-input" id="f-model" placeholder="claude-sonnet-4-20250514">
+              <select class="form-select" id="f-model"></select>
             </div>
           </div>
           <div id="api-section" style="display:none">
