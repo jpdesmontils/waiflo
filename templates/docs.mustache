@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="{{lang}}">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{meta_title}}</title>
+<meta name="description" content="{{meta_description}}">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800;900&family=JetBrains+Mono:wght@300;400;500;600;700&family=Figtree:ital,wght@0,300;0,400;0,500;1,300&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/assets/landing.css">
+<link rel="stylesheet" href="/assets/docs.css">
+</head>
+<body>
+
+{{> nav}}
+
+<div class="docs-layout">
+
+  <!-- SIDEBAR -->
+  <nav class="docs-sidebar">
+    <div class="docs-sidebar-section">
+      <div class="docs-sidebar-label">{{sidebar_schema}}</div>
+      <a href="#schema">{{sidebar_schema_overview}}</a>
+      <a href="#steps">{{sidebar_steps}}</a>
+      <a href="#workflows">{{sidebar_workflows}}</a>
+    </div>
+    <div class="docs-sidebar-section">
+      <div class="docs-sidebar-label">{{sidebar_api}}</div>
+      <a href="#exec">{{sidebar_exec}}</a>
+      <a href="#auth">{{sidebar_auth}}</a>
+      <a href="#design">{{sidebar_design}}</a>
+    </div>
+    <div class="docs-sidebar-section">
+      <div class="docs-sidebar-label">{{sidebar_guides}}</div>
+      <a href="#quickstart">{{sidebar_quickstart}}</a>
+    </div>
+  </nav>
+
+  <!-- MAIN CONTENT -->
+  <div class="docs-content">
+
+    <!-- HERO -->
+    <div class="docs-hero">
+      <div class="section-kicker">{{docs_kicker}}</div>
+      <h1>{{docs_h1}}</h1>
+      <p>{{docs_sub}}</p>
+    </div>
+
+    <!-- SCHEMA OVERVIEW -->
+    <div class="docs-section" id="schema">
+      <h2>{{schema_h2}}</h2>
+      <p>{{schema_desc}}</p>
+      <div class="docs-code"><pre><span class="cc">{</span>
+  <span class="ck">"lang_name"</span><span class="cc">:</span>  <span class="cs">"my_pipeline"</span><span class="cc">,</span>      <span class="co">// {{schema_comment_name}}</span>
+  <span class="ck">"steps"</span><span class="cc">:</span>      <span class="cc">[ ... ],</span>             <span class="co">// {{schema_comment_steps}}</span>
+  <span class="ck">"workflows"</span><span class="cc">:</span>  <span class="cc">[ ... ]</span>              <span class="co">// {{schema_comment_workflows}}</span>
+<span class="cc">}</span></pre></div>
+      <table class="docs-table">
+        <thead><tr><th>{{th_field}}</th><th>{{th_type}}</th><th>{{th_description}}</th></tr></thead>
+        <tbody>
+          <tr><td>lang_name</td><td>string</td><td>{{field_lang_name}} <span class="docs-badge required">required</span></td></tr>
+          <tr><td>steps</td><td>Step[]</td><td>{{field_steps}} <span class="docs-badge required">required</span></td></tr>
+          <tr><td>workflows</td><td>Workflow[]</td><td>{{field_workflows}} <span class="docs-badge optional">optional</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- STEPS -->
+    <div class="docs-section" id="steps">
+      <h2>{{steps_h2}}</h2>
+      <p>{{steps_desc}}</p>
+
+      <h3>{{steps_common_h3}}</h3>
+      <table class="docs-table">
+        <thead><tr><th>{{th_field}}</th><th>{{th_type}}</th><th>{{th_description}}</th></tr></thead>
+        <tbody>
+          <tr><td>ws_name</td><td>string</td><td>{{field_ws_name}} <span class="docs-badge required">required</span></td></tr>
+          <tr><td>ws_type</td><td>string</td><td>{{field_ws_type}} <span class="docs-badge required">required</span></td></tr>
+          <tr><td>ws_inputs_schema</td><td>JSONSchema</td><td>{{field_ws_inputs_schema}} <span class="docs-badge optional">optional</span></td></tr>
+          <tr><td>ws_output_schema</td><td>JSONSchema</td><td>{{field_ws_output_schema}} <span class="docs-badge optional">optional</span></td></tr>
+        </tbody>
+      </table>
+
+      <h3>{{steps_types_h3}}</h3>
+      <div class="docs-type-grid">
+        <div class="docs-type-card">
+          <div class="docs-type-name"><span class="docs-type-dot" style="background:#f59e0b"></span>prompt</div>
+          <div class="docs-type-desc">{{type_prompt_desc}}</div>
+          <div class="docs-type-fields">ws_llm<br>ws_system_prompt<br>ws_prompt_template<br>ws_output_schema</div>
+        </div>
+        <div class="docs-type-card">
+          <div class="docs-type-name"><span class="docs-type-dot" style="background:#2dd4bf"></span>api</div>
+          <div class="docs-type-desc">{{type_api_desc}}</div>
+          <div class="docs-type-fields">ws_api.method<br>ws_api.url<br>ws_api.headers<br>ws_api.body</div>
+        </div>
+        <div class="docs-type-card">
+          <div class="docs-type-name"><span class="docs-type-dot" style="background:#60a5fa"></span>transform</div>
+          <div class="docs-type-desc">{{type_transform_desc}}</div>
+          <div class="docs-type-fields">ws_transform_fn<br>— {{coming_soon}}</div>
+        </div>
+        <div class="docs-type-card">
+          <div class="docs-type-name"><span class="docs-type-dot" style="background:#a78bfa"></span>tool</div>
+          <div class="docs-type-desc">{{type_tool_desc}}</div>
+          <div class="docs-type-fields">ws_tools: [<br>&nbsp;&nbsp;"maps_search"<br>]</div>
+        </div>
+        <div class="docs-type-card">
+          <div class="docs-type-name"><span class="docs-type-dot" style="background:#fb923c"></span>script</div>
+          <div class="docs-type-desc">{{type_script_desc}}</div>
+          <div class="docs-type-fields">ws_script<br>— {{coming_soon}}</div>
+        </div>
+      </div>
+
+      <h3>{{steps_prompt_h3}}</h3>
+      <p>{{steps_prompt_desc}}</p>
+      <table class="docs-table">
+        <thead><tr><th>{{th_field}}</th><th>{{th_type}}</th><th>{{th_description}}</th></tr></thead>
+        <tbody>
+          <tr><td>ws_llm.provider</td><td>string</td><td>{{field_llm_provider}}</td></tr>
+          <tr><td>ws_llm.model</td><td>string</td><td>{{field_llm_model}}</td></tr>
+          <tr><td>ws_llm.temperature</td><td>number</td><td>{{field_llm_temperature}} <span class="docs-badge optional">optional</span></td></tr>
+          <tr><td>ws_system_prompt</td><td>string</td><td>{{field_system_prompt}}</td></tr>
+          <tr><td>ws_prompt_template</td><td>string</td><td>{{field_prompt_template}}</td></tr>
+        </tbody>
+      </table>
+      <div class="docs-code"><pre><span class="cc">{</span>
+  <span class="ck">"ws_name"</span><span class="cc">:</span>             <span class="cs">"classify"</span><span class="cc">,</span>
+  <span class="ck">"ws_type"</span><span class="cc">:</span>             <span class="cs">"prompt"</span><span class="cc">,</span>
+  <span class="ck">"ws_llm"</span><span class="cc">:</span>              <span class="cc">{</span> <span class="ck">"provider"</span><span class="cc">:</span> <span class="cs">"anthropic"</span><span class="cc">,</span> <span class="ck">"model"</span><span class="cc">:</span> <span class="cs">"claude-sonnet-4-20250514"</span><span class="cc">,</span> <span class="ck">"temperature"</span><span class="cc">:</span> <span class="cn">0</span> <span class="cc">},</span>
+  <span class="ck">"ws_system_prompt"</span><span class="cc">:</span>    <span class="cs">"You are a classifier. Reply with JSON only."</span><span class="cc">,</span>
+  <span class="ck">"ws_prompt_template"</span><span class="cc">:</span>  <span class="cs">"Classify: {{{input_text}}}\nSchema: {{ws_output_schema}}"</span><span class="cc">,</span>
+  <span class="ck">"ws_inputs_schema"</span><span class="cc">:</span>    <span class="cc">{</span> <span class="ck">"required"</span><span class="cc">:</span> <span class="cc">[</span><span class="cs">"input_text"</span><span class="cc">]</span> <span class="cc">},</span>
+  <span class="ck">"ws_output_schema"</span><span class="cc">:</span>    <span class="cc">{</span> <span class="ck">"properties"</span><span class="cc">:</span> <span class="cc">{</span> <span class="ck">"label"</span><span class="cc">:</span> <span class="cc">{</span> <span class="ck">"type"</span><span class="cc">:</span> <span class="cs">"string"</span> <span class="cc">}</span> <span class="cc">}</span> <span class="cc">}</span>
+<span class="cc">}</span></pre></div>
+
+      <h3>{{steps_api_h3}}</h3>
+      <p>{{steps_api_desc}}</p>
+      <table class="docs-table">
+        <thead><tr><th>{{th_field}}</th><th>{{th_type}}</th><th>{{th_description}}</th></tr></thead>
+        <tbody>
+          <tr><td>ws_api.method</td><td>string</td><td>{{field_api_method}}</td></tr>
+          <tr><td>ws_api.url</td><td>string</td><td>{{field_api_url}}</td></tr>
+          <tr><td>ws_api.headers</td><td>object</td><td>{{field_api_headers}} <span class="docs-badge optional">optional</span></td></tr>
+          <tr><td>ws_api.body</td><td>object</td><td>{{field_api_body}} <span class="docs-badge optional">optional</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- WORKFLOWS -->
+    <div class="docs-section" id="workflows">
+      <h2>{{workflows_h2}}</h2>
+      <p>{{workflows_desc}}</p>
+      <table class="docs-table">
+        <thead><tr><th>{{th_field}}</th><th>{{th_type}}</th><th>{{th_description}}</th></tr></thead>
+        <tbody>
+          <tr><td>wf_name</td><td>string</td><td>{{field_wf_name}} <span class="docs-badge required">required</span></td></tr>
+          <tr><td>wf_nodes</td><td>Node[]</td><td>{{field_wf_nodes}} <span class="docs-badge required">required</span></td></tr>
+        </tbody>
+      </table>
+      <h3>{{workflows_node_h3}}</h3>
+      <table class="docs-table">
+        <thead><tr><th>{{th_field}}</th><th>{{th_type}}</th><th>{{th_description}}</th></tr></thead>
+        <tbody>
+          <tr><td>step_id</td><td>string</td><td>{{field_step_id}}</td></tr>
+          <tr><td>depends_on</td><td>string[]</td><td>{{field_depends_on}} <span class="docs-badge optional">optional</span></td></tr>
+        </tbody>
+      </table>
+      <div class="docs-code"><pre><span class="cc">{</span>
+  <span class="ck">"wf_name"</span><span class="cc">:</span>  <span class="cs">"triage_and_respond"</span><span class="cc">,</span>
+  <span class="ck">"wf_nodes"</span><span class="cc">:</span> <span class="cc">[</span>
+    <span class="cc">{</span> <span class="ck">"step_id"</span><span class="cc">:</span> <span class="cs">"classify_ticket"</span> <span class="cc">},</span>
+    <span class="cc">{</span> <span class="ck">"step_id"</span><span class="cc">:</span> <span class="cs">"enrich_customer"</span><span class="cc">,</span>  <span class="ck">"depends_on"</span><span class="cc">:</span> <span class="cc">[</span><span class="cs">"classify_ticket"</span><span class="cc">]</span> <span class="cc">},</span>
+    <span class="cc">{</span> <span class="ck">"step_id"</span><span class="cc">:</span> <span class="cs">"draft_response"</span><span class="cc">,</span>    <span class="ck">"depends_on"</span><span class="cc">:</span> <span class="cc">[</span><span class="cs">"classify_ticket"</span><span class="cc">,</span> <span class="cs">"enrich_customer"</span><span class="cc">]</span> <span class="cc">}</span>
+  <span class="cc">]</span>
+<span class="cc">}</span></pre></div>
+    </div>
+
+    <!-- EXEC API -->
+    <div class="docs-section" id="exec">
+      <h2>{{exec_h2}}</h2>
+      <p>{{exec_desc}}</p>
+
+      <div class="docs-endpoint">
+        <div class="docs-endpoint-header">
+          <span class="docs-badge post">POST</span>
+          <span class="docs-endpoint-path">/api/exec/step</span>
+        </div>
+        <div class="docs-endpoint-desc">{{exec_step_desc}}</div>
+        <div class="docs-code"><pre><span class="co">// {{exec_step_request}}</span>
+<span class="cc">{</span>
+  <span class="ck">"step"</span><span class="cc">:</span>   <span class="cc">{ ... },</span>   <span class="co">// {{exec_step_field}}</span>
+  <span class="ck">"inputs"</span><span class="cc">:</span> <span class="cc">{ ... }</span>    <span class="co">// {{exec_inputs_field}}</span>
+<span class="cc">}</span>
+
+<span class="co">// {{exec_step_response}}</span>
+<span class="co">// {{exec_prompt_sse}}</span>
+<span class="cs">data: {"type":"delta","text":"..."}</span>
+<span class="cs">data: {"type":"final","output":{"label":"billing"}}</span>
+
+<span class="co">// {{exec_api_json}}</span>
+<span class="cc">{</span> <span class="ck">"output"</span><span class="cc">:</span> <span class="cc">{</span> <span class="ck">"status"</span><span class="cc">:</span> <span class="cn">200</span><span class="cc">,</span> <span class="ck">"body"</span><span class="cc">:</span> <span class="cc">{ ... }</span> <span class="cc">}</span> <span class="cc">}</span></pre></div>
+      </div>
+    </div>
+
+    <!-- AUTH API -->
+    <div class="docs-section" id="auth">
+      <h2>{{auth_h2}}</h2>
+      <p>{{auth_desc}}</p>
+
+      <div class="docs-endpoint">
+        <div class="docs-endpoint-header">
+          <span class="docs-badge post">POST</span>
+          <span class="docs-endpoint-path">/api/auth/register</span>
+        </div>
+        <div class="docs-endpoint-desc">{{auth_register_desc}}</div>
+        <div class="docs-code"><pre><span class="cc">{</span> <span class="ck">"email"</span><span class="cc">:</span> <span class="cs">"you@example.com"</span><span class="cc">,</span> <span class="ck">"password"</span><span class="cc">:</span> <span class="cs">"min8chars"</span> <span class="cc">}</span>
+<span class="co">// → { "token": "eyJ..." }</span></pre></div>
+      </div>
+
+      <div class="docs-endpoint">
+        <div class="docs-endpoint-header">
+          <span class="docs-badge post">POST</span>
+          <span class="docs-endpoint-path">/api/auth/login</span>
+        </div>
+        <div class="docs-endpoint-desc">{{auth_login_desc}}</div>
+        <div class="docs-code"><pre><span class="cc">{</span> <span class="ck">"email"</span><span class="cc">:</span> <span class="cs">"you@example.com"</span><span class="cc">,</span> <span class="ck">"password"</span><span class="cc">:</span> <span class="cs">"..."</span> <span class="cc">}</span>
+<span class="co">// → { "token": "eyJ..." }</span></pre></div>
+      </div>
+
+      <p>{{auth_bearer_desc}}</p>
+      <div class="docs-code"><pre>Authorization: Bearer &lt;token&gt;</pre></div>
+    </div>
+
+    <!-- DESIGN API -->
+    <div class="docs-section" id="design">
+      <h2>{{design_h2}}</h2>
+      <p>{{design_desc}}</p>
+
+      <div class="docs-endpoint">
+        <div class="docs-endpoint-header">
+          <span class="docs-badge get">GET</span>
+          <span class="docs-endpoint-path">/api/workflows</span>
+        </div>
+        <div class="docs-endpoint-desc">{{design_list_desc}}</div>
+      </div>
+
+      <div class="docs-endpoint">
+        <div class="docs-endpoint-header">
+          <span class="docs-badge post">POST</span>
+          <span class="docs-endpoint-path">/api/workflows</span>
+        </div>
+        <div class="docs-endpoint-desc">{{design_create_desc}}</div>
+      </div>
+
+      <div class="docs-endpoint">
+        <div class="docs-endpoint-header">
+          <span class="docs-badge patch">PATCH</span>
+          <span class="docs-endpoint-path">/api/workflow/design/step</span>
+        </div>
+        <div class="docs-endpoint-desc">{{design_patch_desc}}</div>
+        <div class="docs-code"><pre><span class="cc">{</span>
+  <span class="ck">"workflow_name"</span><span class="cc">:</span> <span class="cs">"triage"</span><span class="cc">,</span>
+  <span class="ck">"ws_name"</span><span class="cc">:</span>       <span class="cs">"classify"</span><span class="cc">,</span>
+  <span class="ck">"patch"</span><span class="cc">:</span>         <span class="cc">{</span> <span class="ck">"ws_llm"</span><span class="cc">:</span> <span class="cc">{</span> <span class="ck">"temperature"</span><span class="cc">:</span> <span class="cam">0.4</span> <span class="cc">}</span> <span class="cc">}</span>
+<span class="cc">}</span></pre></div>
+        <p style="font-size:12px; color:var(--dim);">{{design_merge_note}}</p>
+      </div>
+    </div>
+
+    <!-- QUICKSTART -->
+    <div class="docs-section" id="quickstart">
+      <h2>{{qs_h2}}</h2>
+      <p>{{qs_desc}}</p>
+      <div class="qs-steps">
+        <div class="qs-step">
+          <div class="qs-num">1</div>
+          <div class="qs-body">
+            <div class="qs-title">{{qs1_title}}</div>
+            <div class="qs-desc">{{qs1_desc}}</div>
+            <div class="qs-code">git clone https://github.com/jpdesmontils/waiflo<br>cd waiflo &amp;&amp; cp .env.example .env<br><span class="dc"># {{qs1_comment}}</span></div>
+          </div>
+        </div>
+        <div class="qs-step">
+          <div class="qs-num">2</div>
+          <div class="qs-body">
+            <div class="qs-title">{{qs2_title}}</div>
+            <div class="qs-desc">{{qs2_desc}}</div>
+            <div class="qs-code">docker compose up -d<br><span class="dc"># {{qs2_comment}}</span></div>
+          </div>
+        </div>
+        <div class="qs-step">
+          <div class="qs-num">3</div>
+          <div class="qs-body">
+            <div class="qs-title">{{qs3_title}}</div>
+            <div class="qs-desc">{{qs3_desc}}</div>
+            <div class="qs-code"><span class="dc"># {{qs3_comment_editor}}</span><br>open http://localhost:3001/editor<br><br><span class="dc"># {{qs3_comment_api}}</span><br>curl -X POST http://localhost:3001/api/auth/register \<br>&nbsp;&nbsp;-d '{"email":"you@example.com","password":"secret"}'</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /docs-content -->
+</div><!-- /docs-layout -->
+
+{{> footer}}
+
+</body>
+</html>

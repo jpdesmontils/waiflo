@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="{{lang}}">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{meta_title}}</title>
+<meta name="description" content="{{meta_description}}">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800;900&family=JetBrains+Mono:wght@300;400;500;600;700&family=Figtree:ital,wght@0,300;0,400;0,500;1,300&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/landing.css">
+</head>
+<body>
+
+{{> nav}}
+
+<!-- HERO -->
+<div class="hero">
+  <div class="hero-eyebrow">{{hero_eyebrow}}</div>
+  <h1>{{hero_h1_line1}}<br>{{hero_h1_line2}}<br>{{hero_h1_line3}} <span class="accent">{{hero_h1_accent}}</span></h1>
+  <p class="hero-sub">{{hero_sub}}</p>
+  <div class="hero-actions">
+    <a class="btn-primary" href="/editor">{{hero_cta_editor}}</a>
+    <a class="btn-secondary" href="https://github.com/jpdesmontils/waiflo" target="_blank">{{hero_cta_github}}</a>
+    <a class="btn-secondary" href="#quickstart">{{hero_cta_quickstart}}</a>
+  </div>
+  <div class="hero-trust">
+    <span>{{trust_1}}</span>
+    <span class="trust-dot"></span>
+    <span>{{trust_2}}</span>
+    <span class="trust-dot"></span>
+    <span>{{trust_3}}</span>
+    <span class="trust-dot"></span>
+    <span>{{trust_4}}</span>
+  </div>
+</div>
+
+<!-- PAIN BLOCK -->
+<div class="pain-section">
+  <div class="pain-label">{{pain_label}}</div>
+  <div class="pain-grid">
+    {{#pain_cards}}
+    <div class="pain-card">
+      <div class="pain-card-label {{label_class}}">{{label}}</div>
+      <div class="pain-title">{{title}}</div>
+      <div class="pain-desc">{{desc}}</div>
+    </div>
+    {{/pain_cards}}
+  </div>
+</div>
+
+<hr class="sep">
+
+<!-- CODE EXAMPLE -->
+<div class="hero-code">
+  <div style="max-width:640px; margin-bottom:36px;">
+    <div class="section-kicker">{{code_kicker}}</div>
+    <h2>{{code_h2}}<br><span>{{code_h2_span}}</span></h2>
+    <p style="font-size:16px; color:var(--text); line-height:1.75; font-weight:300;">{{{code_desc}}}</p>
+  </div>
+  <div class="code-window">
+    <div class="code-header">
+      <span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span>
+      <span class="code-file">support_triage.waiflo.json</span>
+      <span class="code-badge">{{code_badge}}</span>
+    </div>
+    <div class="code-block"><pre><span class="cc">{</span>
+  <span class="ck">"lang_name"</span><span class="cc">:</span> <span class="cs">"support_triage"</span><span class="cc">,</span>
+  <span class="ck">"steps"</span><span class="cc">: [</span>
+    <span class="cc">{</span>
+      <span class="ck">"ws_name"</span><span class="cc">:</span>             <span class="cs">"classify_ticket"</span><span class="cc">,</span>
+      <span class="ck">"ws_type"</span><span class="cc">:</span>             <span class="cs">"prompt"</span><span class="cc">,</span>
+      <span class="ck">"ws_llm"</span><span class="cc">:</span>              <span class="cc">{</span> <span class="ck">"provider"</span><span class="cc">:</span> <span class="cs">"anthropic"</span><span class="cc">,</span> <span class="ck">"model"</span><span class="cc">:</span> <span class="cs">"claude-sonnet-4-20250514"</span><span class="cc">,</span> <span class="ck">"temperature"</span><span class="cc">:</span> <span class="cn">0</span> <span class="cc">},</span>
+      <span class="ck">"ws_system_prompt"</span><span class="cc">:</span>    <span class="cs">"You are a support triage expert. Classify tickets with high precision."</span><span class="cc">,</span>
+      <span class="ck">"ws_inputs_schema"</span><span class="cc">:</span>    <span class="cc">{</span> <span class="ck">"required"</span><span class="cc">:</span> <span class="cc">[</span><span class="cs">"ticket_body"</span><span class="cc">],</span> <span class="ck">"properties"</span><span class="cc">:</span> <span class="cc">{</span> <span class="ck">"ticket_body"</span><span class="cc">:</span> <span class="cc">{</span> <span class="ck">"type"</span><span class="cc">:</span> <span class="cs">"string"</span> <span class="cc">}</span> <span class="cc">}</span> <span class="cc">},</span>
+      <span class="ck">"ws_output_schema"</span><span class="cc">:</span>    <span class="cc">{</span> <span class="ck">"properties"</span><span class="cc">:</span> <span class="cc">{</span> <span class="ck">"priority"</span><span class="cc">:</span> <span class="cc">{</span> <span class="ck">"type"</span><span class="cc">:</span> <span class="cs">"string"</span> <span class="cc">},</span> <span class="ck">"category"</span><span class="cc">:</span> <span class="cc">{</span> <span class="ck">"type"</span><span class="cc">:</span> <span class="cs">"string"</span> <span class="cc">}</span> <span class="cc">}</span> <span class="cc">}</span>
+    <span class="cc">},</span>
+    <span class="cc">{</span>
+      <span class="ck">"ws_name"</span><span class="cc">:</span> <span class="cs">"enrich_customer"</span><span class="cc">,</span>  <span class="ck">"ws_type"</span><span class="cc">:</span> <span class="cs">"api"</span><span class="cc">,</span>
+      <span class="ck">"ws_api"</span><span class="cc">:</span>  <span class="cc">{</span> <span class="ck">"method"</span><span class="cc">:</span> <span class="cs">"GET"</span><span class="cc">,</span> <span class="ck">"url"</span><span class="cc">:</span> <span class="cs">"https://crm.internal/customers/{{customer_id}}"</span> <span class="cc">}</span>
+    <span class="cc">},</span>
+    <span class="cc">{</span>
+      <span class="ck">"ws_name"</span><span class="cc">:</span> <span class="cs">"draft_response"</span><span class="cc">,</span>  <span class="ck">"ws_type"</span><span class="cc">:</span> <span class="cs">"prompt"</span><span class="cc">,</span>
+      <span class="ck">"ws_llm"</span><span class="cc">:</span>  <span class="cc">{</span> <span class="ck">"provider"</span><span class="cc">:</span> <span class="cs">"anthropic"</span><span class="cc">,</span> <span class="ck">"model"</span><span class="cc">:</span> <span class="cs">"claude-sonnet-4-20250514"</span><span class="cc">,</span> <span class="ck">"temperature"</span><span class="cc">:</span> <span class="cn">0.3</span> <span class="cc">}</span>
+    <span class="cc">}</span>
+  <span class="cc">],</span>
+  <span class="ck">"workflows"</span><span class="cc">: [</span> <span class="cc">{</span> <span class="ck">"wf_name"</span><span class="cc">:</span> <span class="cs">"triage_and_respond"</span><span class="cc">,</span> <span class="ck">"wf_nodes"</span><span class="cc">:</span> <span class="cc">[...]</span> <span class="cc">}</span> <span class="cc">]</span>
+<span class="cc">}</span></pre>
+    </div>
+  </div>
+</div>
+
+<hr class="sep">
+
+<!-- HOW IT WORKS -->
+<section id="how">
+  <div class="section-kicker">{{how_kicker}}</div>
+  <h2>{{how_h2}}<br><span>{{how_h2_span}}</span></h2>
+  <p class="section-sub">{{how_sub}}</p>
+  <div class="how-grid">
+    {{#how_cards}}
+    <div class="how-card">
+      <div class="how-num">{{num}}</div>
+      <div class="how-title">{{title}}</div>
+      <div class="how-desc">{{{desc}}}</div>
+      <span class="how-tag">{{tag}}</span>
+    </div>
+    {{/how_cards}}
+  </div>
+</section>
+
+<hr class="sep">
+
+<!-- DIFFERENTIATION -->
+<section>
+  <div class="section-kicker">{{diff_kicker}}</div>
+  <h2>{{diff_h2}}<br><span>{{diff_h2_span}}</span></h2>
+  <p class="section-sub">{{diff_sub}}</p>
+  <div class="diff-grid">
+    <div class="diff-col">
+      <div class="diff-col-label dim">{{diff_col1_label}}</div>
+      {{#diff_col1_rows}}
+      <div class="diff-row"><span class="{{icon_class}}">{{icon}}</span><span class="text">{{text}}</span></div>
+      {{/diff_col1_rows}}
+    </div>
+    <div class="diff-col">
+      <div class="diff-col-label dim">{{diff_col2_label}}</div>
+      {{#diff_col2_rows}}
+      <div class="diff-row"><span class="{{icon_class}}">{{icon}}</span><span class="text">{{text}}</span></div>
+      {{/diff_col2_rows}}
+    </div>
+    <div class="diff-col waiflo">
+      <div class="diff-col-label gold">{{diff_col3_label}}</div>
+      {{#diff_col3_rows}}
+      <div class="diff-row"><span class="check">✓</span><span class="text hi">{{{text}}}</span></div>
+      {{/diff_col3_rows}}
+    </div>
+  </div>
+</section>
+
+<hr class="sep">
+
+<!-- DEEP MERGE -->
+<section>
+  <div class="section-kicker">{{design_kicker}}</div>
+  <h2>{{design_h2}}<br><span>{{design_h2_span}}</span></h2>
+  <p class="section-sub">{{{design_desc}}}</p>
+  <div class="merge-demo">
+    <div class="merge-panel">
+      <div class="merge-h src">{{merge_current}}</div>
+      <pre><span class="cc">{</span>
+  <span class="ck">"ws_name"</span><span class="cc">:</span> <span class="cs">"classify"</span><span class="cc">,</span>
+  <span class="ck">"ws_llm"</span><span class="cc">:</span> <span class="cc">{</span>
+    <span class="ck">"provider"</span><span class="cc">:</span> <span class="cs">"anthropic"</span><span class="cc">,</span>
+    <span class="ck">"model"</span><span class="cc">:</span> <span class="cs">"claude-sonnet"</span><span class="cc">,</span>
+    <span class="ck">"temperature"</span><span class="cc">:</span> <span class="cn">0</span>
+  <span class="cc">},</span>
+  <span class="ck">"ws_system_prompt"</span><span class="cc">:</span>
+    <span class="cs">"You are an expert…"</span>
+<span class="cc">}</span></pre>
+    </div>
+    <div class="merge-arrow">+</div>
+    <div class="merge-panel">
+      <div class="merge-h patch">{{merge_patch}}</div>
+      <pre><span class="cc">{</span>
+  <span class="ck">"workflow_name"</span><span class="cc">:</span> <span class="cs">"triage"</span><span class="cc">,</span>
+  <span class="ck">"ws_name"</span><span class="cc">:</span> <span class="cs">"classify"</span><span class="cc">,</span>
+  <span class="ck">"patch"</span><span class="cc">:</span> <span class="cc">{</span>
+    <span class="ck">"ws_llm"</span><span class="cc">:</span> <span class="cc">{</span>
+      <span class="ck">"temperature"</span><span class="cc">:</span> <span class="cam">0.4</span>
+    <span class="cc">}</span>
+  <span class="cc">}</span>
+<span class="cc">}</span>
+ </pre>
+    </div>
+    <div class="merge-arrow">→</div>
+    <div class="merge-panel">
+      <div class="merge-h result">{{merge_result}}</div>
+      <pre><span class="cc">{</span>
+  <span class="ck">"ws_name"</span><span class="cc">:</span> <span class="cs">"classify"</span><span class="cc">,</span>
+  <span class="ck">"ws_llm"</span><span class="cc">:</span> <span class="cc">{</span>
+    <span class="ck">"provider"</span><span class="cc">:</span> <span class="cs">"anthropic"</span><span class="cc">, ✓</span>
+    <span class="ck">"model"</span><span class="cc">:</span> <span class="cs">"claude-sonnet"</span><span class="cc">, ✓</span>
+    <span class="ck">"temperature"</span><span class="cc">:</span> <span class="cam">0.4</span>  <span class="cc">← patched</span>
+  <span class="cc">},</span>
+  <span class="ck">"ws_system_prompt"</span><span class="cc">:</span>
+    <span class="cs">"You are…"</span>  <span class="cc">✓</span>
+<span class="cc">}</span></pre>
+    </div>
+  </div>
+</section>
+
+<hr class="sep">
+
+<!-- STEP TYPES -->
+<section id="types">
+  <div class="section-kicker">{{types_kicker}}</div>
+  <h2>{{types_h2}}<br><span>{{types_h2_span}}</span></h2>
+  <p class="section-sub">{{{types_sub}}}</p>
+  <div class="types-grid">
+    {{#step_types}}
+    <div class="type-card">
+      <div class="type-name"><span class="type-dot" style="background:{{color}}"></span>{{name}}</div>
+      <div class="type-desc">{{{desc}}}</div>
+      <div class="type-ex">{{{fields}}}</div>
+    </div>
+    {{/step_types}}
+  </div>
+</section>
+
+<hr class="sep">
+
+<!-- QUICKSTART -->
+<section id="quickstart">
+  <div class="section-kicker">{{qs_kicker}}</div>
+  <h2>{{qs_h2}}<br><span>{{qs_h2_span}}</span></h2>
+  <p class="section-sub">{{qs_sub}}</p>
+  <div class="qs-steps">
+    {{#qs_steps}}
+    <div class="qs-step">
+      <div class="qs-num">{{num}}</div>
+      <div class="qs-body">
+        <div class="qs-title">{{title}}</div>
+        <div class="qs-desc">{{desc}}</div>
+        <div class="qs-code">{{{code}}}</div>
+      </div>
+    </div>
+    {{/qs_steps}}
+  </div>
+</section>
+
+<!-- FINAL CTA -->
+<div class="final-cta">
+  <div class="final-cta-text">
+    <h2>{{cta_h2}}<br><span>{{cta_h2_span}}</span></h2>
+    <p>{{cta_sub}}</p>
+    <div class="cta-note">
+      <strong>{{cta_note_label}}</strong> {{cta_note}}
+    </div>
+  </div>
+  <div>
+    <div class="cta-btns">
+      <a class="btn-primary" href="/editor">{{cta_editor}}</a>
+      <a class="btn-secondary" href="https://github.com/jpdesmontils/waiflo" target="_blank">{{cta_github}}</a>
+    </div>
+  </div>
+</div>
+
+{{> footer}}
+
+</body>
+</html>

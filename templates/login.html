@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="{{lang}}">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{page_title}}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=JetBrains+Mono:wght@300;400;500;600&family=Figtree:ital,wght@0,300;0,400;0,500;1,300&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after { box-sizing:border-box; margin:0; padding:0; }
+html,body { height:100%; overflow:hidden; }
+:root {
+  --bg:#080c12; --panel:#0e1520; --panel2:#131c2b;
+  --border:#1a2740; --border2:#223354;
+  --text:#8fa3be; --hi:#d4e0ef; --dim:#3a5070;
+  --amber:#f59e0b; --amber2:#fbbf24;
+  --teal:#2dd4bf; --green:#34d399; --red:#f87171;
+}
+:root.light {
+  --bg:#f0f4f8; --panel:#ffffff; --panel2:#f5f7fa;
+  --border:#d6e0ea; --border2:#b8cad8;
+  --text:#4a6075; --hi:#1a2a3a; --dim:#8aa0b4;
+  --amber:#d97706; --amber2:#b45309;
+  --teal:#0d9488; --green:#059669; --red:#dc2626;
+}
+*,*::before,*::after { transition: background-color .2s, border-color .2s, color .15s; }
+body { background:var(--bg); color:var(--text); font-family:'Figtree',sans-serif; display:flex; align-items:center; justify-content:center; }
+.auth-wrap { display:flex; flex-direction:column; align-items:center; gap:32px; padding:24px; }
+.auth-brand { text-align:center; }
+.auth-logo { font-family:'Syne',sans-serif; font-weight:800; font-size:28px; color:var(--hi); letter-spacing:-.5px; }
+.auth-logo span { color:var(--amber); }
+.auth-tagline { font-family:'JetBrains Mono',monospace; font-size:9px; color:var(--dim); letter-spacing:1.5px; margin-top:4px; text-transform:uppercase; }
+.auth-box { background:var(--panel); border:1px solid var(--border2); border-radius:12px; padding:36px 32px; width:380px; box-shadow:0 40px 80px rgba(0,0,0,.6); }
+.auth-tabs { display:flex; gap:4px; margin-bottom:24px; }
+.auth-tab { flex:1; font-family:'JetBrains Mono',monospace; font-size:10px; padding:7px; border-radius:4px; border:1px solid var(--border); background:transparent; color:var(--dim); cursor:pointer; transition:all .15s; }
+.auth-tab.active { color:var(--amber); border-color:rgba(245,158,11,.3); background:rgba(245,158,11,.06); }
+.auth-field { margin-bottom:14px; }
+.auth-label { font-family:'JetBrains Mono',monospace; font-size:9px; color:var(--dim); letter-spacing:.5px; margin-bottom:5px; text-transform:uppercase; }
+.auth-input { width:100%; background:var(--panel2); border:1px solid var(--border); border-radius:4px; color:var(--hi); font-family:'JetBrains Mono',monospace; font-size:11px; padding:9px 11px; outline:none; transition:border-color .15s; }
+.auth-input:focus { border-color:rgba(245,158,11,.4); }
+.auth-btn { width:100%; font-family:'JetBrains Mono',monospace; font-size:11px; font-weight:500; color:var(--bg); background:var(--amber); border:none; border-radius:5px; padding:11px; cursor:pointer; margin-top:6px; transition:background .15s; letter-spacing:.3px; }
+.auth-btn:hover { background:var(--amber2); }
+.auth-err { font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--red); margin-top:10px; min-height:18px; }
+.auth-divider { display:flex; align-items:center; gap:10px; margin:18px 0 6px; }
+.auth-divider::before,.auth-divider::after { content:''; flex:1; height:1px; background:var(--border); }
+.auth-divider span { font-family:'JetBrains Mono',monospace; font-size:9px; color:var(--dim); letter-spacing:.5px; }
+.auth-guest-btn { width:100%; font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--dim); background:transparent; border:1px solid var(--border); border-radius:5px; padding:10px; cursor:pointer; transition:all .15s; letter-spacing:.3px; }
+.auth-guest-btn:hover { color:var(--teal); border-color:rgba(45,212,191,.3); background:rgba(45,212,191,.04); }
+.theme-toggle { position:fixed; top:14px; right:14px; background:var(--panel); border:1px solid var(--border); border-radius:4px; color:var(--dim); font-size:14px; padding:5px 9px; cursor:pointer; transition:all .15s; }
+.theme-toggle:hover { color:var(--amber); border-color:rgba(245,158,11,.3); }
+::-webkit-scrollbar { width:4px; } ::-webkit-scrollbar-thumb { background:var(--border2); border-radius:2px; }
+</style>
+</head>
+<body>
+
+<button class="theme-toggle" id="btn-theme" onclick="toggleTheme()">☀</button>
+
+<div class="auth-wrap">
+  <div class="auth-brand">
+    <div class="auth-logo">{{brand_logo}} <span>{{brand_editor}}</span></div>
+    <div class="auth-tagline">{{brand_tagline}}</div>
+  </div>
+
+  <div class="auth-box">
+    <div class="auth-tabs">
+      <button class="auth-tab active" id="tab-login-btn" onclick="switchTab('login')">{{tab_login}}</button>
+      <button class="auth-tab" id="tab-reg-btn" onclick="switchTab('register')">{{tab_register}}</button>
+    </div>
+
+    <div id="auth-login">
+      <div class="auth-field">
+        <div class="auth-label">{{label_email}}</div>
+        <input class="auth-input" id="login-email" type="email" placeholder="{{placeholder_email}}" autocomplete="email">
+      </div>
+      <div class="auth-field">
+        <div class="auth-label">{{label_password}}</div>
+        <input class="auth-input" id="login-password" type="password" placeholder="{{placeholder_password}}" autocomplete="current-password">
+      </div>
+      <button class="auth-btn" onclick="doLogin()">{{btn_login}}</button>
+    </div>
+
+    <div id="auth-register" style="display:none">
+      <div class="auth-field">
+        <div class="auth-label">{{label_email}}</div>
+        <input class="auth-input" id="reg-email" type="email" placeholder="{{placeholder_email}}">
+      </div>
+      <div class="auth-field">
+        <div class="auth-label">{{label_password}}</div>
+        <input class="auth-input" id="reg-password" type="password" placeholder="{{placeholder_min8}}">
+      </div>
+      <div class="auth-field">
+        <div class="auth-label">{{label_confirm}}</div>
+        <input class="auth-input" id="reg-confirm" type="password" placeholder="{{placeholder_repeat}}">
+      </div>
+      <button class="auth-btn" onclick="doRegister()">{{btn_register}}</button>
+    </div>
+
+    <div class="auth-err" id="auth-err"></div>
+    <div class="auth-divider"><span>{{divider_or}}</span></div>
+    <button class="auth-guest-btn" onclick="goEditor()">{{btn_guest}}</button>
+  </div>
+</div>
+
+<script src="assets/login.js"></script>
+</body>
+</html>

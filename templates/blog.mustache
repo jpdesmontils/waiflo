@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="{{lang}}">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{meta_title}}</title>
+<meta name="description" content="{{meta_description}}">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800;900&family=JetBrains+Mono:wght@300;400;500;600;700&family=Figtree:ital,wght@0,300;0,400;0,500;1,300&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/assets/landing.css">
+</head>
+<body>
+
+{{> nav}}
+
+<div class="blog-hero">
+  <div class="section-kicker">{{blog_kicker}}</div>
+  <h1>{{blog_h1}}</h1>
+  <p>{{blog_sub}}</p>
+</div>
+
+<div class="blog-grid">
+  {{#posts}}
+  <div class="blog-card">
+    <div class="blog-card-meta">
+      <span>{{date}}</span>
+      <span>{{author}}</span>
+    </div>
+    <div class="blog-card-title">{{title}}</div>
+    <div class="blog-card-excerpt">{{excerpt}}</div>
+    <div class="blog-card-tags">
+      {{#tags}}<span class="blog-tag">{{.}}</span>{{/tags}}
+    </div>
+    <a class="blog-card-link" href="/blog/{{slug}}">{{read_more}} →</a>
+  </div>
+  {{/posts}}
+  {{^posts}}
+  <div class="blog-empty">{{no_posts}}</div>
+  {{/posts}}
+</div>
+
+{{> footer}}
+
+</body>
+</html>

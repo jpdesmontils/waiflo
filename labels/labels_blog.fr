@@ -1,0 +1,15 @@
+{
+  "meta_title":       "Blog — Waiflo",
+  "meta_description": "Articles sur l'ingénierie des workflows IA, le versionnement des prompts et les pipelines IA self-hostés.",
+  "blog_kicker":      "Blog",
+  "blog_h1":          "L'ingénierie des workflows IA",
+  "blog_sub":         "Bonnes pratiques, tutoriels et articles de fond sur la structuration, le versionnement et la mise en production des pipelines IA.",
+  "read_more":        "Lire l'article",
+  "no_posts":         "Aucun article pour le moment. Revenez bientôt.",
+  "post_back":        "← Retour au blog",
+  "post_by":          "Par",
+  "cta_h3":           "Prêt à construire des pipelines IA structurés ?",
+  "cta_p":            "Ouvrez l'éditeur — sans inscription. Vos workflows, votre infrastructure.",
+  "cta_editor":       "⬡ Ouvrir l'éditeur",
+  "cta_github":       "★ GitHub"
+}

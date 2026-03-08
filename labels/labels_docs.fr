@@ -1,0 +1,116 @@
+{
+  "meta_title":       "Docs — Waiflo",
+  "meta_description": "Documentation Waiflo : référence du schéma JSON, types d'étapes, API REST, API Design et guide de démarrage.",
+
+  "sidebar_schema":          "Schéma",
+  "sidebar_schema_overview": "Vue d'ensemble",
+  "sidebar_steps":           "Étapes",
+  "sidebar_workflows":       "Workflows",
+  "sidebar_api":             "API",
+  "sidebar_exec":            "Exécution",
+  "sidebar_auth":            "Auth",
+  "sidebar_design":          "Design",
+  "sidebar_guides":          "Guides",
+  "sidebar_quickstart":      "Démarrage",
+
+  "docs_kicker": "Documentation",
+  "docs_h1":     "Référence Waiflo",
+  "docs_sub":    "Tout ce qu'il faut pour définir, versionner et exécuter des pipelines IA multi-étapes. JSON natif, API REST, zéro dépendance fournisseur.",
+
+  "schema_h2":                "Schéma de base",
+  "schema_desc":              "Un fichier Waiflo est un document JSON avec trois clés de premier niveau. Il est conçu pour être versionné sous Git, relu en pull request et déployé comme n'importe quel artefact.",
+  "schema_comment_name":      "identifiant unique du pipeline",
+  "schema_comment_steps":     "définitions d'étapes réutilisables",
+  "schema_comment_workflows": "DAGs reliant les étapes entre elles",
+
+  "th_field":       "Champ",
+  "th_type":        "Type",
+  "th_description": "Description",
+
+  "field_lang_name":  "Nom unique du pipeline. Utilisé comme nom de fichier sur le disque.",
+  "field_steps":      "Tableau de définitions d'étapes. Chaque étape est une unité atomique et réutilisable.",
+  "field_workflows":  "Tableau de définitions de workflows (DAGs). Chaque workflow relie des étapes en un graphe d'exécution.",
+
+  "steps_h2":         "Étapes",
+  "steps_desc":       "Une étape est l'unité atomique d'un pipeline. Elle possède un type, des schémas I/O typés et sa configuration complète dans un seul objet — aucun état caché, aucune héritage implicite.",
+  "steps_common_h3":  "Champs communs",
+  "field_ws_name":         "Identifiant unique dans le fichier. Utilisé pour référencer l'étape dans les workflows.",
+  "field_ws_type":         "L'un des types : prompt · api · transform · tool · script",
+  "field_ws_inputs_schema":"Objet JSON Schema décrivant les entrées attendues.",
+  "field_ws_output_schema":"Objet JSON Schema décrivant la sortie attendue.",
+
+  "steps_types_h3":   "Types d'étapes",
+
+  "type_prompt_desc":    "Appel LLM. Prompt système, substitution de template {{var}}, schéma de sortie typé. Streamé via SSE.",
+  "type_api_desc":       "Appel HTTP. L'URL et le corps supportent la substitution {{input}}. Retourne du JSON parsé ou du texte brut.",
+  "type_transform_desc": "Transformation de données entre étapes. Filtrer, calculer ou dériver des champs depuis les sorties amont.",
+  "type_tool_desc":      "Appel d'outil MCP (Google Maps, Asana, Gmail…) via le tableau ws_tools.",
+  "type_script_desc":    "Exécution de code personnalisé dans un environnement sandbox avec entrées liées.",
+  "coming_soon":         "bientôt disponible",
+
+  "steps_prompt_h3":   "prompt — champs LLM",
+  "steps_prompt_desc": "L'objet ws_llm configure le modèle à appeler. ws_prompt_template supporte la syntaxe Mustache : {{{var}}} pour l'injection brute et {{var}} pour l'échappement HTML.",
+  "field_llm_provider":    "Fournisseur LLM. Actuellement : anthropic.",
+  "field_llm_model":       "ID du modèle, ex : claude-sonnet-4-20250514.",
+  "field_llm_temperature": "0–1. Défaut : 0.",
+  "field_system_prompt":   "Chaîne de prompt système. Injectée avant le tour utilisateur.",
+  "field_prompt_template": "Template du tour utilisateur. Supporte {{input_var}} et {{ws_output_schema}}.",
+
+  "steps_api_h3":   "api — champs HTTP",
+  "steps_api_desc": "Les templates d'URL et de corps supportent la substitution {{input_var}} résolue depuis les inputs à l'exécution.",
+  "field_api_method":  "Méthode HTTP : GET · POST · PUT · PATCH · DELETE.",
+  "field_api_url":     "URL. Supporte la substitution de template {{input_var}}.",
+  "field_api_headers": "Objet d'en-têtes statiques ou templatisés.",
+  "field_api_body":    "Corps de la requête. Objet ou chaîne.",
+
+  "workflows_h2":   "Workflows",
+  "workflows_desc": "Un workflow est un graphe acyclique orienté (DAG) de références d'étapes. Le moteur déduit l'ordre d'exécution depuis les déclarations depends_on.",
+  "field_wf_name":   "Nom unique du workflow.",
+  "field_wf_nodes":  "Tableau ordonné de nœuds, chacun référençant une étape via step_id.",
+
+  "workflows_node_h3": "Champs d'un nœud",
+  "field_step_id":    "Référence un ws_name déclaré dans le tableau steps.",
+  "field_depends_on": "Tableau de step_id qui doivent se terminer avant que ce nœud s'exécute.",
+
+  "exec_h2":   "API d'exécution",
+  "exec_desc": "L'API exec exécute une étape unique avec les inputs fournis. Aucun compte requis pour un usage invité si ANTHROPIC_API_KEY est défini côté serveur. Les utilisateurs authentifiés apportent leur propre clé chiffrée.",
+
+  "exec_step_desc":     "Exécute une définition d'étape avec les inputs. Les étapes prompt retournent un flux SSE. Les étapes api retournent du JSON.",
+  "exec_step_request":  "Corps de la requête",
+  "exec_step_field":    "objet de définition d'étape complet",
+  "exec_inputs_field":  "map clé-valeur des inputs",
+  "exec_step_response": "Réponse",
+  "exec_prompt_sse":    "étape prompt → flux SSE",
+  "exec_api_json":      "étape api → JSON",
+
+  "auth_h2":   "API d'authentification",
+  "auth_desc": "Authentification JWT. Les tokens sont valides 7 jours. Passer le token dans l'en-tête Authorization pour tous les endpoints authentifiés.",
+
+  "auth_register_desc": "Créer un nouveau compte. Le mot de passe doit faire au moins 8 caractères.",
+  "auth_login_desc":    "Obtenir un token JWT pour un compte existant.",
+  "auth_bearer_desc":   "Inclure le token JWT dans toutes les requêtes nécessitant une authentification.",
+
+  "design_h2":   "API Design",
+  "design_desc": "Endpoints CRUD pour gérer les fichiers de workflow sur le serveur. Les endpoints PATCH utilisent un deep merge récursif — seuls les champs envoyés sont mis à jour. Conçu pour l'autosave et les éditeurs assistés par IA.",
+
+  "design_list_desc":   "Lister tous les workflows de l'utilisateur authentifié.",
+  "design_create_desc": "Créer un nouveau workflow. Le corps est le document JSON Waiflo complet.",
+  "design_patch_desc":  "Patcher un seul champ d'étape. Utilise un deep merge récursif — les champs non spécifiés sont préservés.",
+  "design_merge_note":  "Seul ws_llm.temperature est modifié. ws_llm.provider et ws_llm.model sont préservés automatiquement.",
+
+  "qs_h2":   "Démarrage rapide",
+  "qs_desc": "Auto-hébergé avec Docker. Zéro service externe — juste un secret JWT et votre clé Anthropic.",
+
+  "qs1_title":   "Cloner et configurer",
+  "qs1_desc":    "Deux secrets à générer : un pour la signature JWT, un pour le chiffrement des clés API au repos.",
+  "qs1_comment": "Définir JWT_SECRET et MASTER_SECRET dans .env",
+
+  "qs2_title":   "Démarrer le serveur",
+  "qs2_desc":    "Lance l'API et l'éditeur visuel. Persiste les fichiers de workflow sur un volume monté — aucune base de données requise.",
+  "qs2_comment": "Éditeur disponible sur http://localhost:3001/editor",
+
+  "qs3_title":          "Ouvrir l'éditeur ou appeler l'API",
+  "qs3_desc":           "Explorer l'éditeur visuel sans compte. Ou s'inscrire et pousser des workflows programmatiquement.",
+  "qs3_comment_editor": "Essayer l'éditeur en premier — aucun compte requis",
+  "qs3_comment_api":    "Ou démarrer par l'API"
+}
