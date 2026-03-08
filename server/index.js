@@ -1,6 +1,21 @@
 // ── Global crash handlers — must be first ─────────────────────────
-process.on('uncaughtException',  (err) => { console.error('[UNCAUGHT EXCEPTION]', err); });
-process.on('unhandledRejection', (reason) => { console.error('[UNHANDLED REJECTION]', reason); });
+process.on('uncaughtException',  (err) => {
+  console.error('[UNCAUGHT EXCEPTION]', err);
+  process.exit(1); // Let Docker/PM2 restart cleanly
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[UNHANDLED REJECTION]', reason);
+  process.exit(1);
+});
+// ── Validate required env vars before anything else ───────────────
+if (!process.env.JWT_SECRET) {
+  console.error('FATAL: JWT_SECRET environment variable is not set');
+  process.exit(1);
+}
+if (!process.env.MASTER_SECRET) {
+  console.error('FATAL: MASTER_SECRET environment variable is not set');
+  process.exit(1);
+}
 
 import 'dotenv/config';
 import express          from 'express';
@@ -8,13 +23,13 @@ import cors             from 'cors';
 import path             from 'path';
 import fs               from 'fs/promises';
 import { fileURLToPath } from 'url';
-
-import { langMiddleware }          from './middleware/lang.js';
-import pageRoutes                  from './routes/pages.js';
-import authRoutes                  from './routes/auth.js';
-import workflowRoutes              from './routes/workflows.js';
-import execRoutes                  from './routes/exec.js';
-import { wfRouter, stepRouter }    from './routes/design.js';
+import { langMiddleware }       from './middleware/lang.js';
+import pageRoutes               from './routes/pages.js';
+import authRoutes               from './routes/auth.js';
+import workflowRoutes           from './routes/workflows.js';
+import execRoutes               from './routes/exec.js';
+import { wfRouter, stepRouter } from './routes/design.js';
+import authRoutes               from './routes/auth.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT      = process.env.PORT || 3001;
@@ -35,7 +50,10 @@ await cleanupStaleLocks();
 // ── Express ───────────────────────────────────────────────────────
 const app = express();
 
-app.use(cors({ origin: true, credentials: true }));
+const corsOrigin = process.env.CORS_ORIGIN
+  ? process.env.CORS_ORIGIN.split(',').map(s => s.trim())
+  : true; // Allow all if not configured — set CORS_ORIGIN in production
+app.use(cors({ origin: corsOrigin, credentials: true }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.text({ limit: '10mb' }));
 
@@ -54,7 +72,7 @@ app.use('/api/workflows',            workflowRoutes);
 app.use('/api/exec',                 execRoutes);
 app.use('/api/workflow/design',      wfRouter);
 app.use('/api/workflow-step/design', stepRouter);
-app.get('/api/health', (_, res) => res.json({ ok: true, version: '0.1.0' }));
+app.get('/api/health', (_, res) => res.json({ ok: true }));
 
 // ── Fallback ──────────────────────────────────────────────────────
 app.get('*', (req, res) => {

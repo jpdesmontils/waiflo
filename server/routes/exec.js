@@ -1,24 +1,34 @@
-import express from 'express';
-import jwt              from 'jsonwebtoken';
+import express   from 'express';
+import jwt        from 'jsonwebtoken';
+import rateLimit  from 'express-rate-limit';
 import { authMiddleware } from './auth.js';
 import { getUser } from '../lib/users.js';
 import { runPromptStep, runApiStep } from '../lib/runner.js';
 
 const router = express.Router();
 
+// ── Rate limiting: 30 executions per minute per IP ────────────────
+const execLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  message: { error: 'Too many requests, please slow down' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 // Optional auth: attaches req.user if Bearer token is valid, continues regardless.
 router.use((req, res, next) => {
   const header = req.headers.authorization || '';
   const token  = header.startsWith('Bearer ') ? header.slice(7) : null;
   if (token) {
-    try { req.user = jwt.verify(token, process.env.JWT_SECRET || 'change-me'); } catch { /* guest */ }
+    try { req.user = jwt.verify(token, process.env.JWT_SECRET); } catch { /* guest */ }
   }
   next();
 });
 
 // ── EXEC STEP — streaming SSE ──────────────────────────────────────
 // Body: { step: <step_def>, inputs: { key: value, ... } }
-router.post('/step', async (req, res) => {
+router.post('/step', execLimiter, async (req, res) => {
   try {
     const { step, inputs } = req.body;
     if (!step || !step.ws_name) return res.status(400).json({ error: 'step definition required' });

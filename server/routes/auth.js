@@ -2,15 +2,25 @@ import express        from 'express';
 import bcrypt         from 'bcryptjs';
 import jwt            from 'jsonwebtoken';
 import { v4 as uuid } from 'uuid';
+import rateLimit      from 'express-rate-limit';
 import { encrypt, decrypt } from '../lib/crypto.js';
 import { readUsers, saveUser, userExists, findByEmail, ensureUserDir } from '../lib/users.js';
 
 const router = express.Router();
-const JWT_SECRET  = () => process.env.JWT_SECRET  || 'change-me';
+const JWT_SECRET  = () => process.env.JWT_SECRET; // Required — validated at startup
 const SALT_ROUNDS = 10;
 
+// ── Rate limiting ──────────────────────────────────────────────────
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10,                   // max 10 attempts per IP per window
+  message: { error: 'Too many requests, please try again later' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 // ── REGISTER ──────────────────────────────────────────────────────
-router.post('/register', async (req, res) => {
+router.post('/register', authLimiter, async (req, res) => {
   try {
     const { email, password } = req.body;
     if (!email || !password) return res.status(400).json({ error: 'email and password required' });
@@ -32,7 +42,7 @@ router.post('/register', async (req, res) => {
       createdAt: new Date().toISOString()
     });
 
-    const token = jwt.sign({ userId, email, plan: 'self-key' }, JWT_SECRET(), { expiresIn: '30d' });
+    const token = jwt.sign({ userId, email, plan: 'self-key' }, JWT_SECRET(), { expiresIn: '7d' });
     res.json({ token, userId, email, plan: 'self-key' });
 
   } catch (err) {
@@ -42,7 +52,7 @@ router.post('/register', async (req, res) => {
 });
 
 // ── LOGIN ─────────────────────────────────────────────────────────
-router.post('/login', async (req, res) => {
+router.post('/login', authLimiter, async (req, res) => {
   try {
     const { email, password } = req.body;
     if (!email || !password) return res.status(400).json({ error: 'email and password required' });
@@ -54,7 +64,7 @@ router.post('/login', async (req, res) => {
     if (!match) return res.status(401).json({ error: 'Invalid credentials' });
 
     const { userId, plan } = user;
-    const token = jwt.sign({ userId, email, plan }, JWT_SECRET(), { expiresIn: '30d' });
+    const token = jwt.sign({ userId, email, plan }, JWT_SECRET(), { expiresIn: '7d' });
     res.json({ token, userId, email, plan });
 
   } catch (err) {
@@ -82,7 +92,7 @@ router.put('/apikey', authMiddleware, async (req, res) => {
     if (!apiKey || !apiKey.startsWith('sk-ant-')) {
       return res.status(400).json({ error: 'Invalid Anthropic API key format' });
     }
-    const enc = encrypt(apiKey);
+    const enc = await encrypt(apiKey);
     await saveUser(req.user.userId, { apiKeyEnc: enc, plan: 'self-key' });
     res.json({ ok: true, message: 'API key saved and encrypted' });
   } catch (err) {
@@ -112,6 +122,7 @@ router.put('/password', authMiddleware, async (req, res) => {
     await saveUser(req.user.userId, { passwordHash });
     res.json({ ok: true });
   } catch (err) {
+    console.error('password change error:', err);
     res.status(500).json({ error: 'Failed to change password' });
   }
 });
