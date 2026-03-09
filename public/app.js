@@ -208,7 +208,6 @@ function buildGraph(data) {
   } else {
     steps.forEach((s,i)=>{
       rawNodes.push({ id:s.ws_name, type:'step', position:{x:0,y:0}, data:{ step:s, nodeId:s.ws_name } });
-      if (i>0) rawEdges.push({ id:`${steps[i-1].ws_name}->${s.ws_name}`, source:steps[i-1].ws_name, target:s.ws_name });
     });
     document.getElementById('meta-steps').textContent = steps.length;
     document.getElementById('meta-wf-pill').style.display = 'none';
