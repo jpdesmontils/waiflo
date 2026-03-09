@@ -68,6 +68,7 @@ let currentWf      = null;
 let currentStep    = null;
 let rankDir        = 'TB';
 let _setGraphData  = null;
+let _getNodes      = null;
 let _fitView       = null;
 let _graphVersion  = 0;
 // fullscreen source: 'workflow' | 'step'
@@ -154,15 +155,13 @@ function FlowInner({ nodes, edges, onNodesChange, onEdgesChange, version }) {
 }
 
 function AppGraph() {
-  const [gd, setGd] = useState({ nodes:[], edges:[], version:0 });
-  _setGraphData = setGd;
-  const [,,onNodesChange] = useNodesState([]);
-  const [,,onEdgesChange] = useEdgesState([]);
-  const [syncedNodes, setSyncedNodes] = useState([]);
-  const [syncedEdges, setSyncedEdges] = useState([]);
-  useEffect(()=>{ setSyncedNodes(gd.nodes); setSyncedEdges(gd.edges); }, [gd.version]);
+  const [nodes, setNodes, onNodesChange] = useNodesState([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const [version, setVersion] = useState(0);
+  _setGraphData = (gd) => { setNodes(gd.nodes); setEdges(gd.edges); setVersion(gd.version); };
+  _getNodes     = () => nodes;
   return h(ReactFlowProvider,null,
-    h(FlowInner,{ nodes:syncedNodes, edges:syncedEdges, onNodesChange, onEdgesChange, version:gd.version })
+    h(FlowInner,{ nodes, edges, onNodesChange, onEdgesChange, version })
   );
 }
 
@@ -203,11 +202,24 @@ function buildGraph(data) {
     document.getElementById('meta-wf-pill').style.display = 'none';
   }
   const layoutedNodes = computeLayout(rawNodes, rawEdges, rankDir);
+
+  // Préserver les positions des nœuds existants (drag utilisateur) et placer les nouveaux sous le dernier
+  const curPos = {};
+  if (_getNodes) _getNodes().forEach(n => { curPos[n.id] = n.position; });
+  let maxY = 0;
+  let refX = layoutedNodes[0]?.position?.x ?? 0;
+  layoutedNodes.forEach(n => { if (curPos[n.id]) { maxY = Math.max(maxY, curPos[n.id].y); refX = curPos[n.id].x; } });
+  const finalNodes = layoutedNodes.map(n => {
+    if (curPos[n.id]) return { ...n, position: curPos[n.id] };
+    maxY += NODE_H + 60;
+    return { ...n, position: { x: refX, y: maxY } };
+  });
+
   document.getElementById('meta-name').textContent = data.lang_name||currentWf?.name||'—';
   document.getElementById('wf-meta').classList.remove('hidden');
   document.getElementById('empty-state').classList.add('hidden');
   _graphVersion++;
-  if (_setGraphData) _setGraphData({ nodes:layoutedNodes, edges:rawEdges, version:_graphVersion });
+  if (_setGraphData) _setGraphData({ nodes:finalNodes, edges:rawEdges, version:_graphVersion });
 }
 
 function fitGraph() { _fitView?.({ padding:0.12, duration:400 }); }
