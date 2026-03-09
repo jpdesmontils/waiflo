@@ -12,6 +12,7 @@
 import express from 'express';
 import fs      from 'fs/promises';
 import { authMiddleware } from './auth.js';
+import { deleteStepRunData } from '../lib/runStore.js';
 import { ensureUserDir } from '../lib/users.js';
 import { wfPath } from '../lib/utils.js';
 
@@ -252,6 +253,7 @@ stepRouter.delete('/', async (req, res) => {
     });
 
     await writeWf(fp, data);
+    await deleteStepRunData(req.user.userId, workflow_name, ws_name);
     res.json({ ok: true, workflow_name, ws_name, deleted: true });
   } catch (err) {
     if (err.code === 'ENOENT') return res.status(404).json({ error: 'Workflow not found' });
