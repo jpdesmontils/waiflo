@@ -90,6 +90,7 @@
       <div id="editor-tabs">
         <button class="etab active" onclick="switchEditorTab('edit')">Edit</button>
         <button class="etab" onclick="switchEditorTab('run')">▶ Run</button>
+        <button class="etab" onclick="switchEditorTab('log')">Logs</button>
         <button class="etab" onclick="switchEditorTab('json')">JSON</button>
       </div>
 
@@ -186,8 +187,16 @@
         <div id="run-panel">
           <div class="run-inputs" id="run-inputs-area"></div>
           <button class="run-btn" id="run-btn" onclick="runStep()">▶ Run Step</button>
-          <div class="run-output" id="run-output">// Output will appear here…</div>
-          <div class="run-meta" id="run-meta"></div>
+          <div class="run-status" id="run-status">idle</div>
+          <div class="run-output-vars" id="run-output-vars">// Output variables will appear here…</div>
+        </div>
+      </div>
+
+      <!-- LOG TAB -->
+      <div class="etab-content" id="etab-log">
+        <div id="run-panel">
+          <div class="run-output" id="run-log-output">// Full prompt and execution log will appear here…</div>
+          <div class="run-meta" id="run-log-meta"></div>
         </div>
       </div>
 
