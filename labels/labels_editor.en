@@ -43,5 +43,7 @@
   "btn_save_step": "Save Step",
   "btn_close": "✕ Close",
   "btn_fullscreen": "⛶",
-  "run_available_inputs_title": "Available inputs from connected steps"
+  "run_available_inputs_title": "Available inputs from connected steps",
+  "technical_section_title": "Technical settings",
+  "edit_available_inputs_title": "Available inputs (connections)"
 }
