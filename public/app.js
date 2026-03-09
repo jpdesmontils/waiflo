@@ -259,6 +259,26 @@ function ensureWorkflowGraph() {
   return wf;
 }
 
+
+function ensureWorkflowNodeForStep(stepName) {
+  const wf = ensureWorkflowGraph();
+  if (!wf || !stepName) return null;
+
+  let node = wf.wf_nodes.find(n => n.ws_ref === stepName);
+  if (node) return node;
+
+  const base = `node_${stepName}`.replace(/[^a-zA-Z0-9_-]/g, '_');
+  let stepId = base;
+  let i = 2;
+  while (wf.wf_nodes.some(n => n.step_id === stepId)) {
+    stepId = `${base}_${i++}`;
+  }
+
+  node = { step_id: stepId, ws_ref: stepName, depends_on: [] };
+  wf.wf_nodes.push(node);
+  return node;
+}
+
 function syncWorkflowDependencies(sourceId, targetId) {
   const wf = ensureWorkflowGraph();
   if (!wf) return;
@@ -768,14 +788,32 @@ function applyStepEdit() {
   const s=collectStep();
   if (!s.ws_name) return toast('ws_name is required','err');
   const steps=currentWf.data.steps||[];
+
   if (currentStep) {
     const idx=steps.findIndex(x=>x.ws_name===currentStep.ws_name);
     if (idx>=0) steps[idx]=s; else steps.push(s);
+
+    // Keep workflow graph references in sync if the step name changed.
+    if (currentStep.ws_name !== s.ws_name) {
+      (currentWf.data.workflows||[]).forEach(wf=>{
+        (wf.wf_nodes||[]).forEach(n=>{
+          if (n.ws_ref === currentStep.ws_name) n.ws_ref = s.ws_name;
+        });
+      });
+    }
   } else {
     if (steps.find(x=>x.ws_name===s.ws_name)) return toast('A step with this name already exists','err');
     steps.push(s);
+
+    // If a workflow graph already exists (e.g. because of connections),
+    // ensure the new step is also added as a node so it appears in the UI.
+    if ((currentWf.data.workflows||[]).some(w => Array.isArray(w.wf_nodes))) {
+      ensureWorkflowNodeForStep(s.ws_name);
+    }
   }
-  currentWf.data.steps=steps; currentStep=s;
+
+  currentWf.data.steps=steps;
+  currentStep=s;
   buildGraph(currentWf.data); _refreshWfJsonPanel();
   if (guestMode) { _guestSync(); toast('Step saved (not persisted)','ok'); }
   else { saveWorkflow(); toast('Step saved','ok'); }
@@ -787,8 +825,9 @@ function deleteCurrentStep() {
   openConfirm(`Delete step "${name}"?`,'It will also be removed from workflow nodes.',()=>{
     currentWf.data.steps=(currentWf.data.steps||[]).filter(s=>s.ws_name!==name);
     (currentWf.data.workflows||[]).forEach(wf=>{
+      const removedIds = new Set((wf.wf_nodes||[]).filter(n=>n.ws_ref===name).map(n=>n.step_id));
       wf.wf_nodes=(wf.wf_nodes||[]).filter(n=>n.ws_ref!==name);
-      wf.wf_nodes.forEach(n=>{ n.depends_on=(n.depends_on||[]).filter(d=>d!==name); });
+      wf.wf_nodes.forEach(n=>{ n.depends_on=(n.depends_on||[]).filter(d=>!removedIds.has(d)); });
     });
     closeModal(); closeEditor(); buildGraph(currentWf.data); _refreshWfJsonPanel();
     saveWorkflow(); toast('Step deleted','ok');
