@@ -275,7 +275,12 @@ option { background:var(--panel2); }
 .run-input-req { color:var(--amber); font-size:8px; }
 .run-btn { font-family:'JetBrains Mono',monospace; font-size:11px; font-weight:500; color:var(--bg); background:var(--green); border:none; border-radius:5px; padding:9px; cursor:pointer; transition:background .15s; flex-shrink:0; }
 .run-btn:hover { background:#10b981; }
+.run-btn.secondary { background:var(--teal); }
+.run-btn.secondary:hover { background:#23bdb0; }
 .run-btn:disabled { opacity:.5; cursor:not-allowed; }
+.run-actions { display:flex; gap:8px; }
+.run-actions .run-btn { flex:1; }
+.exec-running .rf-btn-run { opacity:.45; pointer-events:none; }
 .run-output { flex:1; background:var(--panel2); border:1px solid var(--border); border-radius:5px; padding:12px; font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--green); line-height:1.7; overflow-y:auto; min-height:200px; white-space:pre-wrap; word-break:break-word; }
 .run-output.error { color:var(--red); }
 .run-status { font-family:'JetBrains Mono',monospace; font-size:10px; border:1px solid var(--border); background:var(--panel2); border-radius:5px; padding:8px 10px; text-transform:uppercase; letter-spacing:.5px; color:var(--dim); }
