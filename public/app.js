@@ -6,7 +6,7 @@ import { createRoot } from 'react-dom/client';
 import {
   ReactFlow, Background, Controls, MiniMap,
   Handle, Position, MarkerType,
-  useNodesState, useEdgesState,
+  useNodesState, useEdgesState, addEdge,
   ReactFlowProvider, useReactFlow
 } from '@xyflow/react';
 import dagre from 'dagre';
@@ -137,12 +137,12 @@ const StepNode = memo(function StepNode({ data, selected }) {
 
 const nodeTypes = { step: StepNode };
 
-function FlowInner({ nodes, edges, onNodesChange, onEdgesChange, version }) {
+function FlowInner({ nodes, edges, onNodesChange, onEdgesChange, onConnect, version }) {
   const { fitView } = useReactFlow();
   _fitView = fitView;
   useEffect(() => { setTimeout(()=>fitView({ padding:0.12, duration:400 }),60); }, [version]);
   return h(ReactFlow,{
-    nodes, edges, onNodesChange, onEdgesChange, nodeTypes,
+    nodes, edges, onNodesChange, onEdgesChange, onConnect, nodeTypes,
     defaultEdgeOptions:{ type:'smoothstep', markerEnd:{ type:MarkerType.ArrowClosed, color:'#2a3f60' }, style:{ stroke:'#2a3f60', strokeWidth:1.5 } },
     fitView:true, fitViewOptions:{ padding:0.12 },
     minZoom:0.08, maxZoom:2,
@@ -160,10 +160,20 @@ function AppGraph() {
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [version, setVersion] = useState(0);
+
+  const onConnect = (params) => {
+    setEdges((eds) => addEdge({
+      ...params,
+      id:`${params.source}->${params.target}`,
+      type:'smoothstep'
+    }, eds));
+    syncWorkflowDependencies(params.source, params.target);
+  };
+
   _setGraphData = (gd) => { setNodes(gd.nodes); setEdges(gd.edges); setVersion(gd.version); };
   _getNodes     = () => nodes;
   return h(ReactFlowProvider,null,
-    h(FlowInner,{ nodes, edges, onNodesChange, onEdgesChange, version })
+    h(FlowInner,{ nodes, edges, onNodesChange, onEdgesChange, onConnect, version })
   );
 }
 
@@ -226,6 +236,63 @@ function buildGraph(data) {
 
 function fitGraph() { _fitView?.({ padding:0.12, duration:400 }); }
 function setLayout(dir) { rankDir=dir; if(currentWf) buildGraph(currentWf.data); }
+
+
+function ensureWorkflowGraph() {
+  if (!currentWf) return null;
+  const data = currentWf.data;
+  if (!Array.isArray(data.workflows)) data.workflows = [];
+
+  let wf = data.workflows.find(w => Array.isArray(w.wf_nodes));
+  if (!wf) {
+    wf = {
+      wf_name: data.lang_name || currentWf.name || 'main',
+      wf_nodes: (data.steps || []).map((step, idx) => ({
+        step_id: step.ws_name || `step_${idx+1}`,
+        ws_ref: step.ws_name,
+        depends_on: []
+      }))
+    };
+    data.workflows.push(wf);
+  }
+
+  if (!Array.isArray(wf.wf_nodes)) wf.wf_nodes = [];
+  return wf;
+}
+
+function syncWorkflowDependencies(sourceId, targetId) {
+  const wf = ensureWorkflowGraph();
+  if (!wf) return;
+
+  let sourceNode = wf.wf_nodes.find(n => n.step_id === sourceId);
+  let targetNode = wf.wf_nodes.find(n => n.step_id === targetId);
+
+  if (!sourceNode) {
+    const sourceStep = (currentWf.data.steps || []).find(s => s.ws_name === sourceId);
+    if (sourceStep) {
+      sourceNode = { step_id: sourceId, ws_ref: sourceStep.ws_name, depends_on: [] };
+      wf.wf_nodes.push(sourceNode);
+    }
+  }
+
+  if (!targetNode) {
+    const targetStep = (currentWf.data.steps || []).find(s => s.ws_name === targetId);
+    if (targetStep) {
+      targetNode = { step_id: targetId, ws_ref: targetStep.ws_name, depends_on: [] };
+      wf.wf_nodes.push(targetNode);
+    }
+  }
+
+  if (!sourceNode || !targetNode) return;
+  if (!Array.isArray(targetNode.depends_on)) targetNode.depends_on = [];
+  if (!targetNode.depends_on.includes(sourceNode.step_id)) {
+    targetNode.depends_on.push(sourceNode.step_id);
+  }
+
+  _refreshWfJsonPanel();
+  if (guestMode) _guestSync();
+  else saveWorkflow();
+}
 
 // ── AUTH / SESSION ────────────────────────────────────────────────
 function doLogout() {
@@ -777,14 +844,46 @@ function buildInheritedInputs(step, nodeId) {
   return inherited;
 }
 
+
+
+function getAvailableConnectedInputs(step, nodeId) {
+  if (!currentWf || !nodeId) return [];
+  const wf = (currentWf.data.workflows || []).find(w => w.wf_nodes?.length);
+  if (!wf) return [];
+
+  const node = wf.wf_nodes.find(n => n.step_id === nodeId || n.ws_ref === nodeId);
+  if (!node) return [];
+
+  const names = new Set();
+  for (const depId of (node.depends_on || [])) {
+    const depNode = wf.wf_nodes.find(n => n.step_id === depId);
+    if (!depNode) continue;
+    const depStep = (currentWf.data.steps || []).find(s => s.ws_name === depNode.ws_ref);
+    const outProps = depStep?.ws_output_schema?.properties || {};
+    Object.keys(outProps).forEach(k => names.add(k));
+    names.add(depNode.ws_ref);
+    names.add(`${depNode.ws_ref}_output`);
+  }
+
+  return Array.from(names).sort();
+}
+
 function updateRunTab(s) {
   const area=document.getElementById('run-inputs-area'); area.innerHTML='';
+  const availableEl = document.getElementById('run-available-inputs');
   const inProps=s?.ws_inputs_schema?.properties||{}, inReq=s?.ws_inputs_schema?.required||[];
   Object.keys(inProps).forEach(k=>{
     const div=document.createElement('div');
     div.innerHTML=`<div class="run-input-label">${k} <span class="field-type">${inProps[k].type||''}</span>${inReq.includes(k)?'<span class="run-input-req">req</span>':''}</div><textarea class="form-textarea" id="run-in-${k}" placeholder="Value for ${k}…"></textarea>`;
     area.appendChild(div);
   });
+
+  if (availableEl) {
+    const vars = getAvailableConnectedInputs(s, _currentNodeId);
+    availableEl.innerHTML = vars.length
+      ? vars.map(v => `<span class="run-var-chip">${v}</span>`).join('')
+      : '<span class="run-available-empty">Aucune variable disponible (connectez un step entrant).</span>';
+  }
 }
 
 async function runStep() {
