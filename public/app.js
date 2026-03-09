@@ -76,7 +76,14 @@ let _jfsSource     = null;
 let _providersConfig  = {};   // loaded from /json_schemas/providers.json
 let _providerKeyStatus = {};  // loaded from /api/auth/me { anthropic: true, ... }
 let _lastStepRuns = {};       // keyed by workflow node id, stores latest parsed output
+let _stepRunUiState = {};     // keyed by workflow node id, stores log/meta/status/output ui state
 let _currentNodeId = null;    // currently edited node id (wf node id or step name)
+let _runController = null;
+let _isExecuting = false;
+let _runStepDefaultLabel = '▶ Run Step Only';
+let _runFlowDefaultLabel = '▶ Run Workflow From Here';
+let _edgeDeletePrompt = null;
+let _workflowExecLogs = [];
 
 // ══════════════════════════════════════════════════════════════════
 //  REACT FLOW — CUSTOM NODE
@@ -137,12 +144,12 @@ const StepNode = memo(function StepNode({ data, selected }) {
 
 const nodeTypes = { step: StepNode };
 
-function FlowInner({ nodes, edges, onNodesChange, onEdgesChange, onConnect, version }) {
+function FlowInner({ nodes, edges, onNodesChange, onEdgesChange, onConnect, onEdgeClick, onPaneClick, version }) {
   const { fitView } = useReactFlow();
   _fitView = fitView;
   useEffect(() => { setTimeout(()=>fitView({ padding:0.12, duration:400 }),60); }, [version]);
   return h(ReactFlow,{
-    nodes, edges, onNodesChange, onEdgesChange, onConnect, nodeTypes,
+    nodes, edges, onNodesChange, onEdgesChange, onConnect, onEdgeClick, onPaneClick, nodeTypes,
     defaultEdgeOptions:{ type:'smoothstep', markerEnd:{ type:MarkerType.ArrowClosed, color:'#2a3f60' }, style:{ stroke:'#2a3f60', strokeWidth:1.5 } },
     fitView:true, fitViewOptions:{ padding:0.12 },
     minZoom:0.08, maxZoom:2,
@@ -170,10 +177,18 @@ function AppGraph() {
     syncWorkflowDependencies(params.source, params.target);
   };
 
+  const onEdgeClick = (evt, edge) => {
+    evt?.preventDefault?.();
+    evt?.stopPropagation?.();
+    showEdgeDeletePrompt(edge, evt?.clientX || 0, evt?.clientY || 0);
+  };
+
+  const onPaneClick = () => hideEdgeDeletePrompt();
+
   _setGraphData = (gd) => { setNodes(gd.nodes); setEdges(gd.edges); setVersion(gd.version); };
   _getNodes     = () => nodes;
   return h(ReactFlowProvider,null,
-    h(FlowInner,{ nodes, edges, onNodesChange, onEdgesChange, onConnect, version })
+    h(FlowInner,{ nodes, edges, onNodesChange, onEdgesChange, onConnect, onEdgeClick, onPaneClick, version })
   );
 }
 
@@ -277,6 +292,46 @@ function ensureWorkflowNodeForStep(stepName) {
   node = { step_id: stepId, ws_ref: stepName, depends_on: [] };
   wf.wf_nodes.push(node);
   return node;
+}
+
+function removeWorkflowDependency(sourceId, targetId) {
+  if (!currentWf) return;
+  const wf = (currentWf.data.workflows || []).find(w => Array.isArray(w.wf_nodes));
+  if (!wf) return;
+  const targetNode = (wf.wf_nodes || []).find(n => n.step_id === targetId);
+  if (!targetNode) return;
+  targetNode.depends_on = (targetNode.depends_on || []).filter(d => d !== sourceId);
+  buildGraph(currentWf.data); _refreshWfJsonPanel();
+  if (guestMode) _guestSync(); else saveWorkflow();
+}
+
+function showEdgeDeletePrompt(edge, x, y) {
+  _edgeDeletePrompt = { edge, x, y };
+  renderEdgeDeletePrompt();
+}
+
+function hideEdgeDeletePrompt() {
+  _edgeDeletePrompt = null;
+  renderEdgeDeletePrompt();
+}
+
+function renderEdgeDeletePrompt() {
+  const el = document.getElementById('edge-delete-prompt');
+  if (!el) return;
+  if (!_edgeDeletePrompt) { el.classList.add('hidden'); return; }
+  el.classList.remove('hidden');
+  el.style.left = `${_edgeDeletePrompt.x}px`;
+  el.style.top = `${_edgeDeletePrompt.y}px`;
+}
+
+function confirmEdgeDelete() {
+  if (!_edgeDeletePrompt?.edge) return;
+  const { source, target } = _edgeDeletePrompt.edge;
+  hideEdgeDeletePrompt();
+  openConfirm('Supprimer la dépendance ?', `${source} → ${target}`, () => {
+    removeWorkflowDependency(source, target);
+    toast('Dépendance supprimée','ok');
+  });
 }
 
 function syncWorkflowDependencies(sourceId, targetId) {
@@ -548,6 +603,10 @@ async function openWorkflow(name) {
   }
   currentWf={name,data};
   _lastStepRuns = {};
+  _stepRunUiState = {};
+  _runController = null;
+  _isExecuting = false;
+  setExecutionUiState(false);
   closeEditor(); buildGraph(data); renderWorkflowList();
   document.getElementById('btn-save').style.display='';
   document.getElementById('btn-download').style.display='';
@@ -842,8 +901,52 @@ function closeEditor() {
   document.querySelectorAll('.maximize-btn.active').forEach(el => el.classList.remove('active'));
 }
 
+function setExecutionUiState(running) {
+  _isExecuting = running;
+  document.documentElement.classList.toggle('exec-running', running);
+  const stepBtn = document.getElementById('run-step-btn');
+  const flowBtn = document.getElementById('run-flow-btn');
+  if (!stepBtn || !flowBtn) return;
+  if (!running) {
+    _runStepDefaultLabel = stepBtn.dataset.defaultLabel || stepBtn.textContent;
+    _runFlowDefaultLabel = flowBtn.dataset.defaultLabel || flowBtn.textContent;
+  }
+  if (running) {
+    stepBtn.textContent = '■ Stop';
+    flowBtn.textContent = '■ Stop';
+  } else {
+    stepBtn.textContent = _runStepDefaultLabel;
+    flowBtn.textContent = _runFlowDefaultLabel;
+  }
+}
+
+function truncLog(v) {
+  const txt = typeof v === 'string' ? v : JSON.stringify(v);
+  return txt.length > 256 ? `${txt.slice(0,256)}…` : txt;
+}
+
+function wfTs() {
+  const d = new Date();
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+function appendWorkflowExecLog(line) {
+  _workflowExecLogs.push(line);
+  const pre = document.getElementById('wf-exec-logs-content');
+  if (pre) { pre.textContent = _workflowExecLogs.join('\n'); pre.scrollTop = pre.scrollHeight; }
+}
+
+function toggleWorkflowExecLogs() {
+  const body = document.getElementById('wf-exec-logs-body');
+  const icon = document.getElementById('wf-exec-logs-toggle');
+  if (!body || !icon) return;
+  const closed = body.classList.toggle('hidden');
+  icon.textContent = closed ? '▸' : '▾';
+}
+
 function switchEditorTab(tab) {
-  document.querySelectorAll('.etab').forEach((b,i)=>b.classList.toggle('active',['edit','run','json'][i]===tab));
+  document.querySelectorAll('.etab').forEach((b,i)=>b.classList.toggle('active',['edit','run','log','json'][i]===tab));
   document.querySelectorAll('.etab-content').forEach(c=>c.classList.remove('active'));
   document.getElementById(`etab-${tab}`)?.classList.add('active');
   if (tab==='json') updateJsonTab();
@@ -933,17 +1036,166 @@ function updateRunTab(s) {
     area.appendChild(div);
   });
 
+  const state = getStepRunState(s, _currentNodeId);
+  if (state?.lastInputs) {
+    Object.entries(state.lastInputs).forEach(([k,v]) => {
+      const el = document.getElementById(`run-in-${k}`);
+      if (!el) return;
+      el.value = typeof v === 'string' ? v : JSON.stringify(v, null, 2);
+    });
+  }
+
   if (availableEl) {
     const vars = getAvailableConnectedInputs(s, _currentNodeId);
     availableEl.innerHTML = vars.length
       ? vars.map(v => `<span class="run-var-chip">{{${v}}}</span>`).join('')
       : '<span class="run-available-empty">Aucune variable disponible (connectez un step entrant).</span>';
   }
+
+  renderRunState(s, _currentNodeId);
+  hydrateRunStateFromServer(s, _currentNodeId);
 }
 
-async function runStep() {
-  const s=currentStep||collectStep();
-  if (!s.ws_name) return toast('Save the step first','err');
+async function hydrateRunStateFromServer(step, nodeId) {
+  if (!token || !currentWf || getStepRunState(step, nodeId)) return;
+  const wf = encodeURIComponent(currentWf.name);
+  const ws = encodeURIComponent(step.ws_name);
+  const res = await api(`/api/exec/history/latest?workflow=${wf}&step=${ws}`);
+  if (res?.record) {
+    saveStepRunState(step, nodeId, {
+      status: res.record.status || 'idle',
+      output: typeof res.record.output === 'string' ? res.record.output : JSON.stringify(res.record.output || '', null, 2),
+      logOutput: `${res.record.prompt ? `PROMPT:\n${res.record.prompt}\n\n` : ''}${res.record.logOutput || ''}`,
+      logMeta: res.record.logMeta || '',
+      logError: res.record.status === 'error',
+      lastInputs: res.record.inputs || {}
+    });
+    renderRunState(step, nodeId);
+    updateRunTab(step);
+  }
+}
+
+function stopExecution() {
+  if (_runController) _runController.abort();
+}
+
+function getDownstreamExecutionOrder(startNodeId) {
+  const wf = (currentWf?.data?.workflows || []).find(w => w.wf_nodes?.length);
+  if (!wf) return [];
+  const nodes = wf.wf_nodes || [];
+  const byId = new Map(nodes.map(n => [n.step_id, n]));
+  const children = new Map(nodes.map(n => [n.step_id, []]));
+  nodes.forEach(n => (n.depends_on || []).forEach(dep => { if (children.has(dep)) children.get(dep).push(n.step_id); }));
+
+  const included = new Set();
+  const stack = [startNodeId];
+  while (stack.length) {
+    const id = stack.pop();
+    if (!id || included.has(id)) continue;
+    included.add(id);
+    (children.get(id) || []).forEach(c => stack.push(c));
+  }
+
+  const indeg = new Map();
+  included.forEach(id => indeg.set(id, 0));
+  included.forEach(id => {
+    const node = byId.get(id);
+    (node?.depends_on || []).forEach(dep => { if (included.has(dep)) indeg.set(id, (indeg.get(id) || 0) + 1); });
+  });
+  const q = [...included].filter(id => indeg.get(id) === 0);
+  const order = [];
+  while (q.length) {
+    const id = q.shift();
+    order.push(id);
+    (children.get(id) || []).forEach(c => {
+      if (!included.has(c)) return;
+      indeg.set(c, indeg.get(c) - 1);
+      if (indeg.get(c) === 0) q.push(c);
+    });
+  }
+  return order;
+}
+
+function getStepRunState(step, nodeId) {
+  const key = nodeId || step?.ws_name;
+  if (!key) return null;
+  return _stepRunUiState[key] || null;
+}
+
+function saveStepRunState(step, nodeId, patch) {
+  const key = nodeId || step?.ws_name;
+  if (!key) return;
+  _stepRunUiState[key] = {
+    status: 'idle',
+    output: '',
+    lastInputs: {},
+    logOutput: '',
+    logMeta: '',
+    ...(_stepRunUiState[key] || {}),
+    ...(patch || {})
+  };
+}
+
+function renderRunState(step, nodeId) {
+  const state = getStepRunState(step, nodeId);
+  const statusEl = document.getElementById('run-status');
+  const varsEl = document.getElementById('run-output-vars');
+  const logOutEl = document.getElementById('run-log-output');
+  const logMetaEl = document.getElementById('run-log-meta');
+  if (!statusEl || !varsEl || !logOutEl || !logMetaEl) return;
+
+  if (!state) {
+    statusEl.textContent = 'idle';
+    statusEl.className = 'run-status idle';
+    varsEl.textContent = '// No output captured yet…';
+    logOutEl.textContent = '// Full prompt + execution log will appear here…';
+    logOutEl.className = 'run-output';
+    logMetaEl.innerHTML = '';
+    return;
+  }
+
+  statusEl.textContent = state.status || 'idle';
+  statusEl.className = `run-status ${(state.status||'idle').toLowerCase()}`;
+  renderOutputVars(varsEl, state.output);
+  logOutEl.textContent = state.logOutput || '// Full prompt + execution log will appear here…';
+  logOutEl.className = `run-output${state.logError ? ' error' : ''}`;
+  logMetaEl.innerHTML = state.logMeta || '';
+}
+
+function escapeHtml(v) {
+  return String(v)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;');
+}
+
+function renderOutputVars(container, rawOutput) {
+  if (!container) return;
+  if (!rawOutput) { container.textContent = '// No output captured yet…'; return; }
+
+  let parsed = null;
+  if (typeof rawOutput === 'object' && rawOutput !== null) parsed = rawOutput;
+  else if (typeof rawOutput === 'string') {
+    try { parsed = JSON.parse(rawOutput); } catch { /* keep raw */ }
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    container.textContent = typeof rawOutput === 'string' ? rawOutput : JSON.stringify(rawOutput, null, 2);
+    return;
+  }
+
+  container.innerHTML = Object.entries(parsed).map(([k, v]) => {
+    const txt = typeof v === 'string' ? v : JSON.stringify(v, null, 2);
+    if (txt.includes('\n')) {
+      return `<details><summary><span class="var-name">${escapeHtml(k)}</span></summary><pre>${escapeHtml(txt)}</pre></details>`;
+    }
+    return `<div class="var-row"><span class="var-name">${escapeHtml(k)}</span><span>${escapeHtml(txt)}</span></div>`;
+  }).join('');
+}
+
+async function executeStep(stepDef, runMode='step_only') {
+  const s = stepDef || currentStep || collectStep();
+  if (!s.ws_name) { toast('Save the step first','err'); return false; }
+
   const inProps=s.ws_inputs_schema?.properties||{}, inputs={};
   const inheritedInputs = buildInheritedInputs(s, _currentNodeId);
   for (const k of Object.keys(inProps)) {
@@ -954,55 +1206,61 @@ async function runStep() {
   }
   const finalInputs = { ...inheritedInputs, ...inputs };
 
-  const outEl=document.getElementById('run-output'),metaEl=document.getElementById('run-meta'),btn=document.getElementById('run-btn');
-  outEl.textContent=''; outEl.className='run-output'; metaEl.innerHTML=''; btn.disabled=true; btn.textContent='Running…';
+  const statusEl=document.getElementById('run-status');
+  const varsEl=document.getElementById('run-output-vars');
+  const outEl=document.getElementById('run-log-output');
+  const metaEl=document.getElementById('run-log-meta');
+  varsEl.textContent='';
+  outEl.textContent=''; outEl.className='run-output'; metaEl.innerHTML='';
+  statusEl.textContent='running'; statusEl.className='run-status running';
+  saveStepRunState(s, _currentNodeId, { status:'running', output:'', lastInputs: inputs, logOutput:'', logMeta:'', logError:false });
+  _runController = new AbortController();
 
   const tsStart = Date.now();
-  const ts = () => new Date().toISOString().slice(11,23); // HH:MM:SS.mmm
+  const ts = () => new Date().toISOString().slice(11,23);
 
-  console.group(`[waiflo] runStep — ${s.ws_name} (${s.ws_type||'prompt'}) @ ${ts()}`);
-  console.log('step def:', s);
-  console.log('inputs:',   finalInputs);
-
-  // ── API step ──────────────────────────────────────────────────────────────
   if ((s.ws_type||'').toLowerCase()==='api') {
     const headers = { 'Content-Type':'application/json' };
     if (token) headers['Authorization'] = `Bearer ${token}`;
     let res;
     try {
-      const r = await fetch('/api/exec/step', { method:'POST', headers, body:JSON.stringify({ step:s, inputs: finalInputs }) });
+      const r = await fetch('/api/exec/step', { method:'POST', headers, signal:_runController.signal, body:JSON.stringify({ step:s, inputs: finalInputs, context:{ workflowName: currentWf?.name, nodeId:_currentNodeId, runMode } }) });
       res = await r.json();
-    } catch(e) { res = { error: e.message }; }
+    } catch(e) {
+      const msg = e.name === 'AbortError' ? 'Execution stopped by user' : e.message;
+      outEl.className='run-output error'; outEl.textContent=msg;
+      statusEl.textContent=e.name === 'AbortError' ? 'stopped' : 'error'; statusEl.className='run-status error';
+      saveStepRunState(s, _currentNodeId, { status:statusEl.textContent, output:'', logOutput:msg, logMeta:'', logError:true });
+      return false;
+    }
     const elapsed = Date.now()-tsStart;
-    btn.disabled=false; btn.textContent='▶ Run Step';
     if (res.error) {
       outEl.className='run-output error'; outEl.textContent=res.error;
       metaEl.innerHTML=`<span style="color:var(--red)">✕ error</span> · ${elapsed}ms · ${ts()}`;
-      console.error('[waiflo] api step error:', res.error);
-      console.groupEnd(); return;
+      statusEl.textContent='error'; statusEl.className='run-status error';
+      saveStepRunState(s, _currentNodeId, { status:'error', logOutput:res.error, logMeta:metaEl.innerHTML, logError:true });
+      return false;
     }
-    outEl.textContent=JSON.stringify(res.result,null,2);
+    const resultText = JSON.stringify(res.result,null,2);
+    outEl.textContent=resultText;
+    varsEl.textContent=resultText;
     rememberStepResult(s, _currentNodeId, res.result);
     metaEl.innerHTML=`✓ api · ${elapsed}ms · ${ts()}`;
-    console.log('[waiflo] api result:', res.result);
-    console.groupEnd(); return;
+    statusEl.textContent='done'; statusEl.className='run-status done';
+    saveStepRunState(s, _currentNodeId, { status:'done', output:resultText, logOutput:resultText, logMeta:metaEl.innerHTML, logError:false });
+    return true;
   }
 
-  // ── Prompt step (SSE) ─────────────────────────────────────────────────────
   try {
     const headers = { 'Content-Type':'application/json' };
     if (token) headers['Authorization'] = `Bearer ${token}`;
-
-    const resp = await fetch('/api/exec/step', { method:'POST', headers, body:JSON.stringify({ step:s, inputs: finalInputs }) });
-
+    const resp = await fetch('/api/exec/step', { method:'POST', headers, signal:_runController.signal, body:JSON.stringify({ step:s, inputs: finalInputs, context:{ workflowName: currentWf?.name, nodeId:_currentNodeId, runMode } }) });
     if (!resp.ok) {
       const errBody = await resp.json().catch(()=>({ error:`HTTP ${resp.status}` }));
       throw new Error(errBody.error || `HTTP ${resp.status}`);
     }
-
     const reader=resp.body.getReader(), decoder=new TextDecoder();
     let buffer='', full='';
-
     while(true) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -1013,54 +1271,90 @@ async function runStep() {
         const event = lines.find(l=>l.startsWith('event: '))?.slice(7) || 'message';
         const data  = lines.find(l=>l.startsWith('data: '))?.slice(6);
         if (!data) continue;
-        try {
-          const obj = JSON.parse(data);
-          if (event==='token') {
-            full += obj.text;
+        const obj = JSON.parse(data);
+        if (event==='token') {
+          full += obj.text;
+          outEl.textContent = full;
+          saveStepRunState(s, _currentNodeId, { status:'running', logOutput:full });
+        } else if (event==='done') {
+          const elapsed = Date.now()-tsStart;
+          if (obj.parsed) {
+            const parsedText = JSON.stringify(obj.parsed, null, 2);
+            outEl.textContent = parsedText;
+            varsEl.textContent = parsedText;
+            rememberStepResult(s, _currentNodeId, obj.parsed);
+            metaEl.innerHTML  = `✓ parsed json · ${elapsed}ms · ${ts()}`;
+            statusEl.textContent='done'; statusEl.className='run-status done';
+            saveStepRunState(s, _currentNodeId, { status:'done', output:parsedText, logOutput:parsedText, logMeta:metaEl.innerHTML, logError:false });
+          } else {
             outEl.textContent = full;
-            outEl.scrollTop = outEl.scrollHeight;
-
-          } else if (event==='done') {
-            const elapsed = Date.now()-tsStart;
-            const usagePart = obj.usage
-              ? `in: <span>${obj.usage.input_tokens}</span> · out: <span>${obj.usage.output_tokens}</span> tok · `
-              : '';
-            if (obj.parsed) {
-              outEl.textContent = JSON.stringify(obj.parsed, null, 2);
-              rememberStepResult(s, _currentNodeId, obj.parsed);
-              metaEl.innerHTML  = `✓ parsed json · ${usagePart}${elapsed}ms · ${ts()}`;
-              console.log('[waiflo] done — parsed output:', obj.parsed);
-            } else {
-              outEl.textContent = full;
-              metaEl.innerHTML  = `<span style="color:var(--amber)">⚠ json parse failed — raw output</span> · ${usagePart}${elapsed}ms · ${ts()}`;
-              console.warn('[waiflo] done — JSON parse failed. Raw LLM output:', full);
-              console.warn('[waiflo] Expected ws_output_schema:', s.ws_output_schema);
-            }
-            if (obj.usage) console.log('[waiflo] usage:', obj.usage);
-            console.groupEnd();
-
-          } else if (event==='error') {
-            const elapsed = Date.now()-tsStart;
-            outEl.className='run-output error'; outEl.textContent=obj.message;
-            metaEl.innerHTML=`<span style="color:var(--red)">✕ ${ts()}</span> · ${elapsed}ms`;
-            console.error('[waiflo] SSE error:', obj.message);
-            console.groupEnd();
+            varsEl.textContent = full;
+            metaEl.innerHTML = `<span style="color:var(--amber)">⚠ json parse failed — raw output</span> · ${elapsed}ms · ${ts()}`;
+            statusEl.textContent='done_raw'; statusEl.className='run-status done';
+            saveStepRunState(s, _currentNodeId, { status:'done_raw', output:full, logOutput:full, logMeta:metaEl.innerHTML, logError:false });
           }
-        } catch(parseErr) {
-          console.warn('[waiflo] SSE frame parse error:', parseErr, '— raw:', data);
+        } else if (event==='error') {
+          const elapsed = Date.now()-tsStart;
+          outEl.className='run-output error'; outEl.textContent=obj.message;
+          metaEl.innerHTML=`<span style="color:var(--red)">✕ ${ts()}</span> · ${elapsed}ms`;
+          statusEl.textContent='error'; statusEl.className='run-status error';
+          saveStepRunState(s, _currentNodeId, { status:'error', output:'', logOutput:obj.message, logMeta:metaEl.innerHTML, logError:true });
+          return false;
         }
       }
     }
   } catch(e) {
     const elapsed = Date.now()-tsStart;
-    outEl.className='run-output error'; outEl.textContent=e.message;
-    metaEl.innerHTML=`<span style="color:var(--red)">✕ fetch error · ${ts()}</span> · ${elapsed}ms`;
-    console.error('[waiflo] fetch/stream error:', e);
-    console.groupEnd();
+    const aborted = e.name === 'AbortError';
+    const msg = aborted ? 'Execution stopped by user' : e.message;
+    outEl.className='run-output error'; outEl.textContent=msg;
+    metaEl.innerHTML=`<span style="color:var(--red)">✕ ${ts()}</span> · ${elapsed}ms`;
+    statusEl.textContent=aborted ? 'stopped' : 'error'; statusEl.className='run-status error';
+    saveStepRunState(s, _currentNodeId, { status:aborted ? 'stopped' : 'error', output:'', logOutput:msg, logMeta:metaEl.innerHTML, logError:true });
+    return false;
   }
-  btn.disabled=false; btn.textContent='▶ Run Step';
+  return true;
 }
 
+async function runStepOnly() {
+  if (_isExecuting) return stopExecution();
+  if (!currentStep) return;
+  setExecutionUiState(true);
+  try { await executeStep(currentStep, 'step_only'); }
+  finally { _runController = null; setExecutionUiState(false); }
+}
+
+async function runWorkflowFromHere() {
+  if (_isExecuting) return stopExecution();
+  if (!currentStep || !_currentNodeId) return;
+  setExecutionUiState(true);
+  try {
+    _workflowExecLogs = [];
+    appendWorkflowExecLog(`${wfTs()} ## Workflow ## Start from ${_currentNodeId}`);
+    const order = getDownstreamExecutionOrder(_currentNodeId);
+    const wf = (currentWf?.data?.workflows || []).find(w => w.wf_nodes?.length);
+    for (const nodeId of order) {
+      if (!_isExecuting) break;
+      const node = wf.wf_nodes.find(n => n.step_id === nodeId);
+      const step = (currentWf.data.steps || []).find(st => st.ws_name === node.ws_ref);
+      if (!step) continue;
+      currentStep = step;
+      _currentNodeId = nodeId;
+      appendWorkflowExecLog(`${wfTs()} ## ${step.ws_name} ## Start`);
+      const inVars = buildInheritedInputs(step, nodeId);
+      const inTxt = Object.entries(inVars).map(([k,v]) => `${k}=${truncLog(v)}`).join(', ');
+      appendWorkflowExecLog(`${wfTs()} ## ${step.ws_name} ## inputs : ${inTxt || 'none'}`);
+      const ok = await executeStep(step, 'workflow_from_here');
+      const st = getStepRunState(step, nodeId) || {};
+      appendWorkflowExecLog(`${wfTs()} ## ${step.ws_name} ## End, status ${st.status || (ok?'OK':'ERR')}, output=${truncLog(st.output || '')}`);
+      if (!ok) break;
+    }
+    appendWorkflowExecLog(`${wfTs()} ## Workflow ## End`);
+  } finally {
+    _runController = null;
+    setExecutionUiState(false);
+  }
+}
 
 // ── SETTINGS ─────────────────────────────────────────────────────
 const PROVIDER_KEY_PLACEHOLDERS = {
@@ -1095,11 +1389,32 @@ function openSettings() {
       <input class="settings-input" id="s-newpw" type="password" placeholder="New password (min. 8 chars)">
       <button class="settings-btn" onclick="changePassword()" style="margin-top:8px">Change</button>
       <div id="s-pw-msg"></div>
+    </div>
+    <div class="settings-section">
+      <div class="settings-title">Language</div>
+      <div class="settings-row">
+        <select class="settings-input" id="s-lang" onchange="setLanguage(this.value)">
+          <option value="en">English</option>
+          <option value="fr">Français</option>
+        </select>
+      </div>
     </div>`,
     [{ label:'Close', action:closeModal }]
   );
   // Load provider key status from /me
   loadProviderKeyStatus();
+  const qpLang = new URLSearchParams(window.location.search).get('lang');
+  const cookieLang = document.cookie.split('; ').find(v=>v.startsWith('lang='))?.split('=')[1];
+  const currentLang = qpLang || cookieLang || 'en';
+  const sLang = document.getElementById('s-lang');
+  if (sLang) sLang.value = currentLang;
+}
+
+function setLanguage(lang) {
+  if (!['fr','en'].includes(lang)) return;
+  const u = new URL(window.location.href);
+  u.searchParams.set('lang', lang);
+  window.location.href = u.toString();
 }
 
 function onSettingsProviderChange() {
@@ -1209,11 +1524,12 @@ Object.assign(window,{
   applyStepEdit, deleteCurrentStep, closeEditor, switchEditorTab,
   addInputField, addOutputField, onTypeChange,
   toggleTechSection, toggleEditorMaximize,
-  runStep, closeModal, showSignupCTA,
+  runStepOnly, runWorkflowFromHere, closeModal, showSignupCTA,
+  confirmEdgeDelete, toggleWorkflowExecLogs,
   deleteWorkflow, copyWfJson, applyWfJson, closeWfJson, onWfJsonInput, copyWfJsonByName,
   openJsonFullscreen, closeJsonFullscreen, jfsCopy, jfsApply, jfsValidate,
   saveApiKey, deleteApiKey, changePassword,
-  onProviderChange, onSettingsProviderChange
+  onProviderChange, onSettingsProviderChange, setLanguage
 });
 
 // ── KEYBOARD ────────────────────────────────────────────────────

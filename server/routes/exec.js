@@ -5,6 +5,7 @@ import { authMiddleware } from './auth.js';
 import { getUser } from '../lib/users.js';
 import { runPromptStep, runApiStep } from '../lib/runner.js';
 import { PROVIDER_META } from '../lib/providers/index.js';
+import { getLatestStepRunRecord, saveStepRunRecord } from '../lib/runStore.js';
 
 const router = express.Router();
 
@@ -31,8 +32,11 @@ router.use((req, res, next) => {
 // Body: { step: <step_def>, inputs: { key: value, ... } }
 router.post('/step', execLimiter, async (req, res) => {
   try {
-    const { step, inputs } = req.body;
+    const { step, inputs, context } = req.body;
     if (!step || !step.ws_name) return res.status(400).json({ error: 'step definition required' });
+    const workflowName = context?.workflowName || 'ad-hoc';
+    const nodeId = context?.nodeId || step.ws_name;
+    const runMode = context?.runMode || 'step_only';
 
     // Resolve user — guest fallback if no auth
     let user = null;
@@ -56,14 +60,62 @@ router.post('/step', execLimiter, async (req, res) => {
 
     if (wsType === 'prompt') {
       // Streaming SSE
-      await runPromptStep(step, inputs || {}, user, res);
+      const promptRun = await runPromptStep(step, inputs || {}, user, res);
+      if (req.user?.userId) {
+        await saveStepRunRecord(req.user.userId, workflowName, step.ws_name, {
+          workflowName,
+          nodeId,
+          stepName: step.ws_name,
+          wsType,
+          runMode,
+          inputs: inputs || {},
+          status: promptRun?.error ? 'error' : (promptRun?.parsed ? 'done' : 'done_raw'),
+          logOutput: promptRun?.error || promptRun?.fullText || '',
+          output: promptRun?.parsed || promptRun?.fullText || '',
+          prompt: promptRun?.userPrompt || '',
+          logMeta: promptRun?.error ? 'prompt error' : 'prompt done',
+          createdAt: new Date().toISOString()
+        });
+      }
 
     } else if (wsType === 'api') {
       // Synchronous HTTP
       try {
         const result = await runApiStep(step, inputs || {});
+        if (req.user?.userId) {
+          await saveStepRunRecord(req.user.userId, workflowName, step.ws_name, {
+            workflowName,
+            nodeId,
+            stepName: step.ws_name,
+            wsType,
+            runMode,
+            inputs: inputs || {},
+            status: 'done',
+            logOutput: JSON.stringify(result, null, 2),
+            output: result,
+            prompt: '',
+            logMeta: 'api done',
+            createdAt: new Date().toISOString()
+          });
+        }
         res.json({ ok: true, result });
       } catch (err) {
+        if (req.user?.userId) {
+          await saveStepRunRecord(req.user.userId, workflowName, step.ws_name, {
+            workflowName,
+            nodeId,
+            stepName: step.ws_name,
+            wsType,
+            runMode,
+            inputs: inputs || {},
+            status: 'error',
+            logOutput: err.message,
+            output: '',
+            prompt: '',
+            logMeta: 'api error',
+            createdAt: new Date().toISOString()
+          });
+        }
         res.status(502).json({ error: err.message });
       }
 
@@ -74,6 +126,19 @@ router.post('/step', execLimiter, async (req, res) => {
   } catch (err) {
     console.error('exec error:', err);
     if (!res.headersSent) res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/history/latest', authMiddleware, async (req, res) => {
+  try {
+    const workflowName = req.query.workflow;
+    const stepName = req.query.step;
+    if (!workflowName || !stepName) return res.status(400).json({ error: 'workflow and step are required' });
+    const record = await getLatestStepRunRecord(req.user.userId, workflowName, stepName);
+    res.json({ ok: true, record });
+  } catch (err) {
+    if (err.code === 'ENOENT') return res.json({ ok: true, record: null });
+    res.status(500).json({ error: err.message });
   }
 });
 

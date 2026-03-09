@@ -89,6 +89,7 @@
       <div id="editor-tabs">
         <button class="etab active" onclick="switchEditorTab('edit')">{{tab_edit}}</button>
         <button class="etab" onclick="switchEditorTab('run')">{{tab_run}}</button>
+        <button class="etab" onclick="switchEditorTab('log')">{{tab_log}}</button>
         <button class="etab" onclick="switchEditorTab('json')">{{tab_json}}</button>
       </div>
 
@@ -184,9 +185,21 @@
       <div class="etab-content" id="etab-run">
         <div id="run-panel">
           <div class="run-inputs" id="run-inputs-area"></div>
-          <button class="run-btn" id="run-btn" onclick="runStep()">{{btn_run_step}}</button>
-          <div class="run-output" id="run-output">{{run_output_placeholder}}</div>
-          <div class="run-meta" id="run-meta"></div>
+          <div class="run-actions">
+            <button class="run-btn" id="run-step-btn" data-default-label="{{btn_run_step_only}}" onclick="runStepOnly()">{{btn_run_step_only}}</button>
+            <button class="run-btn secondary" id="run-flow-btn" data-default-label="{{btn_run_workflow_from_here}}" onclick="runWorkflowFromHere()">{{btn_run_workflow_from_here}}</button>
+          </div>
+          <div class="run-status" id="run-status">{{run_status_idle}}</div>
+          <div class="run-output-title">Variables de sortie du prompt</div>
+          <div class="run-output-vars" id="run-output-vars">{{run_outputs_placeholder}}</div>
+        </div>
+      </div>
+
+      <!-- LOG TAB -->
+      <div class="etab-content" id="etab-log">
+        <div id="run-panel">
+          <div class="run-output" id="run-log-output">{{run_log_placeholder}}</div>
+          <div class="run-meta" id="run-log-meta"></div>
         </div>
       </div>
 
@@ -207,6 +220,17 @@
         <button class="editor-btn save" onclick="applyStepEdit()">{{btn_save_step}}</button>
       </div>
     </div>
+  </div>
+  <div id="wf-exec-logs">
+    <button id="wf-exec-logs-header" onclick="toggleWorkflowExecLogs()">
+      <span>Workflow execution logs</span><span id="wf-exec-logs-toggle">▸</span>
+    </button>
+    <div id="wf-exec-logs-body" class="hidden">
+      <pre id="wf-exec-logs-content"></pre>
+    </div>
+  </div>
+  <div id="edge-delete-prompt" class="hidden">
+    <button class="edge-trash-btn" onclick="confirmEdgeDelete()">🗑</button>
   </div>
 </div><!-- /#main -->
 </div><!-- /#app-wrapper -->
