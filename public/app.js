@@ -76,6 +76,7 @@ let _jfsSource     = null;
 let _providersConfig  = {};   // loaded from /json_schemas/providers.json
 let _providerKeyStatus = {};  // loaded from /api/auth/me { anthropic: true, ... }
 let _lastStepRuns = {};       // keyed by workflow node id, stores latest parsed output
+let _stepRunUiState = {};     // keyed by workflow node id, stores log/meta/status/output ui state
 let _currentNodeId = null;    // currently edited node id (wf node id or step name)
 
 // ══════════════════════════════════════════════════════════════════
@@ -843,7 +844,7 @@ function closeEditor() {
 }
 
 function switchEditorTab(tab) {
-  document.querySelectorAll('.etab').forEach((b,i)=>b.classList.toggle('active',['edit','run','json'][i]===tab));
+  document.querySelectorAll('.etab').forEach((b,i)=>b.classList.toggle('active',['edit','run','log','json'][i]===tab));
   document.querySelectorAll('.etab-content').forEach(c=>c.classList.remove('active'));
   document.getElementById(`etab-${tab}`)?.classList.add('active');
   if (tab==='json') updateJsonTab();
@@ -939,6 +940,53 @@ function updateRunTab(s) {
       ? vars.map(v => `<span class="run-var-chip">{{${v}}}</span>`).join('')
       : '<span class="run-available-empty">Aucune variable disponible (connectez un step entrant).</span>';
   }
+
+  renderRunState(s, _currentNodeId);
+}
+
+function getStepRunState(step, nodeId) {
+  const key = nodeId || step?.ws_name;
+  if (!key) return null;
+  return _stepRunUiState[key] || null;
+}
+
+function saveStepRunState(step, nodeId, patch) {
+  const key = nodeId || step?.ws_name;
+  if (!key) return;
+  _stepRunUiState[key] = {
+    status: 'idle',
+    output: '',
+    logOutput: '',
+    logMeta: '',
+    ...(_stepRunUiState[key] || {}),
+    ...(patch || {})
+  };
+}
+
+function renderRunState(step, nodeId) {
+  const state = getStepRunState(step, nodeId);
+  const statusEl = document.getElementById('run-status');
+  const varsEl = document.getElementById('run-output-vars');
+  const logOutEl = document.getElementById('run-log-output');
+  const logMetaEl = document.getElementById('run-log-meta');
+  if (!statusEl || !varsEl || !logOutEl || !logMetaEl) return;
+
+  if (!state) {
+    statusEl.textContent = 'idle';
+    statusEl.className = 'run-status idle';
+    varsEl.textContent = '// No output captured yet…';
+    logOutEl.textContent = '// Full prompt + execution log will appear here…';
+    logOutEl.className = 'run-output';
+    logMetaEl.innerHTML = '';
+    return;
+  }
+
+  statusEl.textContent = state.status || 'idle';
+  statusEl.className = `run-status ${(state.status||'idle').toLowerCase()}`;
+  varsEl.textContent = state.output || '// No output captured yet…';
+  logOutEl.textContent = state.logOutput || '// Full prompt + execution log will appear here…';
+  logOutEl.className = `run-output${state.logError ? ' error' : ''}`;
+  logMetaEl.innerHTML = state.logMeta || '';
 }
 
 async function runStep() {
@@ -954,8 +1002,14 @@ async function runStep() {
   }
   const finalInputs = { ...inheritedInputs, ...inputs };
 
-  const outEl=document.getElementById('run-output'),metaEl=document.getElementById('run-meta'),btn=document.getElementById('run-btn');
-  outEl.textContent=''; outEl.className='run-output'; metaEl.innerHTML=''; btn.disabled=true; btn.textContent='Running…';
+  const statusEl=document.getElementById('run-status');
+  const varsEl=document.getElementById('run-output-vars');
+  const outEl=document.getElementById('run-log-output'),metaEl=document.getElementById('run-log-meta'),btn=document.getElementById('run-btn');
+  varsEl.textContent='';
+  outEl.textContent=''; outEl.className='run-output'; metaEl.innerHTML='';
+  statusEl.textContent='running'; statusEl.className='run-status running';
+  saveStepRunState(s, _currentNodeId, { status:'running', output:'', logOutput:'', logMeta:'', logError:false });
+  btn.disabled=true; btn.textContent='Running…';
 
   const tsStart = Date.now();
   const ts = () => new Date().toISOString().slice(11,23); // HH:MM:SS.mmm
@@ -978,12 +1032,18 @@ async function runStep() {
     if (res.error) {
       outEl.className='run-output error'; outEl.textContent=res.error;
       metaEl.innerHTML=`<span style="color:var(--red)">✕ error</span> · ${elapsed}ms · ${ts()}`;
+      statusEl.textContent='error'; statusEl.className='run-status error';
+      saveStepRunState(s, _currentNodeId, { status:'error', logOutput:res.error, logMeta:metaEl.innerHTML, logError:true });
       console.error('[waiflo] api step error:', res.error);
       console.groupEnd(); return;
     }
-    outEl.textContent=JSON.stringify(res.result,null,2);
+    const resultText = JSON.stringify(res.result,null,2);
+    outEl.textContent=resultText;
+    varsEl.textContent=resultText;
     rememberStepResult(s, _currentNodeId, res.result);
     metaEl.innerHTML=`✓ api · ${elapsed}ms · ${ts()}`;
+    statusEl.textContent='done'; statusEl.className='run-status done';
+    saveStepRunState(s, _currentNodeId, { status:'done', output:resultText, logOutput:resultText, logMeta:metaEl.innerHTML, logError:false });
     console.log('[waiflo] api result:', res.result);
     console.groupEnd(); return;
   }
@@ -1018,6 +1078,7 @@ async function runStep() {
           if (event==='token') {
             full += obj.text;
             outEl.textContent = full;
+            saveStepRunState(s, _currentNodeId, { status:'running', logOutput:full });
             outEl.scrollTop = outEl.scrollHeight;
 
           } else if (event==='done') {
@@ -1027,12 +1088,18 @@ async function runStep() {
               : '';
             if (obj.parsed) {
               outEl.textContent = JSON.stringify(obj.parsed, null, 2);
+              varsEl.textContent = JSON.stringify(obj.parsed, null, 2);
               rememberStepResult(s, _currentNodeId, obj.parsed);
               metaEl.innerHTML  = `✓ parsed json · ${usagePart}${elapsed}ms · ${ts()}`;
+              statusEl.textContent='done'; statusEl.className='run-status done';
+              saveStepRunState(s, _currentNodeId, { status:'done', output:varsEl.textContent, logOutput:outEl.textContent, logMeta:metaEl.innerHTML, logError:false });
               console.log('[waiflo] done — parsed output:', obj.parsed);
             } else {
               outEl.textContent = full;
               metaEl.innerHTML  = `<span style="color:var(--amber)">⚠ json parse failed — raw output</span> · ${usagePart}${elapsed}ms · ${ts()}`;
+              varsEl.textContent = full;
+              statusEl.textContent='done (raw)'; statusEl.className='run-status done';
+              saveStepRunState(s, _currentNodeId, { status:'done (raw)', output:full, logOutput:full, logMeta:metaEl.innerHTML, logError:false });
               console.warn('[waiflo] done — JSON parse failed. Raw LLM output:', full);
               console.warn('[waiflo] Expected ws_output_schema:', s.ws_output_schema);
             }
@@ -1043,6 +1110,8 @@ async function runStep() {
             const elapsed = Date.now()-tsStart;
             outEl.className='run-output error'; outEl.textContent=obj.message;
             metaEl.innerHTML=`<span style="color:var(--red)">✕ ${ts()}</span> · ${elapsed}ms`;
+            statusEl.textContent='error'; statusEl.className='run-status error';
+            saveStepRunState(s, _currentNodeId, { status:'error', output:'', logOutput:obj.message, logMeta:metaEl.innerHTML, logError:true });
             console.error('[waiflo] SSE error:', obj.message);
             console.groupEnd();
           }
@@ -1055,6 +1124,8 @@ async function runStep() {
     const elapsed = Date.now()-tsStart;
     outEl.className='run-output error'; outEl.textContent=e.message;
     metaEl.innerHTML=`<span style="color:var(--red)">✕ fetch error · ${ts()}</span> · ${elapsed}ms`;
+    statusEl.textContent='error'; statusEl.className='run-status error';
+    saveStepRunState(s, _currentNodeId, { status:'error', output:'', logOutput:e.message, logMeta:metaEl.innerHTML, logError:true });
     console.error('[waiflo] fetch/stream error:', e);
     console.groupEnd();
   }
