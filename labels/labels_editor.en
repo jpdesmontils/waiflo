@@ -49,5 +49,7 @@
   "tab_log": "Logs",
   "run_status_idle": "idle",
   "run_outputs_placeholder": "// Output variables will appear here…",
-  "run_log_placeholder": "// Full prompt and execution log will appear here…"
+  "run_log_placeholder": "// Full prompt and execution log will appear here…",
+  "btn_run_step_only": "▶ Run Step Only",
+  "btn_run_workflow_from_here": "▶ Run Workflow From Here"
 }

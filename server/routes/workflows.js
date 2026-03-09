@@ -4,6 +4,7 @@ import path    from 'path';
 import { authMiddleware } from './auth.js';
 import { workflowDir, ensureUserDir } from '../lib/users.js';
 import { safeName, wfPath } from '../lib/utils.js';
+import { deleteWorkflowRunData, pruneWorkflowRunData } from '../lib/runStore.js';
 
 const router = express.Router();
 
@@ -80,6 +81,9 @@ router.put('/:name', async (req, res) => {
     const fp   = wfPath(req.user.userId, req.params.name);
     const body = typeof req.body === 'object' ? JSON.stringify(req.body, null, 2) : req.body;
     await fs.writeFile(fp, body, 'utf8');
+    const next = typeof req.body === 'object' ? req.body : JSON.parse(req.body || '{}');
+    const stepNames = (next.steps || []).map(s => s.ws_name).filter(Boolean);
+    await pruneWorkflowRunData(req.user.userId, req.params.name, stepNames);
     res.json({ ok: true, name: req.params.name, savedAt: new Date().toISOString() });
   } catch (err) {
     console.error('save error:', err);
@@ -95,6 +99,7 @@ router.patch('/:name/rename', async (req, res) => {
     const oldPath = wfPath(req.user.userId, req.params.name);
     const newPath = wfPath(req.user.userId, newName);
     await fs.rename(oldPath, newPath);
+    await deleteWorkflowRunData(req.user.userId, req.params.name);
     res.json({ ok: true, name: newName });
   } catch (err) {
     if (err.code === 'ENOENT') return res.status(404).json({ error: 'Workflow not found' });
@@ -107,6 +112,7 @@ router.delete('/:name', async (req, res) => {
   try {
     const fp = wfPath(req.user.userId, req.params.name);
     await fs.unlink(fp);
+    await deleteWorkflowRunData(req.user.userId, req.params.name);
     res.json({ ok: true });
   } catch (err) {
     if (err.code === 'ENOENT') return res.status(404).json({ error: 'Workflow not found' });
