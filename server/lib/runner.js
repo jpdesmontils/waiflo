@@ -91,10 +91,12 @@ export async function runPromptStep(step, inputs, user, res) {
 
     send('done', { full: fullText, parsed });
     res.end();
+    return { fullText, parsed, userPrompt, error: null };
 
   } catch (err) {
     send('error', { message: err.message });
     res.end();
+    return { fullText: '', parsed: null, userPrompt, error: err.message };
   }
 }
 

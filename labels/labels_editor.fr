@@ -45,5 +45,11 @@
   "btn_fullscreen": "⛶",
   "run_available_inputs_title": "Inputs disponibles via connexions",
   "technical_section_title": "Paramètres techniques",
-  "edit_available_inputs_title": "Inputs disponibles (connexions)"
+  "edit_available_inputs_title": "Inputs disponibles (connexions)",
+  "tab_log": "Logs",
+  "run_status_idle": "en attente",
+  "run_outputs_placeholder": "// Les variables de sortie apparaîtront ici…",
+  "run_log_placeholder": "// Le prompt complet et son exécution apparaîtront ici…",
+  "btn_run_step_only": "▶ Exécuter ce step uniquement",
+  "btn_run_workflow_from_here": "▶ Exécuter le workflow depuis ici"
 }
