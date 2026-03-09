@@ -6,7 +6,7 @@ import { createRoot } from 'react-dom/client';
 import {
   ReactFlow, Background, Controls, MiniMap,
   Handle, Position, MarkerType,
-  useNodesState, useEdgesState,
+  useNodesState, useEdgesState, addEdge,
   ReactFlowProvider, useReactFlow
 } from '@xyflow/react';
 import dagre from 'dagre';
@@ -75,6 +75,8 @@ let _graphVersion  = 0;
 let _jfsSource     = null;
 let _providersConfig  = {};   // loaded from /json_schemas/providers.json
 let _providerKeyStatus = {};  // loaded from /api/auth/me { anthropic: true, ... }
+let _lastStepRuns = {};       // keyed by workflow node id, stores latest parsed output
+let _currentNodeId = null;    // currently edited node id (wf node id or step name)
 
 // ══════════════════════════════════════════════════════════════════
 //  REACT FLOW — CUSTOM NODE
@@ -135,12 +137,12 @@ const StepNode = memo(function StepNode({ data, selected }) {
 
 const nodeTypes = { step: StepNode };
 
-function FlowInner({ nodes, edges, onNodesChange, onEdgesChange, version }) {
+function FlowInner({ nodes, edges, onNodesChange, onEdgesChange, onConnect, version }) {
   const { fitView } = useReactFlow();
   _fitView = fitView;
   useEffect(() => { setTimeout(()=>fitView({ padding:0.12, duration:400 }),60); }, [version]);
   return h(ReactFlow,{
-    nodes, edges, onNodesChange, onEdgesChange, nodeTypes,
+    nodes, edges, onNodesChange, onEdgesChange, onConnect, nodeTypes,
     defaultEdgeOptions:{ type:'smoothstep', markerEnd:{ type:MarkerType.ArrowClosed, color:'#2a3f60' }, style:{ stroke:'#2a3f60', strokeWidth:1.5 } },
     fitView:true, fitViewOptions:{ padding:0.12 },
     minZoom:0.08, maxZoom:2,
@@ -158,10 +160,20 @@ function AppGraph() {
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [version, setVersion] = useState(0);
+
+  const onConnect = (params) => {
+    setEdges((eds) => addEdge({
+      ...params,
+      id:`${params.source}->${params.target}`,
+      type:'smoothstep'
+    }, eds));
+    syncWorkflowDependencies(params.source, params.target);
+  };
+
   _setGraphData = (gd) => { setNodes(gd.nodes); setEdges(gd.edges); setVersion(gd.version); };
   _getNodes     = () => nodes;
   return h(ReactFlowProvider,null,
-    h(FlowInner,{ nodes, edges, onNodesChange, onEdgesChange, version })
+    h(FlowInner,{ nodes, edges, onNodesChange, onEdgesChange, onConnect, version })
   );
 }
 
@@ -224,6 +236,63 @@ function buildGraph(data) {
 
 function fitGraph() { _fitView?.({ padding:0.12, duration:400 }); }
 function setLayout(dir) { rankDir=dir; if(currentWf) buildGraph(currentWf.data); }
+
+
+function ensureWorkflowGraph() {
+  if (!currentWf) return null;
+  const data = currentWf.data;
+  if (!Array.isArray(data.workflows)) data.workflows = [];
+
+  let wf = data.workflows.find(w => Array.isArray(w.wf_nodes));
+  if (!wf) {
+    wf = {
+      wf_name: data.lang_name || currentWf.name || 'main',
+      wf_nodes: (data.steps || []).map((step, idx) => ({
+        step_id: step.ws_name || `step_${idx+1}`,
+        ws_ref: step.ws_name,
+        depends_on: []
+      }))
+    };
+    data.workflows.push(wf);
+  }
+
+  if (!Array.isArray(wf.wf_nodes)) wf.wf_nodes = [];
+  return wf;
+}
+
+function syncWorkflowDependencies(sourceId, targetId) {
+  const wf = ensureWorkflowGraph();
+  if (!wf) return;
+
+  let sourceNode = wf.wf_nodes.find(n => n.step_id === sourceId);
+  let targetNode = wf.wf_nodes.find(n => n.step_id === targetId);
+
+  if (!sourceNode) {
+    const sourceStep = (currentWf.data.steps || []).find(s => s.ws_name === sourceId);
+    if (sourceStep) {
+      sourceNode = { step_id: sourceId, ws_ref: sourceStep.ws_name, depends_on: [] };
+      wf.wf_nodes.push(sourceNode);
+    }
+  }
+
+  if (!targetNode) {
+    const targetStep = (currentWf.data.steps || []).find(s => s.ws_name === targetId);
+    if (targetStep) {
+      targetNode = { step_id: targetId, ws_ref: targetStep.ws_name, depends_on: [] };
+      wf.wf_nodes.push(targetNode);
+    }
+  }
+
+  if (!sourceNode || !targetNode) return;
+  if (!Array.isArray(targetNode.depends_on)) targetNode.depends_on = [];
+  if (!targetNode.depends_on.includes(sourceNode.step_id)) {
+    targetNode.depends_on.push(sourceNode.step_id);
+  }
+
+  _refreshWfJsonPanel();
+  if (guestMode) _guestSync();
+  else saveWorkflow();
+}
 
 // ── AUTH / SESSION ────────────────────────────────────────────────
 function doLogout() {
@@ -459,6 +528,7 @@ async function openWorkflow(name) {
     if (data.error) return toast(data.error,'err');
   }
   currentWf={name,data};
+  _lastStepRuns = {};
   closeEditor(); buildGraph(data); renderWorkflowList();
   document.getElementById('btn-save').style.display='';
   document.getElementById('btn-download').style.display='';
@@ -575,12 +645,20 @@ function openStepEditor(nodeId, tab='edit') {
   if (!currentWf) return;
   const steps=currentWf.data.steps||[];
   let step=steps.find(s=>s.ws_name===nodeId);
+  let resolvedNodeId = step ? nodeId : null;
   if (!step) {
     const wf=(currentWf.data.workflows||[]).find(w=>w.wf_nodes?.length);
-    if (wf) { const node=wf.wf_nodes.find(n=>n.step_id===nodeId); if(node) step=steps.find(s=>s.ws_name===node.ws_ref); }
+    if (wf) {
+      const node=wf.wf_nodes.find(n=>n.step_id===nodeId);
+      if(node) {
+        step=steps.find(s=>s.ws_name===node.ws_ref);
+        resolvedNodeId = node.step_id;
+      }
+    }
   }
   if (!step) return;
   currentStep=step;
+  _currentNodeId = resolvedNodeId || step.ws_name;
   populateEditor(currentStep);
   document.getElementById('right-panel').classList.remove('hidden');
   switchEditorTab(tab);
@@ -721,6 +799,7 @@ function deleteCurrentStep() {
 function closeEditor() {
   document.getElementById('right-panel').classList.add('hidden');
   currentStep=null;
+  _currentNodeId = null;
 }
 
 function switchEditorTab(tab) {
@@ -736,24 +815,89 @@ function updateJsonTab() {
 }
 
 // ── RUN ──────────────────────────────────────────────────────────
+function rememberStepResult(step, nodeId, result) {
+  if (!result) return;
+  const key = nodeId || step.ws_name;
+  _lastStepRuns[key] = result;
+}
+
+function buildInheritedInputs(step, nodeId) {
+  if (!currentWf || !nodeId) return {};
+  const wf = (currentWf.data.workflows || []).find(w => w.wf_nodes?.length);
+  if (!wf) return {};
+
+  const node = wf.wf_nodes.find(n => n.step_id === nodeId || n.ws_ref === nodeId);
+  if (!node) return {};
+
+  const inherited = {};
+  for (const depId of (node.depends_on || [])) {
+    const depNode = wf.wf_nodes.find(n => n.step_id === depId);
+    if (!depNode) continue;
+    const depOutput = _lastStepRuns[depNode.step_id] || _lastStepRuns[depNode.ws_ref];
+    if (!depOutput || typeof depOutput !== 'object') continue;
+
+    Object.assign(inherited, depOutput);
+    inherited[depNode.ws_ref] = depOutput;
+    inherited[`${depNode.ws_ref}_output`] = depOutput;
+  }
+
+  return inherited;
+}
+
+
+
+function getAvailableConnectedInputs(step, nodeId) {
+  if (!currentWf || !nodeId) return [];
+  const wf = (currentWf.data.workflows || []).find(w => w.wf_nodes?.length);
+  if (!wf) return [];
+
+  const node = wf.wf_nodes.find(n => n.step_id === nodeId || n.ws_ref === nodeId);
+  if (!node) return [];
+
+  const names = new Set();
+  for (const depId of (node.depends_on || [])) {
+    const depNode = wf.wf_nodes.find(n => n.step_id === depId);
+    if (!depNode) continue;
+    const depStep = (currentWf.data.steps || []).find(s => s.ws_name === depNode.ws_ref);
+    const outProps = depStep?.ws_output_schema?.properties || {};
+    Object.keys(outProps).forEach(k => names.add(k));
+    names.add(depNode.ws_ref);
+    names.add(`${depNode.ws_ref}_output`);
+  }
+
+  return Array.from(names).sort();
+}
+
 function updateRunTab(s) {
   const area=document.getElementById('run-inputs-area'); area.innerHTML='';
+  const availableEl = document.getElementById('run-available-inputs');
   const inProps=s?.ws_inputs_schema?.properties||{}, inReq=s?.ws_inputs_schema?.required||[];
   Object.keys(inProps).forEach(k=>{
     const div=document.createElement('div');
     div.innerHTML=`<div class="run-input-label">${k} <span class="field-type">${inProps[k].type||''}</span>${inReq.includes(k)?'<span class="run-input-req">req</span>':''}</div><textarea class="form-textarea" id="run-in-${k}" placeholder="Value for ${k}…"></textarea>`;
     area.appendChild(div);
   });
+
+  if (availableEl) {
+    const vars = getAvailableConnectedInputs(s, _currentNodeId);
+    availableEl.innerHTML = vars.length
+      ? vars.map(v => `<span class="run-var-chip">${v}</span>`).join('')
+      : '<span class="run-available-empty">Aucune variable disponible (connectez un step entrant).</span>';
+  }
 }
 
 async function runStep() {
   const s=currentStep||collectStep();
   if (!s.ws_name) return toast('Save the step first','err');
   const inProps=s.ws_inputs_schema?.properties||{}, inputs={};
+  const inheritedInputs = buildInheritedInputs(s, _currentNodeId);
   for (const k of Object.keys(inProps)) {
     const el=document.getElementById(`run-in-${k}`); if(!el) continue;
-    let val=el.value; try{ val=JSON.parse(val); }catch{} inputs[k]=val;
+    if (!el.value.trim()) continue;
+    let val=el.value; try{ val=JSON.parse(val); }catch{}
+    inputs[k]=val;
   }
+  const finalInputs = { ...inheritedInputs, ...inputs };
 
   const outEl=document.getElementById('run-output'),metaEl=document.getElementById('run-meta'),btn=document.getElementById('run-btn');
   outEl.textContent=''; outEl.className='run-output'; metaEl.innerHTML=''; btn.disabled=true; btn.textContent='Running…';
@@ -763,7 +907,7 @@ async function runStep() {
 
   console.group(`[waiflo] runStep — ${s.ws_name} (${s.ws_type||'prompt'}) @ ${ts()}`);
   console.log('step def:', s);
-  console.log('inputs:',   inputs);
+  console.log('inputs:',   finalInputs);
 
   // ── API step ──────────────────────────────────────────────────────────────
   if ((s.ws_type||'').toLowerCase()==='api') {
@@ -771,7 +915,7 @@ async function runStep() {
     if (token) headers['Authorization'] = `Bearer ${token}`;
     let res;
     try {
-      const r = await fetch('/api/exec/step', { method:'POST', headers, body:JSON.stringify({ step:s, inputs }) });
+      const r = await fetch('/api/exec/step', { method:'POST', headers, body:JSON.stringify({ step:s, inputs: finalInputs }) });
       res = await r.json();
     } catch(e) { res = { error: e.message }; }
     const elapsed = Date.now()-tsStart;
@@ -783,6 +927,7 @@ async function runStep() {
       console.groupEnd(); return;
     }
     outEl.textContent=JSON.stringify(res.result,null,2);
+    rememberStepResult(s, _currentNodeId, res.result);
     metaEl.innerHTML=`✓ api · ${elapsed}ms · ${ts()}`;
     console.log('[waiflo] api result:', res.result);
     console.groupEnd(); return;
@@ -793,7 +938,7 @@ async function runStep() {
     const headers = { 'Content-Type':'application/json' };
     if (token) headers['Authorization'] = `Bearer ${token}`;
 
-    const resp = await fetch('/api/exec/step', { method:'POST', headers, body:JSON.stringify({ step:s, inputs }) });
+    const resp = await fetch('/api/exec/step', { method:'POST', headers, body:JSON.stringify({ step:s, inputs: finalInputs }) });
 
     if (!resp.ok) {
       const errBody = await resp.json().catch(()=>({ error:`HTTP ${resp.status}` }));
@@ -827,6 +972,7 @@ async function runStep() {
               : '';
             if (obj.parsed) {
               outEl.textContent = JSON.stringify(obj.parsed, null, 2);
+              rememberStepResult(s, _currentNodeId, obj.parsed);
               metaEl.innerHTML  = `✓ parsed json · ${usagePart}${elapsed}ms · ${ts()}`;
               console.log('[waiflo] done — parsed output:', obj.parsed);
             } else {
