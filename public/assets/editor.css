@@ -260,6 +260,10 @@ option { background:var(--panel2); }
 /* run */
 #run-panel { padding:14px; display:flex; flex-direction:column; gap:12px; }
 .run-inputs { display:flex; flex-direction:column; gap:8px; }
+.run-available-title { font-family:'JetBrains Mono',monospace; font-size:9px; color:var(--dim); letter-spacing:1px; text-transform:uppercase; margin-top:8px; }
+.run-available-inputs { display:flex; flex-wrap:wrap; gap:6px; min-height:24px; }
+.run-var-chip { font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--teal); border:1px solid var(--border); background:var(--panel2); border-radius:999px; padding:3px 8px; }
+.run-available-empty { font-family:'JetBrains Mono',monospace; font-size:9px; color:var(--dim); }
 .run-input-label { font-family:'JetBrains Mono',monospace; font-size:9px; color:var(--dim); letter-spacing:.5px; text-transform:uppercase; margin-bottom:3px; display:flex; align-items:center; gap:6px; }
 .run-input-req { color:var(--amber); font-size:8px; }
 .run-btn { font-family:'JetBrains Mono',monospace; font-size:11px; font-weight:500; color:var(--bg); background:var(--green); border:none; border-radius:5px; padding:9px; cursor:pointer; transition:background .15s; flex-shrink:0; }
