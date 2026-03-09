@@ -100,35 +100,40 @@
             <div class="form-label">Step Name</div>
             <input class="form-input" id="f-name" placeholder="my_step_name">
           </div>
-          <div class="form-section">
-            <div class="form-label">Type</div>
-            <select class="form-select" id="f-type" onchange="onTypeChange()">
-              <option value="prompt">prompt</option>
-              <option value="api">api</option>
-              <option value="transform">transform</option>
-              <option value="script">script</option>
-              <option value="tool">tool</option>
-            </select>
-          </div>
-          <div id="llm-section">
-            <div class="form-row">
+          <div class="form-section tech-section">
+            <button class="tech-toggle" id="tech-toggle" type="button" onclick="toggleTechSection()">Technical settings ▾</button>
+            <div id="tech-content">
               <div class="form-section">
-                <div class="form-label">Provider</div>
-                <select class="form-select" id="f-provider" onchange="onProviderChange()">
-                  <option value="anthropic">anthropic</option>
-                  <option value="openai">openai (ChatGPT)</option>
-                  <option value="perplexity">perplexity</option>
-                  <option value="mistral">mistral</option>
+                <div class="form-label">Type</div>
+                <select class="form-select" id="f-type" onchange="onTypeChange()">
+                  <option value="prompt">prompt</option>
+                  <option value="api">api</option>
+                  <option value="transform">transform</option>
+                  <option value="script">script</option>
+                  <option value="tool">tool</option>
                 </select>
               </div>
-              <div class="form-section">
-                <div class="form-label">Temperature</div>
-                <input class="form-input" id="f-temp" type="number" min="0" max="1" step="0.1" value="0">
+              <div id="llm-section">
+                <div class="form-row">
+                  <div class="form-section">
+                    <div class="form-label">Provider</div>
+                    <select class="form-select" id="f-provider" onchange="onProviderChange()">
+                      <option value="anthropic">anthropic</option>
+                      <option value="openai">openai (ChatGPT)</option>
+                      <option value="perplexity">perplexity</option>
+                      <option value="mistral">mistral</option>
+                    </select>
+                  </div>
+                  <div class="form-section">
+                    <div class="form-label">Temperature</div>
+                    <input class="form-input" id="f-temp" type="number" min="0" max="1" step="0.1" value="0">
+                  </div>
+                </div>
+                <div class="form-section">
+                  <div class="form-label">Model</div>
+                  <select class="form-select" id="f-model"></select>
+                </div>
               </div>
-            </div>
-            <div class="form-section">
-              <div class="form-label">Model</div>
-              <select class="form-select" id="f-model"></select>
             </div>
           </div>
           <div id="api-section" style="display:none">
@@ -146,12 +151,20 @@
               <div class="form-hint">Use {{input_name}} for dynamic params</div>
             </div>
           </div>
+          <div class="run-available-title">Inputs disponibles (connexions)</div>
+          <div class="run-available-inputs" id="edit-available-inputs"></div>
           <div id="sysprompt-section">
-            <div class="form-label">System Prompt</div>
+            <div class="form-label-row">
+              <div class="form-label">System Prompt</div>
+              <button class="wf-json-btn maximize-btn" type="button" onclick="toggleEditorMaximize('f-sysprompt', this)">⛶</button>
+            </div>
             <textarea class="form-textarea tall" id="f-sysprompt" placeholder="You are…"></textarea>
           </div>
           <div id="template-section">
-            <div class="form-label">Prompt Template</div>
+            <div class="form-label-row">
+              <div class="form-label">Prompt Template</div>
+              <button class="wf-json-btn maximize-btn" type="button" onclick="toggleEditorMaximize('f-template', this)">⛶</button>
+            </div>
             <textarea class="form-textarea" id="f-template" placeholder="{{input_name}} or {{{raw}}} or {{ws_output_schema}}"></textarea>
             <div class="form-hint">{{var}} = escaped · {{{var}}} = raw · {{ws_output_schema}} = runtime injected</div>
           </div>
@@ -172,8 +185,6 @@
       <div class="etab-content" id="etab-run">
         <div id="run-panel">
           <div class="run-inputs" id="run-inputs-area"></div>
-          <div class="run-available-title">Inputs disponibles via connexions</div>
-          <div class="run-available-inputs" id="run-available-inputs"></div>
           <button class="run-btn" id="run-btn" onclick="runStep()">▶ Run Step</button>
           <div class="run-output" id="run-output">// Output will appear here…</div>
           <div class="run-meta" id="run-meta"></div>

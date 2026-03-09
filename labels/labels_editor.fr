@@ -43,5 +43,7 @@
   "btn_save_step": "Sauver l'étape",
   "btn_close": "✕ Fermer",
   "btn_fullscreen": "⛶",
-  "run_available_inputs_title": "Inputs disponibles via connexions"
+  "run_available_inputs_title": "Inputs disponibles via connexions",
+  "technical_section_title": "Paramètres techniques",
+  "edit_available_inputs_title": "Inputs disponibles (connexions)"
 }

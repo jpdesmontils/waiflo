@@ -799,6 +799,8 @@ function closeEditor() {
   document.getElementById('right-panel').classList.add('hidden');
   currentStep=null;
   _currentNodeId = null;
+  document.querySelectorAll('.form-textarea.maximized').forEach(el => el.classList.remove('maximized'));
+  document.querySelectorAll('.maximize-btn.active').forEach(el => el.classList.remove('active'));
 }
 
 function switchEditorTab(tab) {
@@ -806,6 +808,21 @@ function switchEditorTab(tab) {
   document.querySelectorAll('.etab-content').forEach(c=>c.classList.remove('active'));
   document.getElementById(`etab-${tab}`)?.classList.add('active');
   if (tab==='json') updateJsonTab();
+}
+
+function toggleTechSection() {
+  const content = document.getElementById('tech-content');
+  const btn = document.getElementById('tech-toggle');
+  if (!content || !btn) return;
+  const collapsed = content.classList.toggle('collapsed');
+  btn.textContent = `${btn.textContent.replace(/[▾▸]/g, '').trim()} ${collapsed ? '▸' : '▾'}`;
+}
+
+function toggleEditorMaximize(textareaId, btn) {
+  const ta = document.getElementById(textareaId);
+  if (!ta) return;
+  const isOpen = ta.classList.toggle('maximized');
+  if (btn) btn.classList.toggle('active', isOpen);
 }
 
 function updateJsonTab() {
@@ -869,7 +886,7 @@ function getAvailableConnectedInputs(step, nodeId) {
 
 function updateRunTab(s) {
   const area=document.getElementById('run-inputs-area'); area.innerHTML='';
-  const availableEl = document.getElementById('run-available-inputs');
+  const availableEl = document.getElementById('edit-available-inputs');
   const inProps=s?.ws_inputs_schema?.properties||{}, inReq=s?.ws_inputs_schema?.required||[];
   Object.keys(inProps).forEach(k=>{
     const div=document.createElement('div');
@@ -880,7 +897,7 @@ function updateRunTab(s) {
   if (availableEl) {
     const vars = getAvailableConnectedInputs(s, _currentNodeId);
     availableEl.innerHTML = vars.length
-      ? vars.map(v => `<span class="run-var-chip">${v}</span>`).join('')
+      ? vars.map(v => `<span class="run-var-chip">{{${v}}}</span>`).join('')
       : '<span class="run-available-empty">Aucune variable disponible (connectez un step entrant).</span>';
   }
 }
@@ -1152,6 +1169,7 @@ Object.assign(window,{
   openNewStepEditor, openStepEditor,
   applyStepEdit, deleteCurrentStep, closeEditor, switchEditorTab,
   addInputField, addOutputField, onTypeChange,
+  toggleTechSection, toggleEditorMaximize,
   runStep, closeModal, showSignupCTA,
   deleteWorkflow, copyWfJson, applyWfJson, closeWfJson, onWfJsonInput, copyWfJsonByName,
   openJsonFullscreen, closeJsonFullscreen, jfsCopy, jfsApply, jfsValidate,
