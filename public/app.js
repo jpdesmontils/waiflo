@@ -82,6 +82,8 @@ let _runController = null;
 let _isExecuting = false;
 let _runStepDefaultLabel = '▶ Run Step Only';
 let _runFlowDefaultLabel = '▶ Run Workflow From Here';
+let _edgeDeletePrompt = null;
+let _workflowExecLogs = [];
 
 // ══════════════════════════════════════════════════════════════════
 //  REACT FLOW — CUSTOM NODE
@@ -142,12 +144,12 @@ const StepNode = memo(function StepNode({ data, selected }) {
 
 const nodeTypes = { step: StepNode };
 
-function FlowInner({ nodes, edges, onNodesChange, onEdgesChange, onConnect, version }) {
+function FlowInner({ nodes, edges, onNodesChange, onEdgesChange, onConnect, onEdgeClick, onPaneClick, version }) {
   const { fitView } = useReactFlow();
   _fitView = fitView;
   useEffect(() => { setTimeout(()=>fitView({ padding:0.12, duration:400 }),60); }, [version]);
   return h(ReactFlow,{
-    nodes, edges, onNodesChange, onEdgesChange, onConnect, nodeTypes,
+    nodes, edges, onNodesChange, onEdgesChange, onConnect, onEdgeClick, onPaneClick, nodeTypes,
     defaultEdgeOptions:{ type:'smoothstep', markerEnd:{ type:MarkerType.ArrowClosed, color:'#2a3f60' }, style:{ stroke:'#2a3f60', strokeWidth:1.5 } },
     fitView:true, fitViewOptions:{ padding:0.12 },
     minZoom:0.08, maxZoom:2,
@@ -175,10 +177,18 @@ function AppGraph() {
     syncWorkflowDependencies(params.source, params.target);
   };
 
+  const onEdgeClick = (evt, edge) => {
+    evt?.preventDefault?.();
+    evt?.stopPropagation?.();
+    showEdgeDeletePrompt(edge, evt?.clientX || 0, evt?.clientY || 0);
+  };
+
+  const onPaneClick = () => hideEdgeDeletePrompt();
+
   _setGraphData = (gd) => { setNodes(gd.nodes); setEdges(gd.edges); setVersion(gd.version); };
   _getNodes     = () => nodes;
   return h(ReactFlowProvider,null,
-    h(FlowInner,{ nodes, edges, onNodesChange, onEdgesChange, onConnect, version })
+    h(FlowInner,{ nodes, edges, onNodesChange, onEdgesChange, onConnect, onEdgeClick, onPaneClick, version })
   );
 }
 
@@ -282,6 +292,46 @@ function ensureWorkflowNodeForStep(stepName) {
   node = { step_id: stepId, ws_ref: stepName, depends_on: [] };
   wf.wf_nodes.push(node);
   return node;
+}
+
+function removeWorkflowDependency(sourceId, targetId) {
+  if (!currentWf) return;
+  const wf = (currentWf.data.workflows || []).find(w => Array.isArray(w.wf_nodes));
+  if (!wf) return;
+  const targetNode = (wf.wf_nodes || []).find(n => n.step_id === targetId);
+  if (!targetNode) return;
+  targetNode.depends_on = (targetNode.depends_on || []).filter(d => d !== sourceId);
+  buildGraph(currentWf.data); _refreshWfJsonPanel();
+  if (guestMode) _guestSync(); else saveWorkflow();
+}
+
+function showEdgeDeletePrompt(edge, x, y) {
+  _edgeDeletePrompt = { edge, x, y };
+  renderEdgeDeletePrompt();
+}
+
+function hideEdgeDeletePrompt() {
+  _edgeDeletePrompt = null;
+  renderEdgeDeletePrompt();
+}
+
+function renderEdgeDeletePrompt() {
+  const el = document.getElementById('edge-delete-prompt');
+  if (!el) return;
+  if (!_edgeDeletePrompt) { el.classList.add('hidden'); return; }
+  el.classList.remove('hidden');
+  el.style.left = `${_edgeDeletePrompt.x}px`;
+  el.style.top = `${_edgeDeletePrompt.y}px`;
+}
+
+function confirmEdgeDelete() {
+  if (!_edgeDeletePrompt?.edge) return;
+  const { source, target } = _edgeDeletePrompt.edge;
+  hideEdgeDeletePrompt();
+  openConfirm('Supprimer la dépendance ?', `${source} → ${target}`, () => {
+    removeWorkflowDependency(source, target);
+    toast('Dépendance supprimée','ok');
+  });
 }
 
 function syncWorkflowDependencies(sourceId, targetId) {
@@ -870,6 +920,31 @@ function setExecutionUiState(running) {
   }
 }
 
+function truncLog(v) {
+  const txt = typeof v === 'string' ? v : JSON.stringify(v);
+  return txt.length > 256 ? `${txt.slice(0,256)}…` : txt;
+}
+
+function wfTs() {
+  const d = new Date();
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+function appendWorkflowExecLog(line) {
+  _workflowExecLogs.push(line);
+  const pre = document.getElementById('wf-exec-logs-content');
+  if (pre) { pre.textContent = _workflowExecLogs.join('\n'); pre.scrollTop = pre.scrollHeight; }
+}
+
+function toggleWorkflowExecLogs() {
+  const body = document.getElementById('wf-exec-logs-body');
+  const icon = document.getElementById('wf-exec-logs-toggle');
+  if (!body || !icon) return;
+  const closed = body.classList.toggle('hidden');
+  icon.textContent = closed ? '▸' : '▾';
+}
+
 function switchEditorTab(tab) {
   document.querySelectorAll('.etab').forEach((b,i)=>b.classList.toggle('active',['edit','run','log','json'][i]===tab));
   document.querySelectorAll('.etab-content').forEach(c=>c.classList.remove('active'));
@@ -1212,6 +1287,8 @@ async function runWorkflowFromHere() {
   if (!currentStep || !_currentNodeId) return;
   setExecutionUiState(true);
   try {
+    _workflowExecLogs = [];
+    appendWorkflowExecLog(`${wfTs()} ## Workflow ## Start from ${_currentNodeId}`);
     const order = getDownstreamExecutionOrder(_currentNodeId);
     const wf = (currentWf?.data?.workflows || []).find(w => w.wf_nodes?.length);
     for (const nodeId of order) {
@@ -1221,9 +1298,16 @@ async function runWorkflowFromHere() {
       if (!step) continue;
       currentStep = step;
       _currentNodeId = nodeId;
+      appendWorkflowExecLog(`${wfTs()} ## ${step.ws_name} ## Start`);
+      const inVars = buildInheritedInputs(step, nodeId);
+      const inTxt = Object.entries(inVars).map(([k,v]) => `${k}=${truncLog(v)}`).join(', ');
+      appendWorkflowExecLog(`${wfTs()} ## ${step.ws_name} ## inputs : ${inTxt || 'none'}`);
       const ok = await executeStep(step, 'workflow_from_here');
+      const st = getStepRunState(step, nodeId) || {};
+      appendWorkflowExecLog(`${wfTs()} ## ${step.ws_name} ## End, status ${st.status || (ok?'OK':'ERR')}, output=${truncLog(st.output || '')}`);
       if (!ok) break;
     }
+    appendWorkflowExecLog(`${wfTs()} ## Workflow ## End`);
   } finally {
     _runController = null;
     setExecutionUiState(false);
@@ -1263,11 +1347,32 @@ function openSettings() {
       <input class="settings-input" id="s-newpw" type="password" placeholder="New password (min. 8 chars)">
       <button class="settings-btn" onclick="changePassword()" style="margin-top:8px">Change</button>
       <div id="s-pw-msg"></div>
+    </div>
+    <div class="settings-section">
+      <div class="settings-title">Language</div>
+      <div class="settings-row">
+        <select class="settings-input" id="s-lang" onchange="setLanguage(this.value)">
+          <option value="en">English</option>
+          <option value="fr">Français</option>
+        </select>
+      </div>
     </div>`,
     [{ label:'Close', action:closeModal }]
   );
   // Load provider key status from /me
   loadProviderKeyStatus();
+  const qpLang = new URLSearchParams(window.location.search).get('lang');
+  const cookieLang = document.cookie.split('; ').find(v=>v.startsWith('lang='))?.split('=')[1];
+  const currentLang = qpLang || cookieLang || 'en';
+  const sLang = document.getElementById('s-lang');
+  if (sLang) sLang.value = currentLang;
+}
+
+function setLanguage(lang) {
+  if (!['fr','en'].includes(lang)) return;
+  const u = new URL(window.location.href);
+  u.searchParams.set('lang', lang);
+  window.location.href = u.toString();
 }
 
 function onSettingsProviderChange() {
@@ -1378,10 +1483,11 @@ Object.assign(window,{
   addInputField, addOutputField, onTypeChange,
   toggleTechSection, toggleEditorMaximize,
   runStepOnly, runWorkflowFromHere, closeModal, showSignupCTA,
+  confirmEdgeDelete, toggleWorkflowExecLogs,
   deleteWorkflow, copyWfJson, applyWfJson, closeWfJson, onWfJsonInput, copyWfJsonByName,
   openJsonFullscreen, closeJsonFullscreen, jfsCopy, jfsApply, jfsValidate,
   saveApiKey, deleteApiKey, changePassword,
-  onProviderChange, onSettingsProviderChange
+  onProviderChange, onSettingsProviderChange, setLanguage
 });
 
 // ── KEYBOARD ────────────────────────────────────────────────────
