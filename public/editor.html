@@ -81,10 +81,10 @@
       <div class="es-title">No workflow loaded</div>
       <div class="es-sub">Select or create a workflow in the left panel</div>
     </div>
+    <button id="btn-add-step" style="display:none" onclick="openNewStepEditor()">+ Add Step</button>
   </div>
 
   <!-- RIGHT — step editor -->
-  <button id="btn-toggle-right" onclick="toggleRightPanel()">‹</button>
   <div id="right-panel" class="hidden">
     <div id="right-inner">
       <div id="editor-tabs">
@@ -235,7 +235,6 @@
       <pre id="wf-exec-logs-content"></pre>
     </div>
   </div>
-  <button id="btn-add-step" style="display:none" onclick="openNewStepEditor()">+ Add Step</button>
   <div id="edge-delete-prompt" class="hidden">
     <button class="edge-trash-btn" onclick="confirmEdgeDelete()">🗑</button>
   </div>
