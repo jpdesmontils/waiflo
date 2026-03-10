@@ -80,10 +80,10 @@
       <div class="es-title">{{empty_title}}</div>
       <div class="es-sub">{{empty_sub}}</div>
     </div>
-    <button id="btn-add-step" style="display:none" onclick="openNewStepEditor()">{{btn_add_step}}</button>
   </div>
 
   <!-- RIGHT — step editor -->
+  <button id="btn-toggle-right" onclick="toggleRightPanel()">‹</button>
   <div id="right-panel" class="hidden">
     <div id="right-inner">
       <div id="editor-tabs">
@@ -223,26 +223,23 @@
   </div>
   <div id="wf-exec-logs">
     <button id="wf-exec-logs-header" onclick="toggleWorkflowExecLogs()">
-      <span>Workflow execution logs</span><span id="wf-exec-logs-toggle">▸</span>
+      <span>Workflow execution logs</span>
+      <span id="wf-exec-logs-actions">
+        <button type="button" class="wf-log-action" onclick="event.stopPropagation(); copyWorkflowExecLogs()">Copy</button>
+        <button type="button" class="wf-log-action" onclick="event.stopPropagation(); clearWorkflowExecLogs()">Clear</button>
+        <span id="wf-exec-logs-toggle">▸</span>
+      </span>
     </button>
     <div id="wf-exec-logs-body" class="hidden">
       <pre id="wf-exec-logs-content"></pre>
     </div>
   </div>
+  <button id="btn-add-step" style="display:none" onclick="openNewStepEditor()">{{btn_add_step}}</button>
   <div id="edge-delete-prompt" class="hidden">
     <button class="edge-trash-btn" onclick="confirmEdgeDelete()">🗑</button>
   </div>
 </div><!-- /#main -->
 </div><!-- /#app-wrapper -->
-
-<div id="wf-exec-logs">
-  <button id="wf-exec-logs-header" onclick="toggleWorkflowExecLogs()">
-    <span>Workflow execution logs</span><span id="wf-exec-logs-toggle">▸</span>
-  </button>
-  <div id="wf-exec-logs-body" class="hidden">
-    <pre id="wf-exec-logs-content"></pre>
-  </div>
-</div>
 
 <!-- JSON FULLSCREEN OVERLAY -->
 <div id="json-fullscreen" class="hidden">
