@@ -14,10 +14,19 @@ export class OpenAIProvider extends cLLM {
     this._defaultModel = defaultModel || 'gpt-4o';
   }
 
-  async *stream({ model, system, userPrompt, temperature = 0, maxTokens = 2048 }) {
+  async *stream({ model, system, userPrompt, imageUrls = [], temperature = 0, maxTokens = 2048 }) {
     const messages = [];
     if (system) messages.push({ role: 'system', content: system });
-    messages.push({ role: 'user', content: userPrompt });
+
+    const userContent = [{ type: 'text', text: userPrompt }];
+    for (const url of (imageUrls || [])) {
+      userContent.push({ type: 'image_url', image_url: { url } });
+    }
+
+    messages.push({
+      role: 'user',
+      content: imageUrls?.length ? userContent : userPrompt
+    });
 
     const streamObj = await this._client.chat.completions.create({
       model: model || this._defaultModel,
