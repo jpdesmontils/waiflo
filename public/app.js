@@ -15,7 +15,7 @@ import dagre from 'dagre';
 const FIELD_TYPES = ['string','number','integer','boolean','object','array','image_url'];
 const NODE_W = 280, NODE_H = 164;
 const TYPE_COLORS = {
-  prompt:'#f59e0b', api:'#2dd4bf', webpage:'#22d3ee', transform:'#60a5fa', tool:'#a78bfa', script:'#fb923c'
+  prompt:'#f59e0b', api:'#2dd4bf', webpage:'#22d3ee', mcp:'#34d399', transform:'#60a5fa', tool:'#a78bfa', script:'#fb923c'
 };
 
 // ── DEMO WORKFLOW ────────────────────────────────────────────────
@@ -98,7 +98,9 @@ const StepNode = memo(function StepNode({ data, selected }) {
   const wsType = (s.ws_type || 'prompt').toLowerCase();
   const name   = s.ws_name || '—';
   const sysPrmt = s.ws_system_prompt || s.ws_prompt_template || '';
-  const desc   = sysPrmt.length > 90 ? sysPrmt.slice(0,88)+'…' : (sysPrmt || '—');
+  const mcpDesc = s.ws_mcp?.server && s.ws_mcp?.tool ? `${s.ws_mcp.server} → ${s.ws_mcp.tool}` : '';
+  const rawDesc = wsType === 'mcp' ? mcpDesc : sysPrmt;
+  const desc   = rawDesc.length > 90 ? rawDesc.slice(0,88)+'…' : (rawDesc || '—');
   const llm    = s.ws_llm;
 
   const llmBadge = llm
@@ -107,7 +109,9 @@ const StepNode = memo(function StepNode({ data, selected }) {
       ? h('span',{ className:'rf-llm-badge rf-api-badge' }, `HTTP ${s.ws_api?.method||'GET'}`)
       : ((wsType==='webpage'&&(s.ws_webpage?.url||s.ws_api?.url))
         ? h('span',{ className:'rf-llm-badge rf-api-badge' }, 'HTML GET')
-        : null));
+        : ((wsType==='mcp'&&s.ws_mcp?.server)
+          ? h('span',{ className:'rf-llm-badge rf-api-badge' }, `MCP ${s.ws_mcp.server}`)
+          : null)));
   const toolsBadge = s.ws_tools?.length
     ? h('span',{ className:'rf-tools-badge' }, `🔧 ${s.ws_tools.length} tool${s.ws_tools.length>1?'s':''}`) : null;
 
@@ -806,6 +810,9 @@ function populateEditor(s) {
   document.getElementById('f-api-query').value   = formatJsonForEditor(s.ws_api?.query);
   document.getElementById('f-api-body').value    = formatJsonForEditor(s.ws_api?.body);
   document.getElementById('f-webpage-mode').value = s.ws_webpage?.mode || 'http';
+  document.getElementById('f-mcp-server').value = s.ws_mcp?.server || '';
+  document.getElementById('f-mcp-tool').value = s.ws_mcp?.tool || '';
+  document.getElementById('f-mcp-input').value = formatJsonForEditor(s.ws_mcp?.input);
   document.getElementById('f-webpage-browser-options').value = formatJsonForEditor({
     waitUntil: s.ws_webpage?.waitUntil,
     timeoutMs: s.ws_webpage?.timeoutMs,
@@ -829,11 +836,12 @@ function populateEditor(s) {
 
 function onTypeChange() {
   const t=document.getElementById('f-type').value;
-  const p=t==='prompt', a=t==='api'||t==='webpage', w=t==='webpage';
+  const p=t==='prompt', a=t==='api'||t==='webpage', w=t==='webpage', m=t==='mcp';
   document.getElementById('llm-section').style.display       = p?'':'none';
   document.getElementById('sysprompt-section').style.display = p?'':'none';
   document.getElementById('template-section').style.display  = p?'':'none';
   document.getElementById('api-section').style.display       = a?'':'none';
+  document.getElementById('mcp-section').style.display       = m?'':'none';
   document.getElementById('method-section').style.display    = w?'none':'';
   document.getElementById('url-hint').textContent            = w
     ? 'Fetches browser-like raw HTML from this URL. Use {{input_name}} for dynamic params.'
@@ -943,6 +951,21 @@ function collectStep() {
       if (browserOptions.userAgent) webpage.userAgent = browserOptions.userAgent;
     }
     s.ws_webpage = webpage;
+  }
+  if (type==='mcp') {
+    const toolInput = parseJsonEditorField('f-mcp-input', 'MCP tool input override');
+    if ([toolInput].includes(null)) return null;
+
+    const mcp = {
+      server: document.getElementById('f-mcp-server').value.trim(),
+      tool: document.getElementById('f-mcp-tool').value.trim()
+    };
+    if (!mcp.server || !mcp.tool) {
+      toast('MCP server and tool are required for mcp steps','err');
+      return null;
+    }
+    if (toolInput !== undefined) mcp.input = toolInput;
+    s.ws_mcp = mcp;
   }
   return s;
 }
@@ -1472,7 +1495,7 @@ async function executeStep(stepDef, runMode='step_only') {
   const ts = () => new Date().toISOString().slice(11,23);
   setRunningGraphState(_currentNodeId || s.ws_name, runMode === 'workflow_from_here');
 
-  if (['api','webpage'].includes((s.ws_type||'').toLowerCase())) {
+  if (['api','webpage','mcp'].includes((s.ws_type||'').toLowerCase())) {
     const headers = { 'Content-Type':'application/json' };
     if (token) headers['Authorization'] = `Bearer ${token}`;
     let res;
