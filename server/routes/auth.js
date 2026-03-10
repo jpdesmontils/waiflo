@@ -13,6 +13,61 @@ const SALT_ROUNDS = 10;
 
 const SUPPORTED_PROVIDERS = Object.keys(PROVIDER_META); // ['anthropic','openai','perplexity','mistral']
 
+async function discoverMcpTools({ server_url, api_key, timeoutMs = 30000 }) {
+  if (!server_url) throw new Error('server_url is required');
+  if (!api_key) throw new Error('api_key is required');
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), Number(timeoutMs) || 30000);
+  try {
+    const response = await fetch(server_url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${api_key}`
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 'waiflo-tools-list',
+        method: 'tools/list',
+        params: {}
+      }),
+      signal: controller.signal
+    });
+
+    if (!response.ok) {
+      throw new Error(`MCP HTTP ${response.status} ${response.statusText}`);
+    }
+
+    const body = await response.json();
+    if (body?.error) throw new Error(body.error?.message || 'MCP returned an error');
+    const tools = body?.result?.tools || body?.tools || [];
+    if (!Array.isArray(tools)) throw new Error('Invalid MCP response (tools list not found)');
+    return tools;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function sanitizeMcpServersForClient(rawServers = []) {
+  return Promise.all((rawServers || []).map(async (srv) => {
+    let apiKey = '';
+    if (srv.apiKeyEnc) {
+      try { apiKey = await decrypt(srv.apiKeyEnc); } catch { apiKey = ''; }
+    }
+    return {
+      server_label: srv.server_label || '',
+      server_url: srv.server_url || '',
+      api_key: apiKey,
+      transport: srv.transport || 'http',
+      timeoutMs: srv.timeoutMs || 30000,
+      tools: Array.isArray(srv.tools) ? srv.tools : [],
+      last_status: srv.last_status || 'unknown',
+      last_error: srv.last_error || ''
+    };
+  }));
+}
+
 // ── Rate limiting ──────────────────────────────────────────────────
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
@@ -43,6 +98,7 @@ router.post('/register', authLimiter, async (req, res) => {
       plan: 'self-key',
       apiKeyEnc: null,      // legacy field — kept for backward compat
       providerKeys: {},     // { anthropic: 'enc...', openai: 'enc...', ... }
+      mcpServers: [],
       createdAt: new Date().toISOString()
     });
 
@@ -95,8 +151,66 @@ router.get('/me', authMiddleware, async (req, res) => {
     userId, email, plan,
     hasApiKey: !!(u.apiKeyEnc || Object.values(providerKeys).some(Boolean)), // legacy compat
     providerKeys: providerKeyStatus,
-    createdAt: u.createdAt
+    createdAt: u.createdAt,
+    mcpServers: await sanitizeMcpServersForClient(u.mcpServers || [])
   });
+});
+
+router.post('/mcp-validate', authMiddleware, async (req, res) => {
+  try {
+    const { server_label, server_url, api_key, timeoutMs } = req.body || {};
+    if (!server_label?.trim()) return res.status(400).json({ error: 'server_label is required' });
+    if (!server_url?.trim()) return res.status(400).json({ error: 'server_url is required' });
+    if (!api_key?.trim()) return res.status(400).json({ error: 'api_key is required' });
+
+    const tools = await discoverMcpTools({
+      server_url: server_url.trim(),
+      api_key: api_key.trim(),
+      timeoutMs: Number(timeoutMs) || 30000
+    });
+
+    res.json({ ok: true, tools, count: tools.length });
+  } catch (err) {
+    res.status(502).json({ error: err.message || 'MCP validation failed' });
+  }
+});
+
+router.put('/mcp-servers', authMiddleware, async (req, res) => {
+  try {
+    const { mcp_servers } = req.body || {};
+    if (!Array.isArray(mcp_servers)) return res.status(400).json({ error: 'mcp_servers must be an array' });
+
+    const normalized = [];
+    for (const row of mcp_servers) {
+      const server_label = String(row?.server_label || '').trim();
+      const server_url = String(row?.server_url || '').trim();
+      const api_key = String(row?.api_key || '').trim();
+      if (!server_label || !server_url || !api_key) {
+        return res.status(400).json({ error: 'Each MCP server requires server_label, server_url and api_key' });
+      }
+
+      const tools = Array.isArray(row?.tools) ? row.tools : await discoverMcpTools({ server_url, api_key, timeoutMs: Number(row?.timeoutMs) || 30000 });
+      normalized.push({
+        server_label,
+        server_url,
+        transport: 'http',
+        headers: { Authorization: 'Bearer ${api_key}' },
+        timeoutMs: Number(row?.timeoutMs) || 30000,
+        retry: { retries: 1, backoffMs: 300 },
+        apiKeyEnc: await encrypt(api_key),
+        tools,
+        last_status: 'ok',
+        last_error: '',
+        updatedAt: new Date().toISOString()
+      });
+    }
+
+    await saveUser(req.user.userId, { mcpServers: normalized });
+    res.json({ ok: true, mcpServers: await sanitizeMcpServersForClient(normalized) });
+  } catch (err) {
+    console.error('mcp save error:', err);
+    res.status(500).json({ error: err.message || 'Failed to save MCP servers' });
+  }
 });
 
 // ── SAVE API KEY ──────────────────────────────────────────────────
