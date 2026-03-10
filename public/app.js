@@ -85,6 +85,8 @@ let _runFlowDefaultLabel = '▶ Run Workflow From Here';
 let _edgeDeletePrompt = null;
 let _workflowExecLogs = [];
 let _activeRunNodeIds = new Set();
+let _lastEditorTab = 'edit';
+let _logsPanelDrag = null;
 let _activeRunEdgeIds = new Set();
 
 // ══════════════════════════════════════════════════════════════════
@@ -738,7 +740,7 @@ function toggleTheme() {
 }
 
 // ── STEP EDITOR ──────────────────────────────────────────────────
-function openStepEditor(nodeId, tab='edit') {
+function openStepEditor(nodeId, tab=null) {
   if (!currentWf) return;
   const steps=currentWf.data.steps||[];
   let step=steps.find(s=>s.ws_name===nodeId);
@@ -757,14 +759,14 @@ function openStepEditor(nodeId, tab='edit') {
   currentStep=step;
   _currentNodeId = resolvedNodeId || step.ws_name;
   populateEditor(currentStep);
-  document.getElementById('right-panel').classList.remove('hidden');
-  switchEditorTab(tab);
+  setRightPanelVisible(true);
+  switchEditorTab(tab || _lastEditorTab || 'edit');
 }
 
 function openNewStepEditor() {
   currentStep=null;
   populateEditor({ ws_name:'',ws_type:'prompt', ws_llm:{ provider:'anthropic',model:'claude-sonnet-4-20250514',temperature:0 }, ws_inputs_schema:{ type:'object',required:[],properties:{} }, ws_output_schema:{ type:'object',required:[],properties:{} } });
-  document.getElementById('right-panel').classList.remove('hidden');
+  setRightPanelVisible(true);
   switchEditorTab('edit');
 }
 
@@ -913,7 +915,7 @@ function deleteCurrentStep() {
 }
 
 function closeEditor() {
-  document.getElementById('right-panel').classList.add('hidden');
+  setRightPanelVisible(false);
   currentStep=null;
   _currentNodeId = null;
   document.querySelectorAll('.form-textarea.maximized').forEach(el => el.classList.remove('maximized'));
@@ -1010,13 +1012,87 @@ function toggleWorkflowExecLogs() {
   if (!body || !icon) return;
   const closed = body.classList.toggle('hidden');
   icon.textContent = closed ? '▸' : '▾';
+  updateFloatingAddStepPosition();
+}
+
+
+function setRightPanelVisible(visible) {
+  const panel = document.getElementById('right-panel');
+  const btn = document.getElementById('btn-toggle-right');
+  if (!panel || !btn) return;
+  panel.classList.toggle('hidden', !visible);
+  btn.textContent = visible ? '›' : '‹';
+  btn.title = visible ? 'Hide editor' : 'Show editor';
+  btn.style.right = visible ? 'var(--right-w)' : '0';
+  updateFloatingAddStepPosition();
+}
+
+function toggleRightPanel() {
+  const panel = document.getElementById('right-panel');
+  if (!panel) return;
+  setRightPanelVisible(panel.classList.contains('hidden'));
+  if (!panel.classList.contains('hidden') && currentStep) {
+    switchEditorTab(_lastEditorTab || 'edit');
+  }
+}
+
+function updateFloatingAddStepPosition() {
+  const btn = document.getElementById('btn-add-step');
+  const logs = document.getElementById('wf-exec-logs');
+  if (!btn || !logs) return;
+  const rect = logs.getBoundingClientRect();
+  const bottom = Math.max(16, Math.ceil(window.innerHeight - rect.top + 8));
+  btn.style.bottom = `${bottom}px`;
+}
+
+function initWorkflowLogsPanel() {
+  const panel = document.getElementById('wf-exec-logs');
+  const header = document.getElementById('wf-exec-logs-header');
+  if (!panel || !header) return;
+
+  const onMove = (ev) => {
+    if (!_logsPanelDrag) return;
+    const width = panel.offsetWidth;
+    const height = panel.offsetHeight;
+    const maxLeft = Math.max(0, window.innerWidth - width);
+    const maxTop = Math.max(0, window.innerHeight - height);
+    const left = Math.min(maxLeft, Math.max(0, ev.clientX - _logsPanelDrag.dx));
+    const top = Math.min(maxTop, Math.max(0, ev.clientY - _logsPanelDrag.dy));
+    panel.style.left = `${left}px`;
+    panel.style.top = `${top}px`;
+    panel.style.right = 'auto';
+    panel.style.bottom = 'auto';
+    updateFloatingAddStepPosition();
+  };
+
+  const onUp = () => {
+    _logsPanelDrag = null;
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+  };
+
+  header.addEventListener('mousedown', (ev) => {
+    if (ev.target.closest('.wf-log-action')) return;
+    const rect = panel.getBoundingClientRect();
+    _logsPanelDrag = { dx: ev.clientX - rect.left, dy: ev.clientY - rect.top };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+
+  if (window.ResizeObserver) {
+    const ro = new ResizeObserver(() => updateFloatingAddStepPosition());
+    ro.observe(panel);
+  }
+  window.addEventListener('resize', updateFloatingAddStepPosition);
+  updateFloatingAddStepPosition();
 }
 
 function switchEditorTab(tab) {
-  document.querySelectorAll('.etab').forEach((b,i)=>b.classList.toggle('active',['edit','run','log','json'][i]===tab));
+  _lastEditorTab = tab || _lastEditorTab || 'edit';
+  document.querySelectorAll('.etab').forEach((b,i)=>b.classList.toggle('active',['edit','run','log','json'][i]===_lastEditorTab));
   document.querySelectorAll('.etab-content').forEach(c=>c.classList.remove('active'));
-  document.getElementById(`etab-${tab}`)?.classList.add('active');
-  if (tab==='json') updateJsonTab();
+  document.getElementById(`etab-${_lastEditorTab}`)?.classList.add('active');
+  if (_lastEditorTab==='json') updateJsonTab();
 }
 
 function toggleTechSection() {
@@ -1610,7 +1686,7 @@ Object.assign(window,{
   addInputField, addOutputField, onTypeChange,
   toggleTechSection, toggleEditorMaximize,
   runStepOnly, runWorkflowFromHere, closeModal, showSignupCTA,
-  confirmEdgeDelete, toggleWorkflowExecLogs,
+  confirmEdgeDelete, toggleWorkflowExecLogs, toggleRightPanel,
   deleteWorkflow, copyWfJson, applyWfJson, closeWfJson, onWfJsonInput, copyWfJsonByName,
   openJsonFullscreen, closeJsonFullscreen, jfsCopy, jfsApply, jfsValidate,
   saveApiKey, deleteApiKey, changePassword,
@@ -1640,6 +1716,9 @@ window.addEventListener('load', async () => {
     const cfg = await fetch('/json_schemas/providers.json').then(r=>r.json());
     _providersConfig = cfg;
   } catch { /* fallback sur PROVIDER_MODEL_HINTS */ }
+
+  initWorkflowLogsPanel();
+  setRightPanelVisible(false);
 
   // Mount React Flow
   const root = createRoot(document.getElementById('rf-container'));
