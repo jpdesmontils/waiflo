@@ -188,6 +188,22 @@
               </div>
             </div>
           </div>
+          <div id="tool-section" style="display:none">
+            <div class="form-section">
+              <button class="tech-toggle" id="tool-advanced-toggle" type="button" onclick="toggleToolAdvancedSection()">Paramètres ws_tool avancés ▸</button>
+              <div id="tool-advanced-content" class="collapsed" style="margin-top:8px;display:flex;flex-direction:column;gap:10px;">
+                <div class="form-section">
+                  <div class="form-label">MCP Server</div>
+                  <select class="form-select" id="f-tool-mcp-server" onchange="onToolMcpServerChange()"></select>
+                </div>
+                <div class="form-section">
+                  <div class="form-label">Tool MCP découvert</div>
+                  <select class="form-select" id="f-tool-name"></select>
+                </div>
+                <div class="form-hint">Le serveur MCP est configuré dans Paramètres → Configuration MCP.</div>
+              </div>
+            </div>
+          </div>
           <div class="run-available-title">Inputs disponibles (connexions)</div>
           <div class="run-available-inputs" id="edit-available-inputs"></div>
           <div id="sysprompt-section">
