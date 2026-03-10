@@ -14,6 +14,7 @@ export class MistralProvider extends OpenAIProvider {
     super(apiKey, {
       baseURL: 'https://api.mistral.ai/v1',
       defaultModel: 'mistral-large-latest',
+      supportsImages: false,
     });
   }
 }

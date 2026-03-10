@@ -14,6 +14,7 @@ export class PerplexityProvider extends OpenAIProvider {
     super(apiKey, {
       baseURL: 'https://api.perplexity.ai',
       defaultModel: 'sonar-pro',
+      supportsImages: false,
     });
   }
 }
