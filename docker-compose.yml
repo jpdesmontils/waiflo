@@ -1,10 +1,13 @@
 services:
   waiflo:
-    image: node:20-alpine
+    build:
+      context: .
+      dockerfile: dockerfile
     working_dir: /app
-    command: sh -c "npm install && node server/index.js"
+    command: node server/index.js
     volumes:
       - .:/app
+      - /app/node_modules
       - waiflo-data:/data
     ports:
       - "3001:3001"
