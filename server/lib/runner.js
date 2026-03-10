@@ -165,3 +165,36 @@ export async function runApiStep(step, inputs) {
   }
   return { raw: await response.text() };
 }
+
+/**
+ * Execute a webpage step (browser-like HTML fetch).
+ * Returns { url, status, contentType, html }.
+ */
+export async function runWebpageStep(step, inputs) {
+  const webpageConfig = step.ws_webpage || step.ws_api || {};
+  let url = webpageConfig.url || '';
+
+  // Substitute {{input}} variables in URL
+  for (const [k, v] of Object.entries(inputs)) {
+    url = url.replaceAll(`{{${k}}}`, encodeURI(String(v)));
+  }
+
+  const headers = {
+    Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    'Accept-Language': 'fr-FR,fr;q=0.9,en;q=0.8',
+    'User-Agent': webpageConfig.userAgent || 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+    ...(webpageConfig.headers || {})
+  };
+
+  const response = await fetch(url, { method: 'GET', headers, redirect: 'follow' });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status} — ${response.statusText} — ${url}`);
+  }
+
+  return {
+    url: response.url,
+    status: response.status,
+    contentType: response.headers.get('content-type') || '',
+    html: await response.text()
+  };
+}

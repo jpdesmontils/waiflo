@@ -15,7 +15,7 @@ import dagre from 'dagre';
 const FIELD_TYPES = ['string','number','integer','boolean','object','array','image_url'];
 const NODE_W = 280, NODE_H = 164;
 const TYPE_COLORS = {
-  prompt:'#f59e0b', api:'#2dd4bf', transform:'#60a5fa', tool:'#a78bfa', script:'#fb923c'
+  prompt:'#f59e0b', api:'#2dd4bf', webpage:'#22d3ee', transform:'#60a5fa', tool:'#a78bfa', script:'#fb923c'
 };
 
 // ── DEMO WORKFLOW ────────────────────────────────────────────────
@@ -103,7 +103,11 @@ const StepNode = memo(function StepNode({ data, selected }) {
 
   const llmBadge = llm
     ? h('span',{ className:'rf-llm-badge' }, `${llm.provider||''}·${(llm.model||'').split('-').slice(-1)[0]} t=${llm.temperature??'?'}`)
-    : (wsType==='api'&&s.ws_api ? h('span',{ className:'rf-llm-badge rf-api-badge' }, `HTTP ${s.ws_api?.method||'GET'}`) : null);
+    : ((wsType==='api'&&s.ws_api)
+      ? h('span',{ className:'rf-llm-badge rf-api-badge' }, `HTTP ${s.ws_api?.method||'GET'}`)
+      : ((wsType==='webpage'&&(s.ws_webpage?.url||s.ws_api?.url))
+        ? h('span',{ className:'rf-llm-badge rf-api-badge' }, 'HTML GET')
+        : null));
   const toolsBadge = s.ws_tools?.length
     ? h('span',{ className:'rf-tools-badge' }, `🔧 ${s.ws_tools.length} tool${s.ws_tools.length>1?'s':''}`) : null;
 
@@ -779,7 +783,7 @@ function populateEditor(s) {
   document.getElementById('f-sysprompt').value = s.ws_system_prompt||'';
   document.getElementById('f-template').value  = s.ws_prompt_template||'';
   document.getElementById('f-method').value    = s.ws_api?.method||'GET';
-  document.getElementById('f-url').value       = s.ws_api?.url||'';
+  document.getElementById('f-url').value       = s.ws_webpage?.url || s.ws_api?.url || '';
   renderSchemaFields('inputs-fields',  s.ws_inputs_schema?.properties||{},  s.ws_inputs_schema?.required||[]);
   renderSchemaFields('outputs-fields', s.ws_output_schema?.properties||{}, s.ws_output_schema?.required||[]);
   onTypeChange(); updateJsonTab(); updateRunTab(s);
@@ -787,11 +791,15 @@ function populateEditor(s) {
 
 function onTypeChange() {
   const t=document.getElementById('f-type').value;
-  const p=t==='prompt', a=t==='api';
+  const p=t==='prompt', a=t==='api'||t==='webpage', w=t==='webpage';
   document.getElementById('llm-section').style.display       = p?'':'none';
   document.getElementById('sysprompt-section').style.display = p?'':'none';
   document.getElementById('template-section').style.display  = p?'':'none';
   document.getElementById('api-section').style.display       = a?'':'none';
+  document.getElementById('method-section').style.display    = w?'none':'';
+  document.getElementById('url-hint').textContent            = w
+    ? 'Fetches browser-like raw HTML from this URL. Use {{input_name}} for dynamic params.'
+    : 'Use {{input_name}} for dynamic params';
 }
 
 // ── Model default per provider (fallback si providers.json non chargé) ──
@@ -860,6 +868,7 @@ function collectStep() {
     s.ws_prompt_template=document.getElementById('f-template').value;
   }
   if (type==='api') s.ws_api={ method:document.getElementById('f-method').value, url:document.getElementById('f-url').value.trim() };
+  if (type==='webpage') s.ws_webpage={ url:document.getElementById('f-url').value.trim() };
   return s;
 }
 
@@ -1377,7 +1386,7 @@ async function executeStep(stepDef, runMode='step_only') {
   const ts = () => new Date().toISOString().slice(11,23);
   setRunningGraphState(_currentNodeId || s.ws_name, runMode === 'workflow_from_here');
 
-  if ((s.ws_type||'').toLowerCase()==='api') {
+  if (['api','webpage'].includes((s.ws_type||'').toLowerCase())) {
     const headers = { 'Content-Type':'application/json' };
     if (token) headers['Authorization'] = `Bearer ${token}`;
     let res;
@@ -1403,7 +1412,7 @@ async function executeStep(stepDef, runMode='step_only') {
     outEl.textContent=resultText;
     varsEl.textContent=resultText;
     rememberStepResult(s, _currentNodeId, res.result);
-    metaEl.innerHTML=`✓ api · ${elapsed}ms · ${ts()}`;
+    metaEl.innerHTML=`✓ ${(s.ws_type||'api').toLowerCase()} · ${elapsed}ms · ${ts()}`;
     statusEl.textContent='done'; statusEl.className='run-status done';
     saveStepRunState(s, _currentNodeId, { status:'done', output:resultText, logOutput:resultText, logMeta:metaEl.innerHTML, logError:false });
     return true;
