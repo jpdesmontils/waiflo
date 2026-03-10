@@ -189,24 +189,13 @@ export async function runApiStep(step, inputs) {
   return { raw: await response.text() };
 }
 
-/**
- * Execute a webpage step (browser-like HTML fetch).
- * Returns { url, status, contentType, html }.
- */
-export async function runWebpageStep(step, inputs) {
-  const webpageConfig = step.ws_webpage || step.ws_api || {};
-  let url = webpageConfig.url || '';
-
-  // Substitute {{input}} variables in URL
-  for (const [k, v] of Object.entries(inputs)) {
-    url = url.replaceAll(`{{${k}}}`, encodeURI(String(v)));
-  }
-
+async function runWebpageHttpStep(webpageConfig, inputs) {
+  const url = renderTemplateString(webpageConfig.url || '', inputs);
   const headers = {
     Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
     'Accept-Language': 'fr-FR,fr;q=0.9,en;q=0.8',
     'User-Agent': webpageConfig.userAgent || 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
-    ...(webpageConfig.headers || {})
+    ...renderTemplateDeep(webpageConfig.headers || {}, inputs)
   };
 
   const response = await fetch(url, { method: 'GET', headers, redirect: 'follow' });
@@ -215,9 +204,84 @@ export async function runWebpageStep(step, inputs) {
   }
 
   return {
-    url: response.url,
+    url,
+    finalUrl: response.url,
     status: response.status,
     contentType: response.headers.get('content-type') || '',
-    html: await response.text()
+    html: await response.text(),
+    meta: { mode: 'http' }
   };
+}
+
+async function runWebpageBrowserStep(webpageConfig, inputs) {
+  let chromium = null;
+  try {
+    ({ chromium } = await import('playwright'));
+  } catch {
+    throw new Error('Playwright is required for ws_webpage.mode="browser". Install dependency: npm i playwright');
+  }
+
+  const url = renderTemplateString(webpageConfig.url || '', inputs);
+  const headers = renderTemplateDeep(webpageConfig.headers || {}, inputs);
+  const timeout = Number(webpageConfig.timeoutMs || 30000);
+  const waitUntil = webpageConfig.waitUntil || 'networkidle';
+  const waitForSelector = webpageConfig.waitForSelector ? renderTemplateString(webpageConfig.waitForSelector, inputs) : '';
+  const viewport = webpageConfig.viewport && typeof webpageConfig.viewport === 'object'
+    ? { width: Number(webpageConfig.viewport.width || 1366), height: Number(webpageConfig.viewport.height || 768) }
+    : { width: 1366, height: 768 };
+
+  let browser;
+  const tsStart = Date.now();
+  try {
+    browser = await chromium.launch({ headless: true });
+    const context = await browser.newContext({
+      userAgent: webpageConfig.userAgent || undefined,
+      viewport,
+      extraHTTPHeaders: headers
+    });
+
+    const page = await context.newPage();
+    const response = await page.goto(url, { waitUntil, timeout });
+
+    if (waitForSelector) {
+      await page.waitForSelector(waitForSelector, { timeout });
+    }
+
+    const html = await page.content();
+    const title = await page.title();
+
+    await context.close();
+
+    return {
+      url,
+      finalUrl: page.url(),
+      status: response?.status?.() || 200,
+      contentType: response?.headers?.()['content-type'] || 'text/html',
+      html,
+      title,
+      meta: {
+        mode: 'browser',
+        waitUntil,
+        waitForSelector: waitForSelector || null,
+        timingMs: Date.now() - tsStart
+      }
+    };
+  } finally {
+    if (browser) await browser.close().catch(() => {});
+  }
+}
+
+/**
+ * Execute a webpage step.
+ * mode=http (default): simple fetch
+ * mode=browser: Playwright headless render
+ */
+export async function runWebpageStep(step, inputs) {
+  const webpageConfig = step.ws_webpage || step.ws_api || {};
+  const mode = (webpageConfig.mode || 'http').toLowerCase();
+
+  if (mode === 'browser') {
+    return runWebpageBrowserStep(webpageConfig, inputs || {});
+  }
+  return runWebpageHttpStep(webpageConfig, inputs || {});
 }

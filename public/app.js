@@ -805,10 +805,18 @@ function populateEditor(s) {
   document.getElementById('f-api-headers').value = formatJsonForEditor(s.ws_api?.headers || s.ws_webpage?.headers);
   document.getElementById('f-api-query').value   = formatJsonForEditor(s.ws_api?.query);
   document.getElementById('f-api-body').value    = formatJsonForEditor(s.ws_api?.body);
+  document.getElementById('f-webpage-mode').value = s.ws_webpage?.mode || 'http';
+  document.getElementById('f-webpage-browser-options').value = formatJsonForEditor({
+    waitUntil: s.ws_webpage?.waitUntil,
+    timeoutMs: s.ws_webpage?.timeoutMs,
+    waitForSelector: s.ws_webpage?.waitForSelector,
+    viewport: s.ws_webpage?.viewport,
+    userAgent: s.ws_webpage?.userAgent
+  });
 
   const apiAdv = document.getElementById('api-advanced-content');
   const apiAdvBtn = document.getElementById('api-advanced-toggle');
-  const hasApiAdvancedValues = Boolean((s.ws_api?.headers && Object.keys(s.ws_api.headers).length) || (s.ws_api?.query && Object.keys(s.ws_api.query).length) || s.ws_api?.body != null || (s.ws_webpage?.headers && Object.keys(s.ws_webpage.headers).length));
+  const hasApiAdvancedValues = Boolean((s.ws_api?.headers && Object.keys(s.ws_api.headers).length) || (s.ws_api?.query && Object.keys(s.ws_api.query).length) || s.ws_api?.body != null || (s.ws_webpage?.headers && Object.keys(s.ws_webpage.headers).length) || s.ws_webpage?.waitUntil || s.ws_webpage?.timeoutMs || s.ws_webpage?.waitForSelector || s.ws_webpage?.viewport || s.ws_webpage?.userAgent);
   if (apiAdv && apiAdvBtn) {
     apiAdv.classList.toggle('collapsed', !hasApiAdvancedValues);
     apiAdvBtn.textContent = `Advanced API parameters ${hasApiAdvancedValues ? '▾' : '▸'}`;
@@ -833,6 +841,13 @@ function onTypeChange() {
 
   const apiBody = document.getElementById('api-body-section');
   if (apiBody) apiBody.style.display = w ? 'none' : '';
+  const webpageModeSection = document.getElementById('webpage-mode-section');
+  if (webpageModeSection) webpageModeSection.style.display = w ? '' : 'none';
+  const webpageBrowserOptions = document.getElementById('webpage-browser-options');
+  if (webpageBrowserOptions) {
+    const mode = document.getElementById('f-webpage-mode')?.value || 'http';
+    webpageBrowserOptions.style.display = w && mode === 'browser' ? '' : 'none';
+  }
 }
 
 // ── Model default per provider (fallback si providers.json non chargé) ──
@@ -914,9 +929,19 @@ function collectStep() {
   }
   if (type==='webpage') {
     const headers = parseJsonEditorField('f-api-headers', 'Webpage headers');
-    if (headers === null) return null;
-    const webpage = { url:document.getElementById('f-url').value.trim() };
+    const browserOptions = parseJsonEditorField('f-webpage-browser-options', 'Webpage browser options');
+    if ([headers, browserOptions].includes(null)) return null;
+
+    const mode = document.getElementById('f-webpage-mode').value || 'http';
+    const webpage = { url:document.getElementById('f-url').value.trim(), mode };
     if (headers !== undefined) webpage.headers = headers;
+    if (browserOptions && typeof browserOptions === 'object') {
+      if (browserOptions.waitUntil) webpage.waitUntil = browserOptions.waitUntil;
+      if (browserOptions.timeoutMs != null) webpage.timeoutMs = Number(browserOptions.timeoutMs);
+      if (browserOptions.waitForSelector) webpage.waitForSelector = browserOptions.waitForSelector;
+      if (browserOptions.viewport && typeof browserOptions.viewport === 'object') webpage.viewport = browserOptions.viewport;
+      if (browserOptions.userAgent) webpage.userAgent = browserOptions.userAgent;
+    }
     s.ws_webpage = webpage;
   }
   return s;
@@ -1775,6 +1800,8 @@ document.getElementById('modal-overlay').addEventListener('click',e=>{ if(e.targ
 
 // ── INIT ─────────────────────────────────────────────────────────
 window.addEventListener('load', async () => {
+  document.getElementById('f-webpage-mode')?.addEventListener('change', () => onTypeChange());
+
   // Theme
   if (localStorage.getItem('wf_theme')==='light') {
     document.documentElement.classList.add('light');

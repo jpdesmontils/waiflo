@@ -151,6 +151,21 @@
               <input class="form-input" id="f-url" placeholder="https://api.example.com/{{param}}">
               <div class="form-hint" id="url-hint">{{hint_url}}</div>
             </div>
+
+            <div class="form-section" id="webpage-mode-section" style="display:none">
+              <div class="form-label">Webpage mode</div>
+              <select class="form-select" id="f-webpage-mode">
+                <option value="http">http (source HTML)</option>
+                <option value="browser">browser (headless render)</option>
+              </select>
+              <div class="form-hint">Use browser mode to execute JavaScript before extracting HTML.</div>
+            </div>
+            <div class="form-section" id="webpage-browser-options" style="display:none">
+              <div class="form-label">Browser options (JSON object)</div>
+              <textarea class="form-textarea" id="f-webpage-browser-options" placeholder='{"waitUntil":"networkidle","timeoutMs":30000,"waitForSelector":"main","viewport":{"width":1366,"height":768}}'></textarea>
+              <div class="form-hint">Supports {{input_name}} in string fields.</div>
+            </div>
+
             <div class="form-section">
               <button class="tech-toggle" id="api-advanced-toggle" type="button" onclick="toggleApiAdvancedSection()">Advanced API parameters ▸</button>
               <div id="api-advanced-content" class="collapsed" style="margin-top:8px;display:flex;flex-direction:column;gap:10px;">
