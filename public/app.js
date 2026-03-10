@@ -1685,138 +1685,6 @@ async function discoverMcpTools() {
   toast(`${_mcpDiscoveredTools.length} tool(s) MCP détecté(s)`,'ok');
 }
 
-function normalizeMcpRegistryDraft() {
-  if (!_mcpRegistryDraft || typeof _mcpRegistryDraft !== 'object') _mcpRegistryDraft = { mcp_servers: {} };
-  if (!_mcpRegistryDraft.mcp_servers || typeof _mcpRegistryDraft.mcp_servers !== 'object') _mcpRegistryDraft.mcp_servers = {};
-}
-
-function getSelectedMcpServerId() {
-  const el = document.getElementById('s-mcp-server-list');
-  return el?.value || Object.keys(_mcpRegistryDraft?.mcp_servers || {})[0] || '';
-}
-
-function renderMcpServerList(selectedId = '') {
-  normalizeMcpRegistryDraft();
-  const list = document.getElementById('s-mcp-server-list');
-  if (!list) return;
-  const ids = Object.keys(_mcpRegistryDraft.mcp_servers || {});
-  list.innerHTML = ids.length
-    ? ids.map(id => `<option value="${id}">${id}</option>`).join('')
-    : '<option value="">(aucun serveur)</option>';
-  if (selectedId && ids.includes(selectedId)) list.value = selectedId;
-  else if (ids.length) list.value = ids[0];
-}
-
-function setMcpField(id, value) {
-  const el = document.getElementById(id);
-  if (!el) return;
-  el.value = value == null ? '' : String(value);
-}
-
-function parseJsonOrEmpty(id, fallback = {}) {
-  const raw = document.getElementById(id)?.value?.trim() || '';
-  if (!raw) return fallback;
-  return JSON.parse(raw);
-}
-
-function onMcpTransportChange() {
-  const transport = document.getElementById('s-mcp-transport')?.value || 'http';
-  const isHttp = transport === 'http' || transport === 'websocket';
-  const isStdio = transport === 'stdio';
-  const httpSection = document.getElementById('s-mcp-http-fields');
-  const stdioSection = document.getElementById('s-mcp-stdio-fields');
-  if (httpSection) httpSection.style.display = isHttp ? '' : 'none';
-  if (stdioSection) stdioSection.style.display = isStdio ? '' : 'none';
-
-  const req = document.getElementById('s-mcp-required-fields');
-  if (req) {
-    req.textContent = isStdio
-      ? 'Champs obligatoires: server_id, transport=stdio, command. Optionnels: args, env, timeoutMs, retry, allowedTools.'
-      : 'Champs obligatoires: server_id, transport=http/websocket, url. Optionnels: headers, auth, timeoutMs, retry, allowedTools.';
-  }
-}
-
-function loadMcpServerIntoForm(serverId) {
-  normalizeMcpRegistryDraft();
-  const cfg = _mcpRegistryDraft.mcp_servers?.[serverId] || {};
-  setMcpField('s-mcp-server-id', serverId || '');
-  setMcpField('s-mcp-transport', cfg.transport || 'http');
-  setMcpField('s-mcp-url', cfg.url || '');
-  setMcpField('s-mcp-command', cfg.command || '');
-  setMcpField('s-mcp-args', JSON.stringify(cfg.args || [], null, 2));
-  setMcpField('s-mcp-env', JSON.stringify(cfg.env || {}, null, 2));
-  setMcpField('s-mcp-headers', JSON.stringify(cfg.headers || {}, null, 2));
-  setMcpField('s-mcp-auth-type', cfg.auth?.type || '');
-  setMcpField('s-mcp-auth-header', cfg.auth?.headerName || 'Authorization');
-  setMcpField('s-mcp-auth-token-env', cfg.auth?.tokenEnvVar || '');
-  setMcpField('s-mcp-timeout', cfg.timeoutMs ?? 30000);
-  setMcpField('s-mcp-retries', cfg.retry?.retries ?? 0);
-  setMcpField('s-mcp-backoff', cfg.retry?.backoffMs ?? 250);
-  setMcpField('s-mcp-allowed-tools', (cfg.allowedTools || []).join('\n'));
-  onMcpTransportChange();
-}
-
-function buildMcpServerFromForm() {
-  const serverId = document.getElementById('s-mcp-server-id')?.value?.trim();
-  const transport = document.getElementById('s-mcp-transport')?.value || 'http';
-  if (!serverId) throw new Error('server_id est obligatoire');
-
-  const cfg = {
-    transport,
-    timeoutMs: Number(document.getElementById('s-mcp-timeout')?.value || 30000),
-    retry: {
-      retries: Number(document.getElementById('s-mcp-retries')?.value || 0),
-      backoffMs: Number(document.getElementById('s-mcp-backoff')?.value || 250)
-    }
-  };
-
-  if (transport === 'stdio') {
-    const command = document.getElementById('s-mcp-command')?.value?.trim();
-    if (!command) throw new Error('command est obligatoire pour transport stdio');
-    cfg.command = command;
-    cfg.args = parseJsonOrEmpty('s-mcp-args', []);
-    cfg.env = parseJsonOrEmpty('s-mcp-env', {});
-  } else {
-    const url = document.getElementById('s-mcp-url')?.value?.trim();
-    if (!url) throw new Error('url est obligatoire pour transport http/websocket');
-    cfg.url = url;
-    cfg.headers = parseJsonOrEmpty('s-mcp-headers', {});
-    const type = document.getElementById('s-mcp-auth-type')?.value?.trim() || null;
-    const tokenEnvVar = document.getElementById('s-mcp-auth-token-env')?.value?.trim() || null;
-    const headerName = document.getElementById('s-mcp-auth-header')?.value?.trim() || 'Authorization';
-    if (type || tokenEnvVar) cfg.auth = { type, tokenEnvVar, headerName };
-  }
-
-  const allowedRaw = document.getElementById('s-mcp-allowed-tools')?.value || '';
-  const allowedTools = allowedRaw.split('\n').map(v => v.trim()).filter(Boolean);
-  if (allowedTools.length) cfg.allowedTools = allowedTools;
-
-  return { serverId, cfg };
-}
-
-function addMcpServerDraft() {
-  try {
-    normalizeMcpRegistryDraft();
-    const { serverId, cfg } = buildMcpServerFromForm();
-    _mcpRegistryDraft.mcp_servers[serverId] = cfg;
-    renderMcpServerList(serverId);
-    const msg = document.getElementById('s-mcp-registry-msg');
-    if (msg) { msg.className = 'settings-ok'; msg.textContent = `Serveur ${serverId} prêt à sauvegarder`; }
-  } catch (err) {
-    const msg = document.getElementById('s-mcp-registry-msg');
-    if (msg) { msg.className = 'settings-err'; msg.textContent = err.message; }
-  }
-}
-
-function deleteMcpServerDraft() {
-  normalizeMcpRegistryDraft();
-  const id = getSelectedMcpServerId();
-  if (!id) return;
-  delete _mcpRegistryDraft.mcp_servers[id];
-  renderMcpServerList();
-  loadMcpServerIntoForm(getSelectedMcpServerId());
-}
-
 async function loadMcpConfig() {
   const res = await api('/api/mcp/config','GET');
   if (res.error || !res.ok) return;
@@ -1824,24 +1692,25 @@ async function loadMcpConfig() {
   _mcpApiKeyStatus = res.apiKeyStatus || {};
   _mcpRegistryDraft = res.registry || { mcp_servers: {} };
 
+  const ta = document.getElementById('s-mcp-registry');
+  if (ta) ta.value = JSON.stringify(_mcpRegistryDraft, null, 2);
   const status = document.getElementById('s-mcp-apikey-status');
   if (status) status.textContent = Object.keys(_mcpApiKeyStatus).length
     ? `✓ Secrets MCP enregistrés: ${Object.keys(_mcpApiKeyStatus).join(', ')}`
     : 'Aucun secret MCP enregistré.';
 
   renderMcpAdapters(_mcpAdapters);
-  renderMcpServerList();
-  loadMcpServerIntoForm(getSelectedMcpServerId());
 }
 
 async function saveMcpRegistryConfig() {
   const msg = document.getElementById('s-mcp-registry-msg');
   try {
-    addMcpServerDraft();
-    const res = await api('/api/mcp/config','PUT',{ registry: _mcpRegistryDraft });
+    const registry = JSON.parse(document.getElementById('s-mcp-registry').value || '{"mcp_servers":{}}');
+    const res = await api('/api/mcp/config','PUT',{ registry });
     if (res.error) throw new Error(res.error);
     msg.className = 'settings-ok';
     msg.textContent = 'Configuration MCP sauvegardée';
+    _mcpRegistryDraft = registry;
   } catch (err) {
     msg.className = 'settings-err';
     msg.textContent = err.message;
@@ -1877,27 +1746,12 @@ function openSettings() {
   if (guestMode) { showSignupCTA(); return; }
   openModal('Settings',`
     <div class="settings-row" style="margin-bottom:10px;gap:6px;">
-      <button class="settings-btn settings-tab-btn active" data-tab-target="account" onclick="switchSettingsTab('account')">Compte</button>
-      <button class="settings-btn settings-tab-btn" data-tab-target="llm" onclick="switchSettingsTab('llm')">LLM</button>
+      <button class="settings-btn settings-tab-btn active" data-tab-target="llm" onclick="switchSettingsTab('llm')">LLM</button>
       <button class="settings-btn settings-tab-btn" data-tab-target="mcp" onclick="switchSettingsTab('mcp')">Configuration MCP</button>
+      <button class="settings-btn settings-tab-btn" data-tab-target="account" onclick="switchSettingsTab('account')">Compte</button>
     </div>
 
-    <div class="settings-section" data-settings-tab="account">
-      <div class="settings-title">Change Password</div>
-      <input class="settings-input" id="s-oldpw" type="password" placeholder="Current password" style="margin-bottom:6px">
-      <input class="settings-input" id="s-newpw" type="password" placeholder="New password (min. 8 chars)">
-      <button class="settings-btn" onclick="changePassword()" style="margin-top:8px">Change</button>
-      <div id="s-pw-msg"></div>
-      <div class="settings-title" style="margin-top:14px">Language</div>
-      <div class="settings-row">
-        <select class="settings-input" id="s-lang" onchange="setLanguage(this.value)">
-          <option value="en">English</option>
-          <option value="fr">Français</option>
-        </select>
-      </div>
-    </div>
-
-    <div class="settings-section" data-settings-tab="llm" style="display:none">
+    <div class="settings-section" data-settings-tab="llm">
       <div class="settings-title">API Keys LLM</div>
       <div class="settings-desc">Keys are encrypted AES-256 on the server, never exposed to the browser.</div>
       <div class="settings-row" style="margin-bottom:6px">
@@ -1916,53 +1770,14 @@ function openSettings() {
 
     <div class="settings-section" data-settings-tab="mcp" style="display:none">
       <div class="settings-title">MCP Registry & Secrets</div>
-      <div class="settings-desc">Gestion graphique des serveurs MCP (champs obligatoires et optionnels).</div>
-      <div class="settings-row" style="align-items:flex-start;gap:10px;">
-        <div style="min-width:180px;display:flex;flex-direction:column;gap:6px;">
-          <div class="form-label">Serveurs configurés</div>
-          <select class="settings-input" id="s-mcp-server-list" size="8" onchange="loadMcpServerIntoForm(this.value)"></select>
-          <button class="settings-btn danger" onclick="deleteMcpServerDraft()">Supprimer serveur</button>
-        </div>
-        <div style="flex:1;display:flex;flex-direction:column;gap:8px;">
-          <div id="s-mcp-required-fields" class="settings-desc"></div>
-          <div class="settings-row">
-            <input class="settings-input" id="s-mcp-server-id" placeholder="server_id (obligatoire)">
-            <select class="settings-input" id="s-mcp-transport" onchange="onMcpTransportChange()" style="max-width:200px;flex:none">
-              <option value="http">http</option>
-              <option value="stdio">stdio</option>
-              <option value="websocket">websocket</option>
-            </select>
-          </div>
-          <div id="s-mcp-http-fields" style="display:flex;flex-direction:column;gap:8px;">
-            <input class="settings-input" id="s-mcp-url" placeholder="url (obligatoire en http/websocket)">
-            <textarea class="form-textarea" id="s-mcp-headers" placeholder='headers JSON optionnel: {"X-Trace":"waiflo"}'></textarea>
-            <div class="settings-row">
-              <select class="settings-input" id="s-mcp-auth-type" style="max-width:140px;flex:none">
-                <option value="">no auth</option>
-                <option value="bearer">bearer</option>
-                <option value="raw">raw</option>
-              </select>
-              <input class="settings-input" id="s-mcp-auth-header" placeholder="Authorization (optionnel)">
-              <input class="settings-input" id="s-mcp-auth-token-env" placeholder="tokenEnvVar ex: GOOGLE_MAPS_API_KEY">
-            </div>
-          </div>
-          <div id="s-mcp-stdio-fields" style="display:none;flex-direction:column;gap:8px;">
-            <input class="settings-input" id="s-mcp-command" placeholder="command (obligatoire en stdio) ex: npx">
-            <textarea class="form-textarea" id="s-mcp-args" placeholder='args JSON optionnel: ["google-maps-mcp-server"]'></textarea>
-            <textarea class="form-textarea" id="s-mcp-env" placeholder='env JSON optionnel: {"GOOGLE_MAPS_API_KEY":"${GOOGLE_MAPS_API_KEY}"}'></textarea>
-          </div>
-          <div class="settings-row">
-            <input class="settings-input" id="s-mcp-timeout" type="number" min="1000" placeholder="timeoutMs (optionnel)">
-            <input class="settings-input" id="s-mcp-retries" type="number" min="0" placeholder="retry.retries (optionnel)">
-            <input class="settings-input" id="s-mcp-backoff" type="number" min="0" placeholder="retry.backoffMs (optionnel)">
-          </div>
-          <textarea class="form-textarea" id="s-mcp-allowed-tools" placeholder="allowedTools optionnel, 1 tool par ligne"></textarea>
-          <div class="settings-row">
-            <button class="settings-btn" onclick="addMcpServerDraft()">Mettre à jour le serveur</button>
-            <button class="settings-btn" onclick="saveMcpRegistryConfig()">Sauvegarder registry</button>
-            <span id="s-mcp-registry-msg"></span>
-          </div>
-        </div>
+      <div class="settings-desc">Configure les serveurs MCP, les adapters et les secrets API utilisés par les tools.</div>
+      <div class="form-section">
+        <div class="form-label">Registry MCP (JSON)</div>
+        <textarea class="form-textarea tall" id="s-mcp-registry" placeholder='{"mcp_servers":{"google_maps":{"transport":"http","url":"http://...","headers":{"Authorization":"Bearer \${GOOGLE_MAPS_API_KEY}"}}}}'></textarea>
+      </div>
+      <div class="settings-row">
+        <button class="settings-btn" onclick="saveMcpRegistryConfig()">Sauvegarder registry</button>
+        <span id="s-mcp-registry-msg"></span>
       </div>
       <hr style="border-color:var(--border);margin:10px 0;">
       <div class="settings-row" style="margin-bottom:6px">
@@ -1975,6 +1790,21 @@ function openSettings() {
       </div>
       <div id="s-mcp-apikey-msg"></div>
       <div id="s-mcp-apikey-status" class="settings-desc" style="margin-top:8px"></div>
+    </div>
+
+    <div class="settings-section" data-settings-tab="account" style="display:none">
+      <div class="settings-title">Change Password</div>
+      <input class="settings-input" id="s-oldpw" type="password" placeholder="Current password" style="margin-bottom:6px">
+      <input class="settings-input" id="s-newpw" type="password" placeholder="New password (min. 8 chars)">
+      <button class="settings-btn" onclick="changePassword()" style="margin-top:8px">Change</button>
+      <div id="s-pw-msg"></div>
+      <div class="settings-title" style="margin-top:14px">Language</div>
+      <div class="settings-row">
+        <select class="settings-input" id="s-lang" onchange="setLanguage(this.value)">
+          <option value="en">English</option>
+          <option value="fr">Français</option>
+        </select>
+      </div>
     </div>`,
     [{ label:'Close', action:closeModal }]
   );
@@ -1986,7 +1816,7 @@ function openSettings() {
   const currentLang = qpLang || cookieLang || 'en';
   const sLang = document.getElementById('s-lang');
   if (sLang) sLang.value = currentLang;
-  switchSettingsTab('account');
+  switchSettingsTab('llm');
 }
 
 function setLanguage(lang) {
@@ -2109,7 +1939,6 @@ Object.assign(window,{
   openJsonFullscreen, closeJsonFullscreen, jfsCopy, jfsApply, jfsValidate,
   saveApiKey, deleteApiKey, changePassword,
   saveMcpRegistryConfig, saveMcpApiKey, deleteMcpApiKey, discoverMcpTools, switchSettingsTab,
-  addMcpServerDraft, deleteMcpServerDraft, loadMcpServerIntoForm, onMcpTransportChange,
   onProviderChange, onSettingsProviderChange, setLanguage
 });
 
