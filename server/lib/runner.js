@@ -31,6 +31,37 @@ async function resolveApiKey(user, provider) {
   );
 }
 
+
+function collectImageUrls(step, inputs) {
+  const props = step?.ws_inputs_schema?.properties || {};
+  const urls = [];
+
+  for (const [key, schema] of Object.entries(props)) {
+    if (schema?.type !== 'image_url') continue;
+    const raw = inputs?.[key];
+    if (!raw) continue;
+
+    if (typeof raw === 'string') {
+      urls.push(raw);
+      continue;
+    }
+
+    if (Array.isArray(raw)) {
+      raw.forEach(v => {
+        if (typeof v === 'string') urls.push(v);
+        else if (v && typeof v === 'object' && typeof v.url === 'string') urls.push(v.url);
+      });
+      continue;
+    }
+
+    if (typeof raw === 'object' && typeof raw.url === 'string') {
+      urls.push(raw.url);
+    }
+  }
+
+  return urls.filter(Boolean);
+}
+
 function buildPrompt(template, inputs) {
   let prompt = template;
   for (const [k, v] of Object.entries(inputs)) {
@@ -77,7 +108,8 @@ export async function runPromptStep(step, inputs, user, res) {
 
   try {
     let fullText = '';
-    for await (const chunk of llmProvider.stream({ model, system, userPrompt, temperature: temp, maxTokens: maxTok })) {
+    const imageUrls = collectImageUrls(step, inputs);
+    for await (const chunk of llmProvider.stream({ model, system, userPrompt, imageUrls, temperature: temp, maxTokens: maxTok })) {
       send('token', { text: chunk.text });
       fullText += chunk.text;
     }

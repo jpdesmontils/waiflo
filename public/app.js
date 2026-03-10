@@ -12,7 +12,7 @@ import {
 import dagre from 'dagre';
 
 // ── CONSTANTS ────────────────────────────────────────────────────
-const FIELD_TYPES = ['string','number','integer','boolean','object','array'];
+const FIELD_TYPES = ['string','number','integer','boolean','object','array','image_url'];
 const NODE_W = 280, NODE_H = 164;
 const TYPE_COLORS = {
   prompt:'#f59e0b', api:'#2dd4bf', transform:'#60a5fa', tool:'#a78bfa', script:'#fb923c'
@@ -84,6 +84,8 @@ let _runStepDefaultLabel = '▶ Run Step Only';
 let _runFlowDefaultLabel = '▶ Run Workflow From Here';
 let _edgeDeletePrompt = null;
 let _workflowExecLogs = [];
+let _activeRunNodeIds = new Set();
+let _activeRunEdgeIds = new Set();
 
 // ══════════════════════════════════════════════════════════════════
 //  REACT FLOW — CUSTOM NODE
@@ -116,12 +118,12 @@ const StepNode = memo(function StepNode({ data, selected }) {
       : [h('div',{ key:'_', className:'rf-no-schema' },'—')];
 
   return h('div',{
-    className:`rf-step-node rf-type-border-${wsType}${selected?' selected':''}`,
+    className:`rf-step-node rf-type-border-${wsType}${selected?' selected':''}${data.isRunning?' running':''}`,
     onClick: () => openStepEditor(data.nodeId)
   },
     h(Handle,{ type:'target', position:Position.Top, id:'top' }),
     h(Handle,{ type:'source', position:Position.Bottom, id:'bottom' }),
-    h('div',{ className:'rf-card-header' },
+    h('div',{ className:`rf-card-header${data.isRunning ? ' running' : ''}` },
       h('span',{ className:`rf-type-badge rf-type-${wsType}` },wsType),
       h('span',{ className:'rf-card-name' },name)
     ),
@@ -215,7 +217,11 @@ function buildGraph(data) {
     wf.wf_nodes.forEach(node=>{
       const s = stepsMap[node.ws_ref]||{ ws_name:node.ws_ref, ws_type:'prompt' };
       rawNodes.push({ id:node.step_id, type:'step', position:{x:0,y:0}, data:{ step:s, nodeId:node.step_id } });
-      (node.depends_on||[]).forEach(dep=>rawEdges.push({ id:`${dep}->${node.step_id}`, source:dep, target:node.step_id }));
+      (node.depends_on||[]).forEach(dep=>{
+        const depNode = findWorkflowNode(wf, dep);
+        if (!depNode) return;
+        rawEdges.push({ id:`${depNode.step_id}->${node.step_id}`, source:depNode.step_id, target:node.step_id });
+      });
     });
     document.getElementById('meta-steps').textContent = wf.wf_nodes.length;
     document.getElementById('meta-wf').textContent    = wf.wf_name||'—';
@@ -236,16 +242,29 @@ function buildGraph(data) {
   let refX = layoutedNodes[0]?.position?.x ?? 0;
   layoutedNodes.forEach(n => { if (curPos[n.id]) { maxY = Math.max(maxY, curPos[n.id].y); refX = curPos[n.id].x; } });
   const finalNodes = layoutedNodes.map(n => {
-    if (curPos[n.id]) return { ...n, position: curPos[n.id] };
-    maxY += NODE_H + 60;
-    return { ...n, position: { x: refX, y: maxY } };
+    const base = curPos[n.id] ? { ...n, position: curPos[n.id] } : (() => {
+      maxY += NODE_H + 60;
+      return { ...n, position: { x: refX, y: maxY } };
+    })();
+    return {
+      ...base,
+      data: {
+        ...base.data,
+        isRunning: _activeRunNodeIds.has(base.id)
+      }
+    };
   });
+  const finalEdges = rawEdges.map(e => ({
+    ...e,
+    className: _activeRunEdgeIds.has(e.id) ? 'rf-edge-running' : undefined,
+    animated: _activeRunEdgeIds.has(e.id)
+  }));
 
   document.getElementById('meta-name').textContent = data.lang_name||currentWf?.name||'—';
   document.getElementById('wf-meta').classList.remove('hidden');
   document.getElementById('empty-state').classList.add('hidden');
   _graphVersion++;
-  if (_setGraphData) _setGraphData({ nodes:finalNodes, edges:rawEdges, version:_graphVersion });
+  if (_setGraphData) _setGraphData({ nodes:finalNodes, edges:finalEdges, version:_graphVersion });
 }
 
 function fitGraph() { _fitView?.({ padding:0.12, duration:400 }); }
@@ -937,6 +956,54 @@ function appendWorkflowExecLog(line) {
   if (pre) { pre.textContent = _workflowExecLogs.join('\n'); pre.scrollTop = pre.scrollHeight; }
 }
 
+async function copyWorkflowExecLogs() {
+  const txt = _workflowExecLogs.join('\n');
+  if (!txt) { toast('No logs to copy', 'err'); return; }
+  try {
+    await navigator.clipboard.writeText(txt);
+    toast('Workflow logs copied', 'ok');
+  } catch {
+    toast('Clipboard unavailable', 'err');
+  }
+}
+
+function clearWorkflowExecLogs() {
+  _workflowExecLogs = [];
+  const pre = document.getElementById('wf-exec-logs-content');
+  if (pre) pre.textContent = '';
+}
+
+function setRunningGraphState(nodeId, includeDeps = false) {
+  _activeRunNodeIds = new Set();
+  _activeRunEdgeIds = new Set();
+  if (!currentWf || !nodeId) {
+    if (currentWf) buildGraph(currentWf.data);
+    return;
+  }
+  const wf = (currentWf.data.workflows || []).find(w => w.wf_nodes?.length);
+  if (!wf) return;
+  const node = findWorkflowNode(wf, nodeId);
+  if (!node) return;
+
+  _activeRunNodeIds.add(node.step_id);
+  if (includeDeps) {
+    for (const depRef of (node.depends_on || [])) {
+      const depNode = findWorkflowNode(wf, depRef);
+      if (!depNode) continue;
+      _activeRunNodeIds.add(depNode.step_id);
+      _activeRunEdgeIds.add(`${depNode.step_id}->${node.step_id}`);
+    }
+  }
+  buildGraph(currentWf.data);
+}
+
+function clearRunningGraphState() {
+  if (!_activeRunNodeIds.size && !_activeRunEdgeIds.size) return;
+  _activeRunNodeIds.clear();
+  _activeRunEdgeIds.clear();
+  if (currentWf) buildGraph(currentWf.data);
+}
+
 function toggleWorkflowExecLogs() {
   const body = document.getElementById('wf-exec-logs-body');
   const icon = document.getElementById('wf-exec-logs-toggle');
@@ -984,12 +1051,12 @@ function buildInheritedInputs(step, nodeId) {
   const wf = (currentWf.data.workflows || []).find(w => w.wf_nodes?.length);
   if (!wf) return {};
 
-  const node = wf.wf_nodes.find(n => n.step_id === nodeId || n.ws_ref === nodeId);
+  const node = findWorkflowNode(wf, nodeId);
   if (!node) return {};
 
   const inherited = {};
   for (const depId of (node.depends_on || [])) {
-    const depNode = wf.wf_nodes.find(n => n.step_id === depId);
+    const depNode = findWorkflowNode(wf, depId);
     if (!depNode) continue;
     const depOutput = _lastStepRuns[depNode.step_id] || _lastStepRuns[depNode.ws_ref];
     if (!depOutput || typeof depOutput !== 'object') continue;
@@ -1009,12 +1076,12 @@ function getAvailableConnectedInputs(step, nodeId) {
   const wf = (currentWf.data.workflows || []).find(w => w.wf_nodes?.length);
   if (!wf) return [];
 
-  const node = wf.wf_nodes.find(n => n.step_id === nodeId || n.ws_ref === nodeId);
+  const node = findWorkflowNode(wf, nodeId);
   if (!node) return [];
 
   const names = new Set();
   for (const depId of (node.depends_on || [])) {
-    const depNode = wf.wf_nodes.find(n => n.step_id === depId);
+    const depNode = findWorkflowNode(wf, depId);
     if (!depNode) continue;
     const depStep = (currentWf.data.steps || []).find(s => s.ws_name === depNode.ws_ref);
     const outProps = depStep?.ws_output_schema?.properties || {};
@@ -1079,16 +1146,27 @@ function stopExecution() {
   if (_runController) _runController.abort();
 }
 
+function findWorkflowNode(wf, ref) {
+  if (!wf || !ref) return null;
+  return (wf.wf_nodes || []).find(n => n.step_id === ref || n.ws_ref === ref) || null;
+}
+
 function getDownstreamExecutionOrder(startNodeId) {
   const wf = (currentWf?.data?.workflows || []).find(w => w.wf_nodes?.length);
   if (!wf) return [];
   const nodes = wf.wf_nodes || [];
   const byId = new Map(nodes.map(n => [n.step_id, n]));
   const children = new Map(nodes.map(n => [n.step_id, []]));
-  nodes.forEach(n => (n.depends_on || []).forEach(dep => { if (children.has(dep)) children.get(dep).push(n.step_id); }));
+  nodes.forEach(n => (n.depends_on || []).forEach(dep => {
+    const depNode = findWorkflowNode(wf, dep);
+    if (depNode && children.has(depNode.step_id)) children.get(depNode.step_id).push(n.step_id);
+  }));
+
+  const startNode = findWorkflowNode(wf, startNodeId);
+  if (!startNode) return [];
 
   const included = new Set();
-  const stack = [startNodeId];
+  const stack = [startNode.step_id];
   while (stack.length) {
     const id = stack.pop();
     if (!id || included.has(id)) continue;
@@ -1100,7 +1178,10 @@ function getDownstreamExecutionOrder(startNodeId) {
   included.forEach(id => indeg.set(id, 0));
   included.forEach(id => {
     const node = byId.get(id);
-    (node?.depends_on || []).forEach(dep => { if (included.has(dep)) indeg.set(id, (indeg.get(id) || 0) + 1); });
+    (node?.depends_on || []).forEach(dep => {
+      const depNode = findWorkflowNode(wf, dep);
+      if (depNode && included.has(depNode.step_id)) indeg.set(id, (indeg.get(id) || 0) + 1);
+    });
   });
   const q = [...included].filter(id => indeg.get(id) === 0);
   const order = [];
@@ -1218,6 +1299,7 @@ async function executeStep(stepDef, runMode='step_only') {
 
   const tsStart = Date.now();
   const ts = () => new Date().toISOString().slice(11,23);
+  setRunningGraphState(_currentNodeId || s.ws_name, runMode === 'workflow_from_here');
 
   if ((s.ws_type||'').toLowerCase()==='api') {
     const headers = { 'Content-Type':'application/json' };
@@ -1321,7 +1403,7 @@ async function runStepOnly() {
   if (!currentStep) return;
   setExecutionUiState(true);
   try { await executeStep(currentStep, 'step_only'); }
-  finally { _runController = null; setExecutionUiState(false); }
+  finally { _runController = null; setExecutionUiState(false); clearRunningGraphState(); }
 }
 
 async function runWorkflowFromHere() {
@@ -1329,13 +1411,15 @@ async function runWorkflowFromHere() {
   if (!currentStep || !_currentNodeId) return;
   setExecutionUiState(true);
   try {
-    _workflowExecLogs = [];
+    clearWorkflowExecLogs();
+    clearRunningGraphState();
     appendWorkflowExecLog(`${wfTs()} ## Workflow ## Start from ${_currentNodeId}`);
     const order = getDownstreamExecutionOrder(_currentNodeId);
     const wf = (currentWf?.data?.workflows || []).find(w => w.wf_nodes?.length);
     for (const nodeId of order) {
       if (!_isExecuting) break;
-      const node = wf.wf_nodes.find(n => n.step_id === nodeId);
+      const node = findWorkflowNode(wf, nodeId);
+      if (!node) continue;
       const step = (currentWf.data.steps || []).find(st => st.ws_name === node.ws_ref);
       if (!step) continue;
       currentStep = step;
@@ -1353,6 +1437,7 @@ async function runWorkflowFromHere() {
   } finally {
     _runController = null;
     setExecutionUiState(false);
+    clearRunningGraphState();
   }
 }
 
