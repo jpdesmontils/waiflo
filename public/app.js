@@ -75,6 +75,10 @@ let _graphVersion  = 0;
 let _jfsSource     = null;
 let _providersConfig  = {};   // loaded from /json_schemas/providers.json
 let _providerKeyStatus = {};  // loaded from /api/auth/me { anthropic: true, ... }
+let _mcpAdapters = [];
+let _mcpApiKeyStatus = {};
+let _mcpRegistryDraft = { mcp_servers: {} };
+let _mcpDiscoveredTools = [];
 let _lastStepRuns = {};       // keyed by workflow node id, stores latest parsed output
 let _stepRunUiState = {};     // keyed by workflow node id, stores log/meta/status/output ui state
 let _currentNodeId = null;    // currently edited node id (wf node id or step name)
@@ -99,7 +103,7 @@ const StepNode = memo(function StepNode({ data, selected }) {
   const name   = s.ws_name || '—';
   const sysPrmt = s.ws_system_prompt || s.ws_prompt_template || '';
   const mcpDesc = s.ws_mcp?.server && s.ws_mcp?.tool ? `${s.ws_mcp.server} → ${s.ws_mcp.tool}` : '';
-  const rawDesc = wsType === 'mcp' ? mcpDesc : sysPrmt;
+  const rawDesc = (wsType === 'mcp' || wsType === 'tool') ? mcpDesc : sysPrmt;
   const desc   = rawDesc.length > 90 ? rawDesc.slice(0,88)+'…' : (rawDesc || '—');
   const llm    = s.ws_llm;
 
@@ -109,7 +113,7 @@ const StepNode = memo(function StepNode({ data, selected }) {
       ? h('span',{ className:'rf-llm-badge rf-api-badge' }, `HTTP ${s.ws_api?.method||'GET'}`)
       : ((wsType==='webpage'&&(s.ws_webpage?.url||s.ws_api?.url))
         ? h('span',{ className:'rf-llm-badge rf-api-badge' }, 'HTML GET')
-        : ((wsType==='mcp'&&s.ws_mcp?.server)
+        : ((['mcp','tool'].includes(wsType)&&s.ws_mcp?.server)
           ? h('span',{ className:'rf-llm-badge rf-api-badge' }, `MCP ${s.ws_mcp.server}`)
           : null)));
   const toolsBadge = s.ws_tools?.length
@@ -431,6 +435,7 @@ function enterAuthUser(user) {
   document.getElementById('btn-settings').style.display = '';
   document.getElementById('user-badge').textContent = user.email||'';
   loadWorkflowList();
+  loadMcpConfig();
 }
 
 function showSignupCTA() {
@@ -813,6 +818,8 @@ function populateEditor(s) {
   document.getElementById('f-mcp-server').value = s.ws_mcp?.server || '';
   document.getElementById('f-mcp-tool').value = s.ws_mcp?.tool || '';
   document.getElementById('f-mcp-input').value = formatJsonForEditor(s.ws_mcp?.input);
+  renderMcpAdapters(_mcpAdapters);
+  if (document.getElementById('f-mcp-adapter')) document.getElementById('f-mcp-adapter').value = s.ws_mcp?.adapter || 'default';
   document.getElementById('f-webpage-browser-options').value = formatJsonForEditor({
     waitUntil: s.ws_webpage?.waitUntil,
     timeoutMs: s.ws_webpage?.timeoutMs,
@@ -836,7 +843,7 @@ function populateEditor(s) {
 
 function onTypeChange() {
   const t=document.getElementById('f-type').value;
-  const p=t==='prompt', a=t==='api'||t==='webpage', w=t==='webpage', m=t==='mcp';
+  const p=t==='prompt'||t==='tool', a=t==='api'||t==='webpage', w=t==='webpage', m=t==='mcp'||t==='tool';
   document.getElementById('llm-section').style.display       = p?'':'none';
   document.getElementById('sysprompt-section').style.display = p?'':'none';
   document.getElementById('template-section').style.display  = p?'':'none';
@@ -916,7 +923,7 @@ function collectStep() {
   const type=document.getElementById('f-type').value;
   const s={ ws_name:document.getElementById('f-name').value.trim(), ws_type:type,
     ws_inputs_schema:readSchemaFields('inputs-fields'), ws_output_schema:readSchemaFields('outputs-fields') };
-  if (type==='prompt') {
+  if (type==='prompt' || type==='tool') {
     const _prov=document.getElementById('f-provider').value;
     const _model=document.getElementById('f-model').value.trim() || PROVIDER_MODEL_HINTS[_prov] || '';
     s.ws_llm={ provider:_prov, model:_model, temperature:parseFloat(document.getElementById('f-temp').value)||0 };
@@ -952,11 +959,12 @@ function collectStep() {
     }
     s.ws_webpage = webpage;
   }
-  if (type==='mcp') {
+  if (type==='mcp' || type==='tool') {
     const toolInput = parseJsonEditorField('f-mcp-input', 'MCP tool input override');
     if ([toolInput].includes(null)) return null;
 
     const mcp = {
+      adapter: document.getElementById('f-mcp-adapter')?.value || 'default',
       server: document.getElementById('f-mcp-server').value.trim(),
       tool: document.getElementById('f-mcp-tool').value.trim()
     };
@@ -1495,7 +1503,7 @@ async function executeStep(stepDef, runMode='step_only') {
   const ts = () => new Date().toISOString().slice(11,23);
   setRunningGraphState(_currentNodeId || s.ws_name, runMode === 'workflow_from_here');
 
-  if (['api','webpage','mcp'].includes((s.ws_type||'').toLowerCase())) {
+  if (['api','webpage','mcp','tool'].includes((s.ws_type||'').toLowerCase())) {
     const headers = { 'Content-Type':'application/json' };
     if (token) headers['Authorization'] = `Bearer ${token}`;
     let res;
@@ -1643,11 +1651,108 @@ const PROVIDER_KEY_PLACEHOLDERS = {
   mistral:    'your-mistral-key',
 };
 
+function switchSettingsTab(tab) {
+  document.querySelectorAll('[data-settings-tab]').forEach(el => {
+    const active = el.getAttribute('data-settings-tab') === tab;
+    el.style.display = active ? '' : 'none';
+  });
+  document.querySelectorAll('.settings-tab-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.getAttribute('data-tab-target') === tab);
+  });
+}
+
+function renderMcpAdapters(adapters = []) {
+  const select = document.getElementById('f-mcp-adapter');
+  const hint = document.getElementById('mcp-adapters-hint');
+  if (!select) return;
+  const list = Array.isArray(adapters) && adapters.length ? adapters : [{ id: 'default', className: 'BaseMCPAdapter' }];
+  select.innerHTML = list.map(a => `<option value="${a.id}">${a.id} (${a.className})</option>`).join('');
+  if (hint) hint.textContent = `Adapters disponibles: ${list.map(a => a.id).join(', ')}`;
+}
+
+async function discoverMcpTools() {
+  const server = document.getElementById('f-mcp-server')?.value?.trim();
+  const datalist = document.getElementById('mcp-tools-list');
+  if (!server || !datalist) return toast('Saisis un MCP server pour découvrir les tools','err');
+
+  const res = await api(`/api/mcp/tools?server=${encodeURIComponent(server)}`,'GET');
+  if (res.error || !res.ok) return toast(res.error || 'Impossible de récupérer les tools MCP','err');
+
+  _mcpDiscoveredTools = res.data || [];
+  datalist.innerHTML = _mcpDiscoveredTools.map(t => `<option value=\"${t.name}\">${t.description || ''}</option>`).join('');
+  const preview = document.getElementById('f-mcp-tools-preview');
+  if (preview) preview.value = _mcpDiscoveredTools.map(t => `${t.name} — ${t.description || ''}`).join('\n');
+  toast(`${_mcpDiscoveredTools.length} tool(s) MCP détecté(s)`,'ok');
+}
+
+async function loadMcpConfig() {
+  const res = await api('/api/mcp/config','GET');
+  if (res.error || !res.ok) return;
+  _mcpAdapters = res.adapters || [];
+  _mcpApiKeyStatus = res.apiKeyStatus || {};
+  _mcpRegistryDraft = res.registry || { mcp_servers: {} };
+
+  const ta = document.getElementById('s-mcp-registry');
+  if (ta) ta.value = JSON.stringify(_mcpRegistryDraft, null, 2);
+  const status = document.getElementById('s-mcp-apikey-status');
+  if (status) status.textContent = Object.keys(_mcpApiKeyStatus).length
+    ? `✓ Secrets MCP enregistrés: ${Object.keys(_mcpApiKeyStatus).join(', ')}`
+    : 'Aucun secret MCP enregistré.';
+
+  renderMcpAdapters(_mcpAdapters);
+}
+
+async function saveMcpRegistryConfig() {
+  const msg = document.getElementById('s-mcp-registry-msg');
+  try {
+    const registry = JSON.parse(document.getElementById('s-mcp-registry').value || '{"mcp_servers":{}}');
+    const res = await api('/api/mcp/config','PUT',{ registry });
+    if (res.error) throw new Error(res.error);
+    msg.className = 'settings-ok';
+    msg.textContent = 'Configuration MCP sauvegardée';
+    _mcpRegistryDraft = registry;
+  } catch (err) {
+    msg.className = 'settings-err';
+    msg.textContent = err.message;
+  }
+}
+
+async function saveMcpApiKey() {
+  const name = document.getElementById('s-mcp-apikey-name').value.trim();
+  const value = document.getElementById('s-mcp-apikey-value').value.trim();
+  const msg = document.getElementById('s-mcp-apikey-msg');
+  if (!name || !value) return (msg.textContent = 'Nom et clé requis', msg.className='settings-err');
+
+  const res = await api('/api/mcp/apikey','PUT',{ name, value });
+  if (res.error) {
+    msg.className='settings-err'; msg.textContent=res.error; return;
+  }
+  msg.className='settings-ok'; msg.textContent=`Secret ${name} enregistré`;
+  document.getElementById('s-mcp-apikey-value').value='';
+  await loadMcpConfig();
+}
+
+async function deleteMcpApiKey() {
+  const name = document.getElementById('s-mcp-apikey-name').value.trim();
+  const msg = document.getElementById('s-mcp-apikey-msg');
+  if (!name) return (msg.textContent='Nom requis', msg.className='settings-err');
+  const res = await api('/api/mcp/apikey','DELETE',{ name });
+  if (res.error) { msg.className='settings-err'; msg.textContent=res.error; return; }
+  msg.className='settings-ok'; msg.textContent=`Secret ${name} supprimé`;
+  await loadMcpConfig();
+}
+
 function openSettings() {
   if (guestMode) { showSignupCTA(); return; }
   openModal('Settings',`
-    <div class="settings-section">
-      <div class="settings-title">API Keys</div>
+    <div class="settings-row" style="margin-bottom:10px;gap:6px;">
+      <button class="settings-btn settings-tab-btn active" data-tab-target="llm" onclick="switchSettingsTab('llm')">LLM</button>
+      <button class="settings-btn settings-tab-btn" data-tab-target="mcp" onclick="switchSettingsTab('mcp')">Configuration MCP</button>
+      <button class="settings-btn settings-tab-btn" data-tab-target="account" onclick="switchSettingsTab('account')">Compte</button>
+    </div>
+
+    <div class="settings-section" data-settings-tab="llm">
+      <div class="settings-title">API Keys LLM</div>
       <div class="settings-desc">Keys are encrypted AES-256 on the server, never exposed to the browser.</div>
       <div class="settings-row" style="margin-bottom:6px">
         <select class="settings-input" id="s-provider" onchange="onSettingsProviderChange()" style="max-width:140px;flex:none">
@@ -1662,15 +1767,38 @@ function openSettings() {
       </div>
       <div id="s-apikey-msg"></div>
     </div>
-    <div class="settings-section">
+
+    <div class="settings-section" data-settings-tab="mcp" style="display:none">
+      <div class="settings-title">MCP Registry & Secrets</div>
+      <div class="settings-desc">Configure les serveurs MCP, les adapters et les secrets API utilisés par les tools.</div>
+      <div class="form-section">
+        <div class="form-label">Registry MCP (JSON)</div>
+        <textarea class="form-textarea tall" id="s-mcp-registry" placeholder='{"mcp_servers":{"google_maps":{"transport":"http","url":"http://...","headers":{"Authorization":"Bearer \${GOOGLE_MAPS_API_KEY}"}}}}'></textarea>
+      </div>
+      <div class="settings-row">
+        <button class="settings-btn" onclick="saveMcpRegistryConfig()">Sauvegarder registry</button>
+        <span id="s-mcp-registry-msg"></span>
+      </div>
+      <hr style="border-color:var(--border);margin:10px 0;">
+      <div class="settings-row" style="margin-bottom:6px">
+        <input class="settings-input" id="s-mcp-apikey-name" placeholder="GOOGLE_MAPS_API_KEY">
+        <input class="settings-input" id="s-mcp-apikey-value" type="password" placeholder="your-secret-value">
+      </div>
+      <div class="settings-row" style="margin-bottom:6px">
+        <button class="settings-btn" onclick="saveMcpApiKey()">Save secret</button>
+        <button class="settings-btn danger" onclick="deleteMcpApiKey()">Delete secret</button>
+      </div>
+      <div id="s-mcp-apikey-msg"></div>
+      <div id="s-mcp-apikey-status" class="settings-desc" style="margin-top:8px"></div>
+    </div>
+
+    <div class="settings-section" data-settings-tab="account" style="display:none">
       <div class="settings-title">Change Password</div>
       <input class="settings-input" id="s-oldpw" type="password" placeholder="Current password" style="margin-bottom:6px">
       <input class="settings-input" id="s-newpw" type="password" placeholder="New password (min. 8 chars)">
       <button class="settings-btn" onclick="changePassword()" style="margin-top:8px">Change</button>
       <div id="s-pw-msg"></div>
-    </div>
-    <div class="settings-section">
-      <div class="settings-title">Language</div>
+      <div class="settings-title" style="margin-top:14px">Language</div>
       <div class="settings-row">
         <select class="settings-input" id="s-lang" onchange="setLanguage(this.value)">
           <option value="en">English</option>
@@ -1680,13 +1808,15 @@ function openSettings() {
     </div>`,
     [{ label:'Close', action:closeModal }]
   );
-  // Load provider key status from /me
+
   loadProviderKeyStatus();
+  loadMcpConfig();
   const qpLang = new URLSearchParams(window.location.search).get('lang');
   const cookieLang = document.cookie.split('; ').find(v=>v.startsWith('lang='))?.split('=')[1];
   const currentLang = qpLang || cookieLang || 'en';
   const sLang = document.getElementById('s-lang');
   if (sLang) sLang.value = currentLang;
+  switchSettingsTab('llm');
 }
 
 function setLanguage(lang) {
@@ -1808,6 +1938,7 @@ Object.assign(window,{
   deleteWorkflow, copyWfJson, applyWfJson, closeWfJson, onWfJsonInput, copyWfJsonByName,
   openJsonFullscreen, closeJsonFullscreen, jfsCopy, jfsApply, jfsValidate,
   saveApiKey, deleteApiKey, changePassword,
+  saveMcpRegistryConfig, saveMcpApiKey, deleteMcpApiKey, discoverMcpTools, switchSettingsTab,
   onProviderChange, onSettingsProviderChange, setLanguage
 });
 

@@ -8,13 +8,17 @@ import BaseMCPAdapter from '../../adapters/base_adapter.js';
 import GoogleMapsAdapter from '../../adapters/google_maps_adapter.js';
 import MapboxAdapter from '../../adapters/mapbox_adapter.js';
 
-let _executor = null;
+let _defaultExecutor = null;
+
+export const MCP_ADAPTERS_META = [
+  { id: 'default', className: 'BaseMCPAdapter', description: 'Pass-through adapter' },
+  { id: 'google_maps', className: 'GoogleMapsAdapter', description: 'Google Maps normalization' },
+  { id: 'mapbox', className: 'MapboxAdapter', description: 'Mapbox normalization' }
+];
 
 async function loadRegistryConfig() {
   const inlineJson = process.env.MCP_SERVERS_JSON?.trim();
-  if (inlineJson) {
-    return JSON.parse(inlineJson);
-  }
+  if (inlineJson) return JSON.parse(inlineJson);
 
   const filePath = process.env.MCP_SERVERS_FILE || path.resolve(process.cwd(), 'mcp_servers.json');
   try {
@@ -34,16 +38,38 @@ function buildAdapters() {
   };
 }
 
-export async function getMcpToolExecutor() {
-  if (_executor) return _executor;
+function resolvePlaceholdersDeep(value, secretMap = {}) {
+  if (typeof value === 'string') {
+    return value.replace(/\$\{([A-Z0-9_]+)\}/g, (_, key) => {
+      if (secretMap[key] != null) return String(secretMap[key]);
+      if (process.env[key] != null) return String(process.env[key]);
+      return '';
+    });
+  }
+  if (Array.isArray(value)) return value.map(v => resolvePlaceholdersDeep(v, secretMap));
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, resolvePlaceholdersDeep(v, secretMap)]));
+  }
+  return value;
+}
 
-  const config = await loadRegistryConfig();
-  const registry = new MCPRegistry(config);
+function buildExecutor(registryConfig, secretMap) {
+  const resolved = resolvePlaceholdersDeep(registryConfig || { mcp_servers: {} }, secretMap || {});
+  const registry = new MCPRegistry(resolved);
   const client = new MCPClient({ registry });
   const runtime = new MCPToolRuntime({ registry, client, adapters: buildAdapters() });
+  return new ToolExecutor({ runtime });
+}
 
-  _executor = new ToolExecutor({ runtime });
-  return _executor;
+export async function getMcpToolExecutor({ registryConfig, secretMap } = {}) {
+  if (registryConfig) {
+    return buildExecutor(registryConfig, secretMap);
+  }
+
+  if (_defaultExecutor) return _defaultExecutor;
+  const config = await loadRegistryConfig();
+  _defaultExecutor = buildExecutor(config, secretMap || {});
+  return _defaultExecutor;
 }
 
 export default getMcpToolExecutor;
