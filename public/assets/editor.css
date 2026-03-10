@@ -368,6 +368,14 @@ option { background:var(--panel2); }
 .settings-btn { font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--bg); background:var(--amber); border:none; border-radius:4px; padding:7px 14px; cursor:pointer; white-space:nowrap; }
 .settings-ok { font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--green); }
 .settings-err { font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--red); }
+.settings-tabs { display:flex; gap:8px; margin-bottom:6px; }
+.settings-tab { flex:1; border:1px solid var(--border); background:var(--panel2); color:var(--dim); border-radius:5px; padding:7px 10px; font-family:'JetBrains Mono',monospace; font-size:10px; cursor:pointer; }
+.settings-tab.active { color:var(--amber); border-color:rgba(245,158,11,.35); background:rgba(245,158,11,.08); }
+.settings-pane { display:none; flex-direction:column; gap:14px; }
+.settings-pane.active { display:flex; }
+.settings-mcp-item { border:1px solid var(--border); border-radius:6px; padding:10px; display:flex; flex-direction:column; gap:8px; background:var(--panel2); }
+.settings-conn-ok { color:var(--green); font-size:12px; }
+.settings-conn-ko { color:var(--red); font-size:12px; }
 .confirm-text { font-size:13px; color:var(--text); }
 .confirm-sub { font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--dim); }
 

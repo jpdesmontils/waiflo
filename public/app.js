@@ -75,6 +75,7 @@ let _graphVersion  = 0;
 let _jfsSource     = null;
 let _providersConfig  = {};   // loaded from /json_schemas/providers.json
 let _providerKeyStatus = {};  // loaded from /api/auth/me { anthropic: true, ... }
+let _mcpServers = [];        // loaded/saved from settings MCP registry
 let _lastStepRuns = {};       // keyed by workflow node id, stores latest parsed output
 let _stepRunUiState = {};     // keyed by workflow node id, stores log/meta/status/output ui state
 let _currentNodeId = null;    // currently edited node id (wf node id or step name)
@@ -426,6 +427,7 @@ function enterAuthUser(user) {
   document.getElementById('guest-badge').style.display = 'none';
   document.getElementById('btn-settings').style.display = '';
   document.getElementById('user-badge').textContent = user.email||'';
+  loadProviderKeyStatus();
   loadWorkflowList();
 }
 
@@ -813,6 +815,9 @@ function populateEditor(s) {
     viewport: s.ws_webpage?.viewport,
     userAgent: s.ws_webpage?.userAgent
   });
+  populateToolServerSelect(s.ws_tool?.mcp_server_label || '');
+  onToolMcpServerChange(s.ws_tool?.tool_name || '');
+
 
   const apiAdv = document.getElementById('api-advanced-content');
   const apiAdvBtn = document.getElementById('api-advanced-toggle');
@@ -829,11 +834,12 @@ function populateEditor(s) {
 
 function onTypeChange() {
   const t=document.getElementById('f-type').value;
-  const p=t==='prompt', a=t==='api'||t==='webpage', w=t==='webpage';
+  const p=t==='prompt'||t==='tool', a=t==='api'||t==='webpage', w=t==='webpage', tool=t==='tool';
   document.getElementById('llm-section').style.display       = p?'':'none';
   document.getElementById('sysprompt-section').style.display = p?'':'none';
   document.getElementById('template-section').style.display  = p?'':'none';
   document.getElementById('api-section').style.display       = a?'':'none';
+  document.getElementById('tool-section').style.display      = tool?'':'none';
   document.getElementById('method-section').style.display    = w?'none':'';
   document.getElementById('url-hint').textContent            = w
     ? 'Fetches browser-like raw HTML from this URL. Use {{input_name}} for dynamic params.'
@@ -908,12 +914,18 @@ function collectStep() {
   const type=document.getElementById('f-type').value;
   const s={ ws_name:document.getElementById('f-name').value.trim(), ws_type:type,
     ws_inputs_schema:readSchemaFields('inputs-fields'), ws_output_schema:readSchemaFields('outputs-fields') };
-  if (type==='prompt') {
+  if (type==='prompt' || type==='tool') {
     const _prov=document.getElementById('f-provider').value;
     const _model=document.getElementById('f-model').value.trim() || PROVIDER_MODEL_HINTS[_prov] || '';
     s.ws_llm={ provider:_prov, model:_model, temperature:parseFloat(document.getElementById('f-temp').value)||0 };
     s.ws_system_prompt  =document.getElementById('f-sysprompt').value;
     s.ws_prompt_template=document.getElementById('f-template').value;
+    if (type==='tool') {
+      const mcp_server_label = document.getElementById('f-tool-mcp-server')?.value || '';
+      const tool_name = document.getElementById('f-tool-name')?.value || '';
+      s.ws_tool = { mcp_server_label, tool_name };
+      s.ws_tools = tool_name ? [tool_name] : [];
+    }
   }
   if (type==='api') {
     const headers = parseJsonEditorField('f-api-headers', 'API headers');
@@ -1194,6 +1206,44 @@ function toggleApiAdvancedSection() {
   if (!content || !btn) return;
   const collapsed = content.classList.toggle('collapsed');
   btn.textContent = `${btn.textContent.replace(/[▾▸]/g, '').trim()} ${collapsed ? '▸' : '▾'}`;
+}
+
+
+function toggleToolAdvancedSection() {
+  const content = document.getElementById('tool-advanced-content');
+  const btn = document.getElementById('tool-advanced-toggle');
+  if (!content || !btn) return;
+  const collapsed = content.classList.toggle('collapsed');
+  btn.textContent = `${btn.textContent.replace(/[▾▸]/g, '').trim()} ${collapsed ? '▸' : '▾'}`;
+}
+
+function populateToolServerSelect(selected = '') {
+  const sel = document.getElementById('f-tool-mcp-server');
+  if (!sel) return;
+  const rows = _mcpServers || [];
+  const current = selected || sel.value || rows[0]?.server_label || '';
+  if (!rows.length) {
+    sel.innerHTML = '<option value="">Aucun serveur MCP configuré</option>';
+    return;
+  }
+  sel.innerHTML = rows.map(r => `<option value="${r.server_label}"${r.server_label===current?' selected':''}>${r.server_label}</option>`).join('');
+}
+
+function onToolMcpServerChange(selectedTool = '') {
+  const mcpLabel = document.getElementById('f-tool-mcp-server')?.value || '';
+  const srv = (_mcpServers || []).find(x => x.server_label === mcpLabel);
+  const toolSel = document.getElementById('f-tool-name');
+  if (!toolSel) return;
+  const tools = srv?.tools || [];
+  if (!tools.length) {
+    toolSel.innerHTML = '<option value="">Aucun tool découvert</option>';
+    return;
+  }
+  const pick = selectedTool || toolSel.value || tools[0]?.name || tools[0] || '';
+  toolSel.innerHTML = tools.map(t => {
+    const name = typeof t === 'string' ? t : (t?.name || 'unnamed_tool');
+    return `<option value="${name}"${name===pick?' selected':''}>${name}</option>`;
+  }).join('');
 }
 
 function toggleEditorMaximize(textareaId, btn) {
@@ -1623,47 +1673,156 @@ const PROVIDER_KEY_PLACEHOLDERS = {
 function openSettings() {
   if (guestMode) { showSignupCTA(); return; }
   openModal('Settings',`
-    <div class="settings-section">
-      <div class="settings-title">API Keys</div>
-      <div class="settings-desc">Keys are encrypted AES-256 on the server, never exposed to the browser.</div>
-      <div class="settings-row" style="margin-bottom:6px">
-        <select class="settings-input" id="s-provider" onchange="onSettingsProviderChange()" style="max-width:140px;flex:none">
-          <option value="anthropic">anthropic</option>
-          <option value="openai">openai (ChatGPT)</option>
-          <option value="perplexity">perplexity</option>
-          <option value="mistral">mistral</option>
-        </select>
-        <input class="settings-input" id="s-apikey" type="password" placeholder="sk-ant-api03-…">
-        <button class="settings-btn" onclick="saveApiKey()">Save</button>
-        <button class="settings-btn danger" onclick="deleteApiKey()" title="Remove key" style="padding:0 8px">✕</button>
+    <div class="settings-tabs">
+      <button class="settings-tab active" id="s-tab-account" onclick="switchSettingsTab('account')">Compte</button>
+      <button class="settings-tab" id="s-tab-llm" onclick="switchSettingsTab('llm')">LLM</button>
+      <button class="settings-tab" id="s-tab-mcp" onclick="switchSettingsTab('mcp')">Configuration MCP</button>
+    </div>
+
+    <div class="settings-pane active" id="s-pane-account">
+      <div class="settings-section">
+        <div class="settings-title">Change Password</div>
+        <input class="settings-input" id="s-oldpw" type="password" placeholder="Current password" style="margin-bottom:6px">
+        <input class="settings-input" id="s-newpw" type="password" placeholder="New password (min. 8 chars)">
+        <button class="settings-btn" onclick="changePassword()" style="margin-top:8px">Change</button>
+        <div id="s-pw-msg"></div>
       </div>
-      <div id="s-apikey-msg"></div>
+      <div class="settings-section">
+        <div class="settings-title">Language</div>
+        <div class="settings-row">
+          <select class="settings-input" id="s-lang" onchange="setLanguage(this.value)">
+            <option value="en">English</option>
+            <option value="fr">Français</option>
+          </select>
+        </div>
+      </div>
     </div>
-    <div class="settings-section">
-      <div class="settings-title">Change Password</div>
-      <input class="settings-input" id="s-oldpw" type="password" placeholder="Current password" style="margin-bottom:6px">
-      <input class="settings-input" id="s-newpw" type="password" placeholder="New password (min. 8 chars)">
-      <button class="settings-btn" onclick="changePassword()" style="margin-top:8px">Change</button>
-      <div id="s-pw-msg"></div>
+
+    <div class="settings-pane" id="s-pane-llm">
+      <div class="settings-section">
+        <div class="settings-title">API Keys</div>
+        <div class="settings-desc">Keys are encrypted AES-256 on the server, never exposed to the browser.</div>
+        <div class="settings-row" style="margin-bottom:6px">
+          <select class="settings-input" id="s-provider" onchange="onSettingsProviderChange()" style="max-width:140px;flex:none">
+            <option value="anthropic">anthropic</option>
+            <option value="openai">openai (ChatGPT)</option>
+            <option value="perplexity">perplexity</option>
+            <option value="mistral">mistral</option>
+          </select>
+          <input class="settings-input" id="s-apikey" type="password" placeholder="sk-ant-api03-…">
+          <button class="settings-btn" onclick="saveApiKey()">Save</button>
+          <button class="settings-btn danger" onclick="deleteApiKey()" title="Remove key" style="padding:0 8px">✕</button>
+        </div>
+        <div id="s-apikey-msg"></div>
+      </div>
     </div>
-    <div class="settings-section">
-      <div class="settings-title">Language</div>
-      <div class="settings-row">
-        <select class="settings-input" id="s-lang" onchange="setLanguage(this.value)">
-          <option value="en">English</option>
-          <option value="fr">Français</option>
-        </select>
+
+    <div class="settings-pane" id="s-pane-mcp">
+      <div class="settings-section">
+        <div class="settings-title">Registre des MCP servers</div>
+        <div class="settings-desc">Champs requis: server_label, api_key, server_url. Les tools sont découverts après validation.</div>
+        <div id="s-mcp-list"></div>
+        <div class="settings-row">
+          <button class="settings-btn" onclick="addMcpServerRow()">+ Ajouter serveur</button>
+          <button class="settings-btn" onclick="saveMcpServers()">Enregistrer registre</button>
+        </div>
+        <div id="s-mcp-msg"></div>
       </div>
     </div>`,
     [{ label:'Close', action:closeModal }]
   );
-  // Load provider key status from /me
   loadProviderKeyStatus();
   const qpLang = new URLSearchParams(window.location.search).get('lang');
   const cookieLang = document.cookie.split('; ').find(v=>v.startsWith('lang='))?.split('=')[1];
   const currentLang = qpLang || cookieLang || 'en';
   const sLang = document.getElementById('s-lang');
   if (sLang) sLang.value = currentLang;
+}
+
+function switchSettingsTab(tab) {
+  ['account','llm','mcp'].forEach(name => {
+    document.getElementById(`s-tab-${name}`)?.classList.toggle('active', name===tab);
+    document.getElementById(`s-pane-${name}`)?.classList.toggle('active', name===tab);
+  });
+}
+
+function renderMcpServerRows() {
+  const list = document.getElementById('s-mcp-list');
+  if (!list) return;
+  if (!_mcpServers.length) {
+    list.innerHTML = '<div class="settings-desc">Aucun serveur MCP configuré.</div>';
+    return;
+  }
+  list.innerHTML = _mcpServers.map((srv, i) => `
+    <div class="settings-mcp-item">
+      <div class="settings-row"><input class="settings-input" id="mcp-label-${i}" placeholder="server_label" value="${srv.server_label || ''}"></div>
+      <div class="settings-row"><input class="settings-input" id="mcp-url-${i}" placeholder="https://host.example.com/mcp" value="${srv.server_url || ''}"></div>
+      <div class="settings-row"><input class="settings-input" id="mcp-key-${i}" type="password" placeholder="server-key-val" value="${srv.api_key || ''}"></div>
+      <div class="settings-row" style="justify-content:space-between;align-items:center;">
+        <span class="${srv.last_status==='ok'?'settings-conn-ok':'settings-conn-ko'}">${srv.last_status==='ok'?'● Connecté':'● Non connecté'}</span>
+        <div style="display:flex;gap:8px">
+          <button class="settings-btn" onclick="validateMcpServer(${i})">Valider la connexion</button>
+          <button class="settings-btn danger" onclick="removeMcpServerRow(${i})">Supprimer</button>
+        </div>
+      </div>
+      ${srv.last_error ? `<div class="settings-err">${srv.last_error}</div>` : ''}
+      <div class="settings-desc">Tools: ${(srv.tools || []).map(t => typeof t === 'string' ? t : t.name).filter(Boolean).join(', ') || '—'}</div>
+    </div>
+  `).join('');
+}
+
+function readMcpServerRow(index) {
+  return {
+    ...(_mcpServers[index] || {}),
+    server_label: document.getElementById(`mcp-label-${index}`)?.value?.trim() || '',
+    server_url: document.getElementById(`mcp-url-${index}`)?.value?.trim() || '',
+    api_key: document.getElementById(`mcp-key-${index}`)?.value?.trim() || ''
+  };
+}
+
+function addMcpServerRow() {
+  _mcpServers.push({ server_label:'', server_url:'', api_key:'', tools:[], last_status:'unknown', last_error:'' });
+  renderMcpServerRows();
+}
+
+function removeMcpServerRow(index) {
+  _mcpServers.splice(index, 1);
+  renderMcpServerRows();
+}
+
+async function validateMcpServer(index) {
+  const row = readMcpServerRow(index);
+  const msg = document.getElementById('s-mcp-msg');
+  if (!row.server_label || !row.server_url || !row.api_key) {
+    msg.className='settings-err'; msg.textContent='server_label, server_url et api_key sont obligatoires';
+    return;
+  }
+  const res = await api('/api/auth/mcp-validate', 'POST', row);
+  if (res.error) {
+    _mcpServers[index] = { ...row, tools: [], last_status:'error', last_error: res.error };
+    msg.className='settings-err'; msg.textContent=`${row.server_label}: ${res.error}`;
+  } else {
+    _mcpServers[index] = { ...row, tools: res.tools || [], last_status:'ok', last_error:'' };
+    msg.className='settings-ok'; msg.textContent=`${row.server_label}: connexion établie (${res.count || 0} tools)`;
+  }
+  renderMcpServerRows();
+  populateToolServerSelect();
+  onToolMcpServerChange();
+}
+
+async function saveMcpServers() {
+  const msg = document.getElementById('s-mcp-msg');
+  _mcpServers = _mcpServers.map((_, i) => readMcpServerRow(i));
+  const res = await api('/api/auth/mcp-servers', 'PUT', { mcp_servers: _mcpServers });
+  if (res.error) {
+    msg.className='settings-err'; msg.textContent=res.error;
+    return;
+  }
+  _mcpServers = res.mcpServers || _mcpServers;
+  msg.className='settings-ok'; msg.textContent='Registre MCP enregistré';
+  renderMcpServerRows();
+  populateToolServerSelect();
+  onToolMcpServerChange();
 }
 
 function setLanguage(lang) {
@@ -1683,9 +1842,14 @@ function onSettingsProviderChange() {
 async function loadProviderKeyStatus() {
   try {
     const data = await api('/api/auth/me', 'GET');
-    if (!data.providerKeys) return;
-    _providerKeyStatus = data.providerKeys;
-    updateKeyStatusIndicator();
+    if (data.providerKeys) {
+      _providerKeyStatus = data.providerKeys;
+      updateKeyStatusIndicator();
+    }
+    _mcpServers = Array.isArray(data.mcpServers) ? data.mcpServers : [];
+    renderMcpServerRows();
+    populateToolServerSelect();
+    onToolMcpServerChange();
   } catch { /* ignore */ }
 }
 
@@ -1779,13 +1943,13 @@ Object.assign(window,{
   openNewStepEditor, openStepEditor,
   applyStepEdit, deleteCurrentStep, closeEditor, switchEditorTab,
   addInputField, addOutputField, onTypeChange,
-  toggleTechSection, toggleApiAdvancedSection, toggleEditorMaximize,
+  toggleTechSection, toggleApiAdvancedSection, toggleToolAdvancedSection, toggleEditorMaximize,
   runStepOnly, runWorkflowFromHere, closeModal, showSignupCTA,
   confirmEdgeDelete, toggleWorkflowExecLogs, toggleRightPanel,
   deleteWorkflow, copyWfJson, applyWfJson, closeWfJson, onWfJsonInput, copyWfJsonByName,
   openJsonFullscreen, closeJsonFullscreen, jfsCopy, jfsApply, jfsValidate,
-  saveApiKey, deleteApiKey, changePassword,
-  onProviderChange, onSettingsProviderChange, setLanguage
+  saveApiKey, deleteApiKey, changePassword, switchSettingsTab, addMcpServerRow, removeMcpServerRow, validateMcpServer, saveMcpServers,
+  onProviderChange, onSettingsProviderChange, onToolMcpServerChange, setLanguage
 });
 
 // ── KEYBOARD ────────────────────────────────────────────────────
