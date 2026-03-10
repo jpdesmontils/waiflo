@@ -576,6 +576,7 @@ function openJsonFullscreen(source) {
   } else {
     // step json — read from the pre element
     const s = currentStep || collectStep();
+    if (!s) return;
     name.textContent = (s.ws_name||'step')+' — JSON view';
     ta.value = JSON.stringify(s,null,2);
     applyBtn.style.display = 'none'; // step JSON is read-only in fullscreen
@@ -774,6 +775,23 @@ function openNewStepEditor() {
   switchEditorTab('edit');
 }
 
+function formatJsonForEditor(value) {
+  if (value == null || (typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === 0)) return '';
+  if (typeof value === 'string') return value;
+  try { return JSON.stringify(value, null, 2); } catch { return ''; }
+}
+
+function parseJsonEditorField(fieldId, label) {
+  const raw = document.getElementById(fieldId)?.value?.trim() || '';
+  if (!raw) return undefined;
+  try {
+    return JSON.parse(raw);
+  } catch (err) {
+    toast(`${label} must be valid JSON: ${err.message}`,'err');
+    return null;
+  }
+}
+
 function populateEditor(s) {
   document.getElementById('f-name').value      = s.ws_name||'';
   document.getElementById('f-type').value      = s.ws_type||'prompt';
@@ -784,6 +802,18 @@ function populateEditor(s) {
   document.getElementById('f-template').value  = s.ws_prompt_template||'';
   document.getElementById('f-method').value    = s.ws_api?.method||'GET';
   document.getElementById('f-url').value       = s.ws_webpage?.url || s.ws_api?.url || '';
+  document.getElementById('f-api-headers').value = formatJsonForEditor(s.ws_api?.headers || s.ws_webpage?.headers);
+  document.getElementById('f-api-query').value   = formatJsonForEditor(s.ws_api?.query);
+  document.getElementById('f-api-body').value    = formatJsonForEditor(s.ws_api?.body);
+
+  const apiAdv = document.getElementById('api-advanced-content');
+  const apiAdvBtn = document.getElementById('api-advanced-toggle');
+  const hasApiAdvancedValues = Boolean((s.ws_api?.headers && Object.keys(s.ws_api.headers).length) || (s.ws_api?.query && Object.keys(s.ws_api.query).length) || s.ws_api?.body != null || (s.ws_webpage?.headers && Object.keys(s.ws_webpage.headers).length));
+  if (apiAdv && apiAdvBtn) {
+    apiAdv.classList.toggle('collapsed', !hasApiAdvancedValues);
+    apiAdvBtn.textContent = `Advanced API parameters ${hasApiAdvancedValues ? '▾' : '▸'}`;
+  }
+
   renderSchemaFields('inputs-fields',  s.ws_inputs_schema?.properties||{},  s.ws_inputs_schema?.required||[]);
   renderSchemaFields('outputs-fields', s.ws_output_schema?.properties||{}, s.ws_output_schema?.required||[]);
   onTypeChange(); updateJsonTab(); updateRunTab(s);
@@ -800,6 +830,9 @@ function onTypeChange() {
   document.getElementById('url-hint').textContent            = w
     ? 'Fetches browser-like raw HTML from this URL. Use {{input_name}} for dynamic params.'
     : 'Use {{input_name}} for dynamic params';
+
+  const apiBody = document.getElementById('api-body-section');
+  if (apiBody) apiBody.style.display = w ? 'none' : '';
 }
 
 // ── Model default per provider (fallback si providers.json non chargé) ──
@@ -867,14 +900,32 @@ function collectStep() {
     s.ws_system_prompt  =document.getElementById('f-sysprompt').value;
     s.ws_prompt_template=document.getElementById('f-template').value;
   }
-  if (type==='api') s.ws_api={ method:document.getElementById('f-method').value, url:document.getElementById('f-url').value.trim() };
-  if (type==='webpage') s.ws_webpage={ url:document.getElementById('f-url').value.trim() };
+  if (type==='api') {
+    const headers = parseJsonEditorField('f-api-headers', 'API headers');
+    const query = parseJsonEditorField('f-api-query', 'API query params');
+    const body = parseJsonEditorField('f-api-body', 'API body');
+    if ([headers, query, body].includes(null)) return null;
+
+    const api = { method:document.getElementById('f-method').value, url:document.getElementById('f-url').value.trim() };
+    if (headers !== undefined) api.headers = headers;
+    if (query !== undefined) api.query = query;
+    if (body !== undefined) api.body = body;
+    s.ws_api = api;
+  }
+  if (type==='webpage') {
+    const headers = parseJsonEditorField('f-api-headers', 'Webpage headers');
+    if (headers === null) return null;
+    const webpage = { url:document.getElementById('f-url').value.trim() };
+    if (headers !== undefined) webpage.headers = headers;
+    s.ws_webpage = webpage;
+  }
   return s;
 }
 
 function applyStepEdit() {
   if (!currentWf) return;
   const s=collectStep();
+  if (!s) return;
   if (!s.ws_name) return toast('ws_name is required','err');
   const steps=currentWf.data.steps||[];
 
@@ -1112,6 +1163,14 @@ function toggleTechSection() {
   btn.textContent = `${btn.textContent.replace(/[▾▸]/g, '').trim()} ${collapsed ? '▸' : '▾'}`;
 }
 
+function toggleApiAdvancedSection() {
+  const content = document.getElementById('api-advanced-content');
+  const btn = document.getElementById('api-advanced-toggle');
+  if (!content || !btn) return;
+  const collapsed = content.classList.toggle('collapsed');
+  btn.textContent = `${btn.textContent.replace(/[▾▸]/g, '').trim()} ${collapsed ? '▸' : '▾'}`;
+}
+
 function toggleEditorMaximize(textareaId, btn) {
   const ta = document.getElementById(textareaId);
   if (!ta) return;
@@ -1121,6 +1180,7 @@ function toggleEditorMaximize(textareaId, btn) {
 
 function updateJsonTab() {
   const s=currentStep||collectStep();
+  if (!s) return;
   document.getElementById('step-json').innerHTML=syntaxHighlight(JSON.stringify(s,null,2));
 }
 
@@ -1360,6 +1420,7 @@ function renderOutputVars(container, rawOutput) {
 
 async function executeStep(stepDef, runMode='step_only') {
   const s = stepDef || currentStep || collectStep();
+  if (!s) return false;
   if (!s.ws_name) { toast('Save the step first','err'); return false; }
 
   const inProps=s.ws_inputs_schema?.properties||{}, inputs={};
@@ -1693,7 +1754,7 @@ Object.assign(window,{
   openNewStepEditor, openStepEditor,
   applyStepEdit, deleteCurrentStep, closeEditor, switchEditorTab,
   addInputField, addOutputField, onTypeChange,
-  toggleTechSection, toggleEditorMaximize,
+  toggleTechSection, toggleApiAdvancedSection, toggleEditorMaximize,
   runStepOnly, runWorkflowFromHere, closeModal, showSignupCTA,
   confirmEdgeDelete, toggleWorkflowExecLogs, toggleRightPanel,
   deleteWorkflow, copyWfJson, applyWfJson, closeWfJson, onWfJsonInput, copyWfJsonByName,

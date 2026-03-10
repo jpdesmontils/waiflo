@@ -254,6 +254,7 @@ body { background:var(--bg); color:var(--text); font-family:'Figtree',sans-serif
 .tech-toggle { font-family:'JetBrains Mono',monospace; font-size:9px; color:var(--dim); letter-spacing:.6px; text-transform:uppercase; text-align:left; background:none; border:1px solid var(--border); border-radius:4px; padding:6px 8px; cursor:pointer; }
 .tech-toggle:hover { color:var(--teal); border-color:rgba(45,212,191,.3); }
 #tech-content.collapsed { display:none; }
+#api-advanced-content.collapsed { display:none !important; }
 .form-label { font-family:'JetBrains Mono',monospace; font-size:9px; color:var(--dim); letter-spacing:.5px; text-transform:uppercase; }
 .form-label-row { display:flex; align-items:center; justify-content:space-between; gap:8px; }
 .form-input,.form-select,.form-textarea { width:100%; background:var(--panel2); border:1px solid var(--border); border-radius:4px; color:var(--hi); font-family:'JetBrains Mono',monospace; font-size:11px; padding:7px 10px; outline:none; transition:border-color .15s; }

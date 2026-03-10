@@ -152,6 +152,27 @@
               <input class="form-input" id="f-url" placeholder="https://api.example.com/{{param}}">
               <div class="form-hint" id="url-hint">Use {{input_name}} for dynamic params</div>
             </div>
+
+            <div class="form-section">
+              <button class="tech-toggle" id="api-advanced-toggle" type="button" onclick="toggleApiAdvancedSection()">Advanced API parameters ▸</button>
+              <div id="api-advanced-content" class="collapsed" style="margin-top:8px;display:flex;flex-direction:column;gap:10px;">
+                <div class="form-section">
+                  <div class="form-label">Headers (JSON object)</div>
+                  <textarea class="form-textarea" id="f-api-headers" placeholder='{"Authorization":"Bearer {{api_token}}","X-Trace":"{{trace_id}}"}'></textarea>
+                  <div class="form-hint">Values accept {{input_name}} / {{variable_name}}</div>
+                </div>
+                <div class="form-section" id="api-query-section">
+                  <div class="form-label">Query params (JSON object)</div>
+                  <textarea class="form-textarea" id="f-api-query" placeholder='{"q":"{{keyword}}","lang":"fr"}'></textarea>
+                  <div class="form-hint">Merged to URL query string. Values accept {{...}}</div>
+                </div>
+                <div class="form-section" id="api-body-section">
+                  <div class="form-label">Body (JSON object/array/value)</div>
+                  <textarea class="form-textarea tall" id="f-api-body" placeholder='{"message":"{{my_input}}","meta":{"run":"{{run_id}}"}}'></textarea>
+                  <div class="form-hint">Used for non-GET methods. Supports nested {{...}} templating.</div>
+                </div>
+              </div>
+            </div>
           </div>
           <div class="run-available-title">Inputs disponibles (connexions)</div>
           <div class="run-available-inputs" id="edit-available-inputs"></div>
