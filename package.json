@@ -6,7 +6,8 @@
   "main": "server/index.js",
   "scripts": {
     "start": "node server/index.js",
-    "dev": "node --watch server/index.js"
+    "dev": "node --watch server/index.js",
+    "verify:concurrency": "node scripts/verify-concurrent-workflow-users.mjs"
   },
   "dependencies": {
     "mustache": "^4.2.0",

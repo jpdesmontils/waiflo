@@ -1,5 +1,6 @@
 import fs from 'fs/promises';
 import path from 'path';
+import { randomUUID } from 'crypto';
 import { safeName } from './utils.js';
 
 const DATA_DIR = process.env.DATA_DIR || './waiflo-data';
@@ -24,7 +25,7 @@ export async function saveStepRunRecord(userId, workflowName, stepName, payload)
   const dir = stepDir(userId, workflowName, stepName);
   await fs.mkdir(dir, { recursive: true });
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const fp = path.join(dir, `${stamp}.json`);
+  const fp = path.join(dir, `${stamp}-${randomUUID()}.json`);
   await fs.writeFile(fp, JSON.stringify(payload, null, 2), 'utf8');
   return fp;
 }
