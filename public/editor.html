@@ -109,6 +109,7 @@
                 <select class="form-select" id="f-type" onchange="onTypeChange()">
                   <option value="prompt">prompt</option>
                   <option value="api">api</option>
+                  <option value="webpage">webpage</option>
                   <option value="transform">transform</option>
                   <option value="script">script</option>
                   <option value="tool">tool</option>
@@ -139,7 +140,7 @@
           </div>
           <div id="api-section" style="display:none">
             <div class="form-row">
-              <div class="form-section">
+              <div class="form-section" id="method-section">
                 <div class="form-label">Method</div>
                 <select class="form-select" id="f-method">
                   <option>GET</option><option>POST</option><option>PUT</option><option>DELETE</option>
@@ -149,7 +150,7 @@
             <div class="form-section">
               <div class="form-label">URL</div>
               <input class="form-input" id="f-url" placeholder="https://api.example.com/{{param}}">
-              <div class="form-hint">Use {{input_name}} for dynamic params</div>
+              <div class="form-hint" id="url-hint">Use {{input_name}} for dynamic params</div>
             </div>
           </div>
           <div class="run-available-title">Inputs disponibles (connexions)</div>
