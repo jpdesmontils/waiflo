@@ -6,8 +6,6 @@ services:
     working_dir: /app
     command: node server/index.js
     volumes:
-      - .:/app
-      - /app/node_modules
       - waiflo-data:/data
     ports:
       - "3001:3001"
@@ -15,6 +13,7 @@ services:
       - NODE_ENV=production
       - PORT=3001
       - DATA_DIR=/data
+      - PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
       - JWT_SECRET=${JWT_SECRET}
       - MASTER_SECRET=${MASTER_SECRET}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
