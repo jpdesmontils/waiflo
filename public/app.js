@@ -1036,6 +1036,15 @@ function updateRunTab(s) {
     area.appendChild(div);
   });
 
+  const state = getStepRunState(s, _currentNodeId);
+  if (state?.lastInputs) {
+    Object.entries(state.lastInputs).forEach(([k,v]) => {
+      const el = document.getElementById(`run-in-${k}`);
+      if (!el) return;
+      el.value = typeof v === 'string' ? v : JSON.stringify(v, null, 2);
+    });
+  }
+
   if (availableEl) {
     const vars = getAvailableConnectedInputs(s, _currentNodeId);
     availableEl.innerHTML = vars.length
@@ -1058,9 +1067,11 @@ async function hydrateRunStateFromServer(step, nodeId) {
       output: typeof res.record.output === 'string' ? res.record.output : JSON.stringify(res.record.output || '', null, 2),
       logOutput: `${res.record.prompt ? `PROMPT:\n${res.record.prompt}\n\n` : ''}${res.record.logOutput || ''}`,
       logMeta: res.record.logMeta || '',
-      logError: res.record.status === 'error'
+      logError: res.record.status === 'error',
+      lastInputs: res.record.inputs || {}
     });
     renderRunState(step, nodeId);
+    updateRunTab(step);
   }
 }
 
@@ -1117,6 +1128,7 @@ function saveStepRunState(step, nodeId, patch) {
   _stepRunUiState[key] = {
     status: 'idle',
     output: '',
+    lastInputs: {},
     logOutput: '',
     logMeta: '',
     ...(_stepRunUiState[key] || {}),
@@ -1144,10 +1156,40 @@ function renderRunState(step, nodeId) {
 
   statusEl.textContent = state.status || 'idle';
   statusEl.className = `run-status ${(state.status||'idle').toLowerCase()}`;
-  varsEl.textContent = state.output || '// No output captured yet…';
+  renderOutputVars(varsEl, state.output);
   logOutEl.textContent = state.logOutput || '// Full prompt + execution log will appear here…';
   logOutEl.className = `run-output${state.logError ? ' error' : ''}`;
   logMetaEl.innerHTML = state.logMeta || '';
+}
+
+function escapeHtml(v) {
+  return String(v)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;');
+}
+
+function renderOutputVars(container, rawOutput) {
+  if (!container) return;
+  if (!rawOutput) { container.textContent = '// No output captured yet…'; return; }
+
+  let parsed = null;
+  if (typeof rawOutput === 'object' && rawOutput !== null) parsed = rawOutput;
+  else if (typeof rawOutput === 'string') {
+    try { parsed = JSON.parse(rawOutput); } catch { /* keep raw */ }
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    container.textContent = typeof rawOutput === 'string' ? rawOutput : JSON.stringify(rawOutput, null, 2);
+    return;
+  }
+
+  container.innerHTML = Object.entries(parsed).map(([k, v]) => {
+    const txt = typeof v === 'string' ? v : JSON.stringify(v, null, 2);
+    if (txt.includes('\n')) {
+      return `<details><summary><span class="var-name">${escapeHtml(k)}</span></summary><pre>${escapeHtml(txt)}</pre></details>`;
+    }
+    return `<div class="var-row"><span class="var-name">${escapeHtml(k)}</span><span>${escapeHtml(txt)}</span></div>`;
+  }).join('');
 }
 
 async function executeStep(stepDef, runMode='step_only') {
@@ -1171,7 +1213,7 @@ async function executeStep(stepDef, runMode='step_only') {
   varsEl.textContent='';
   outEl.textContent=''; outEl.className='run-output'; metaEl.innerHTML='';
   statusEl.textContent='running'; statusEl.className='run-status running';
-  saveStepRunState(s, _currentNodeId, { status:'running', output:'', logOutput:'', logMeta:'', logError:false });
+  saveStepRunState(s, _currentNodeId, { status:'running', output:'', lastInputs: inputs, logOutput:'', logMeta:'', logError:false });
   _runController = new AbortController();
 
   const tsStart = Date.now();
