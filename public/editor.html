@@ -110,6 +110,7 @@
                   <option value="prompt">prompt</option>
                   <option value="api">api</option>
                   <option value="webpage">webpage</option>
+                  <option value="mcp">mcp</option>
                   <option value="transform">transform</option>
                   <option value="script">script</option>
                   <option value="tool">tool</option>
@@ -152,6 +153,58 @@
               <input class="form-input" id="f-url" placeholder="https://api.example.com/{{param}}">
               <div class="form-hint" id="url-hint">Use {{input_name}} for dynamic params</div>
             </div>
+
+            <div class="form-section" id="webpage-mode-section" style="display:none">
+              <div class="form-label">Webpage mode</div>
+              <select class="form-select" id="f-webpage-mode">
+                <option value="http">http (source HTML)</option>
+                <option value="browser">browser (headless render)</option>
+              </select>
+              <div class="form-hint">Use browser mode to execute JavaScript before extracting HTML.</div>
+            </div>
+            <div class="form-section" id="webpage-browser-options" style="display:none">
+              <div class="form-label">Browser options (JSON object)</div>
+              <textarea class="form-textarea" id="f-webpage-browser-options" placeholder='{"waitUntil":"networkidle","timeoutMs":30000,"waitForSelector":"main","viewport":{"width":1366,"height":768}}'></textarea>
+              <div class="form-hint">Supports {{input_name}} in string fields.</div>
+            </div>
+
+            <div class="form-section">
+              <button class="tech-toggle" id="api-advanced-toggle" type="button" onclick="toggleApiAdvancedSection()">Advanced API parameters ▸</button>
+              <div id="api-advanced-content" class="collapsed" style="margin-top:8px;display:flex;flex-direction:column;gap:10px;">
+                <div class="form-section">
+                  <div class="form-label">Headers (JSON object)</div>
+                  <textarea class="form-textarea" id="f-api-headers" placeholder='{"Authorization":"Bearer {{api_token}}","X-Trace":"{{trace_id}}"}'></textarea>
+                  <div class="form-hint">Values accept {{input_name}} / {{variable_name}}</div>
+                </div>
+                <div class="form-section" id="api-query-section">
+                  <div class="form-label">Query params (JSON object)</div>
+                  <textarea class="form-textarea" id="f-api-query" placeholder='{"q":"{{keyword}}","lang":"fr"}'></textarea>
+                  <div class="form-hint">Merged to URL query string. Values accept {{...}}</div>
+                </div>
+                <div class="form-section" id="api-body-section">
+                  <div class="form-label">Body (JSON object/array/value)</div>
+                  <textarea class="form-textarea tall" id="f-api-body" placeholder='{"message":"{{my_input}}","meta":{"run":"{{run_id}}"}}'></textarea>
+                  <div class="form-hint">Used for non-GET methods. Supports nested {{...}} templating.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div id="mcp-section" style="display:none">
+            <div class="form-section">
+              <div class="form-label">MCP server</div>
+              <input class="form-input" id="f-mcp-server" placeholder="google_maps">
+              <div class="form-hint">ID défini dans la registry MCP (ex: mcp_servers.google_maps)</div>
+            </div>
+            <div class="form-section">
+              <div class="form-label">Tool name</div>
+              <input class="form-input" id="f-mcp-tool" placeholder="maps.search_places">
+            </div>
+            <div class="form-section">
+              <div class="form-label">Tool input override (JSON, optionnel)</div>
+              <textarea class="form-textarea" id="f-mcp-input" placeholder='{"query":"{{query}}","lat":48.8566,"lng":2.35}'></textarea>
+              <div class="form-hint">Si vide, les inputs runtime du step sont passés directement au tool.</div>
+            </div>
           </div>
           <div class="run-available-title">Inputs disponibles (connexions)</div>
           <div class="run-available-inputs" id="edit-available-inputs"></div>
@@ -192,7 +245,7 @@
             <button class="run-btn secondary" id="run-flow-btn" data-default-label="▶ Run Workflow From Here" onclick="runWorkflowFromHere()">▶ Run Workflow From Here</button>
           </div>
           <div class="run-status" id="run-status">idle</div>
-          <div class="run-output-title">Variables de sortie du prompt</div>
+          <div class="run-output-title">Variables de sortie du step</div>
           <div class="run-output-vars" id="run-output-vars">// Output variables will appear here…</div>
         </div>
       </div>
