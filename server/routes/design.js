@@ -50,7 +50,7 @@ function validateStep(step) {
   if (!step || typeof step !== 'object') return 'step must be an object';
   if (!step.ws_name || typeof step.ws_name !== 'string') return 'ws_name (string) is required';
   if (!/^[a-zA-Z0-9_\-]+$/.test(step.ws_name)) return 'ws_name must only contain letters, numbers, _ or -';
-  const validTypes = ['prompt', 'api', 'transform', 'script', 'tool'];
+  const validTypes = ['prompt', 'api', 'webpage', 'transform', 'script', 'tool'];
   if (step.ws_type && !validTypes.includes(step.ws_type)) {
     return `ws_type must be one of: ${validTypes.join(', ')}`;
   }
