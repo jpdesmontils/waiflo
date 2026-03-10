@@ -7,7 +7,7 @@
   --teal:#2dd4bf; --blue:#60a5fa; --purple:#a78bfa;
   --green:#34d399; --red:#f87171; --coral:#fb923c;
   --type-prompt:#f59e0b; --type-api:#2dd4bf;
-  --type-webpage:#22d3ee; --type-mcp:#34d399; --type-transform:#60a5fa; --type-tool:#a78bfa; --type-script:#fb923c;
+  --type-webpage:#22d3ee; --type-transform:#60a5fa; --type-tool:#a78bfa; --type-script:#fb923c;
   --left-w:340px; --right-w:420px;
 }
 :root.light {
@@ -18,7 +18,7 @@
   --blue:#2563eb; --purple:#7c3aed; --green:#059669;
   --red:#dc2626; --coral:#ea580c;
   --type-prompt:#d97706; --type-api:#0d9488;
-  --type-webpage:#0891b2; --type-mcp:#059669; --type-transform:#2563eb; --type-tool:#7c3aed; --type-script:#ea580c;
+  --type-webpage:#0891b2; --type-transform:#2563eb; --type-tool:#7c3aed; --type-script:#ea580c;
 }
 :root.light .react-flow__background { background:var(--bg); }
 :root.light .rf-step-node { box-shadow:0 2px 12px rgba(0,0,0,.08); }
@@ -195,7 +195,6 @@ body { background:var(--bg); color:var(--text); font-family:'Figtree',sans-serif
 .rf-type-border-prompt::before { background:var(--type-prompt); }
 .rf-type-border-api::before { background:var(--type-api); }
 .rf-type-border-webpage::before { background:var(--type-webpage); }
-.rf-type-border-mcp::before { background:var(--type-mcp); }
 .rf-type-border-transform::before { background:var(--type-transform); }
 .rf-type-border-tool::before { background:var(--type-tool); }
 .rf-type-border-script::before { background:var(--type-script); }
@@ -212,7 +211,6 @@ body { background:var(--bg); color:var(--text); font-family:'Figtree',sans-serif
 .rf-type-prompt { color:var(--type-prompt); background:rgba(245,158,11,.1); border:1px solid rgba(245,158,11,.25); }
 .rf-type-api { color:var(--type-api); background:rgba(45,212,191,.1); border:1px solid rgba(45,212,191,.25); }
 .rf-type-webpage { color:var(--type-webpage); background:rgba(34,211,238,.1); border:1px solid rgba(34,211,238,.25); }
-.rf-type-mcp { color:var(--type-mcp); background:rgba(52,211,153,.12); border:1px solid rgba(52,211,153,.28); }
 .rf-type-transform { color:var(--type-transform); background:rgba(96,165,250,.1); border:1px solid rgba(96,165,250,.25); }
 .rf-type-tool { color:var(--type-tool); background:rgba(167,139,250,.1); border:1px solid rgba(167,139,250,.25); }
 .rf-type-script { color:var(--type-script); background:rgba(251,146,60,.1); border:1px solid rgba(251,146,60,.25); }
