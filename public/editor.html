@@ -110,6 +110,7 @@
                   <option value="prompt">prompt</option>
                   <option value="api">api</option>
                   <option value="webpage">webpage</option>
+                  <option value="mcp">mcp</option>
                   <option value="transform">transform</option>
                   <option value="script">script</option>
                   <option value="tool">tool</option>
@@ -188,6 +189,23 @@
               </div>
             </div>
           </div>
+
+          <div id="mcp-section" style="display:none">
+            <div class="form-section">
+              <div class="form-label">MCP server</div>
+              <input class="form-input" id="f-mcp-server" placeholder="google_maps">
+              <div class="form-hint">ID défini dans la registry MCP (ex: mcp_servers.google_maps)</div>
+            </div>
+            <div class="form-section">
+              <div class="form-label">Tool name</div>
+              <input class="form-input" id="f-mcp-tool" placeholder="maps.search_places">
+            </div>
+            <div class="form-section">
+              <div class="form-label">Tool input override (JSON, optionnel)</div>
+              <textarea class="form-textarea" id="f-mcp-input" placeholder='{"query":"{{query}}","lat":48.8566,"lng":2.35}'></textarea>
+              <div class="form-hint">Si vide, les inputs runtime du step sont passés directement au tool.</div>
+            </div>
+          </div>
           <div class="run-available-title">Inputs disponibles (connexions)</div>
           <div class="run-available-inputs" id="edit-available-inputs"></div>
           <div id="sysprompt-section">
@@ -227,7 +245,7 @@
             <button class="run-btn secondary" id="run-flow-btn" data-default-label="▶ Run Workflow From Here" onclick="runWorkflowFromHere()">▶ Run Workflow From Here</button>
           </div>
           <div class="run-status" id="run-status">idle</div>
-          <div class="run-output-title">Variables de sortie du prompt</div>
+          <div class="run-output-title">Variables de sortie du step</div>
           <div class="run-output-vars" id="run-output-vars">// Output variables will appear here…</div>
         </div>
       </div>
