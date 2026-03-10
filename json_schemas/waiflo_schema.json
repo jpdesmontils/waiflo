@@ -1,0 +1,277 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "waiflo.schema.v1.json",
+  "title": "Waiflo Simplified Schema",
+  "type": "object",
+  "required": [
+    "lang_name",
+    "lang_version",
+    "steps",
+    "workflows"
+  ],
+  "properties": {
+    "lang_name": {
+      "type": "string"
+    },
+    "lang_short_name": {
+      "type": "string"
+    },
+    "lang_version": {
+      "type": "string"
+    },
+    "meta": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "steps": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/step"
+      }
+    },
+    "workflows": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/workflow"
+      }
+    }
+  },
+  "$defs": {
+    "llm": {
+      "type": "object",
+      "required": [
+        "model"
+      ],
+      "properties": {
+        "provider": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "temperature": {
+          "type": "number"
+        },
+        "max_tokens": {
+          "type": "integer"
+        }
+      }
+    },
+
+    "retry": {
+      "type": "object",
+      "properties": {
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "delay_ms": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+
+    "step": {
+      "type": "object",
+      "required": [
+        "ws_name",
+        "ws_type",
+        "ws_inputs_schema",
+        "ws_output_schema"
+      ],
+      "properties": {
+        "ws_name": {
+          "type": "string"
+        },
+        "ws_desc": {
+          "type": "string"
+        },
+        "ws_version": {
+          "type": "string"
+        },
+        "ws_type": {
+          "type": "string",
+          "enum": [
+            "prompt",
+            "api",
+            "transform"
+          ]
+        },
+        "ws_inputs_schema": {
+          "$ref": "https://json-schema.org/draft/2020-12/schema"
+        },
+        "ws_output_schema": {
+          "$ref": "https://json-schema.org/draft/2020-12/schema"
+        },
+        "ws_system_prompt": {
+          "type": "string"
+        },
+        "ws_prompt_template": {
+          "type": "string"
+        },
+        "ws_llm": {
+          "$ref": "#/$defs/llm"
+        },
+        "ws_api": {
+          "type": "object",
+          "properties": {
+            "method": {
+              "type": "string",
+              "enum": ["GET", "POST"]
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "required": ["method", "url"]
+        },
+        "ws_retry": {
+          "$ref": "#/$defs/retry"
+        },
+        "ws_timeout_ms": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "ws_type": { "const": "prompt" }
+            }
+          },
+          "then": {
+            "required": [
+              "ws_prompt_template",
+              "ws_llm"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "ws_type": { "const": "api" }
+            }
+          },
+          "then": {
+            "required": [
+              "ws_api"
+            ]
+          }
+        }
+      ]
+    },
+
+    "input_ref": {
+      "type": "string",
+      "pattern": "^\\$(input|steps\\.[a-zA-Z0-9_-]+)(\\.[a-zA-Z0-9_-]+)*$"
+    },
+
+    "node_inputs": {
+      "type": "object",
+      "additionalProperties": {
+        "oneOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "number"
+          },
+          {
+            "type": "boolean"
+          },
+          {
+            "type": "array"
+          },
+          {
+            "type": "object"
+          }
+        ]
+      }
+    },
+
+    "node": {
+      "type": "object",
+      "required": [
+        "step_id",
+        "ws_ref"
+      ],
+      "properties": {
+        "step_id": {
+          "type": "string"
+        },
+        "ws_ref": {
+          "type": "string"
+        },
+        "depends_on": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "inputs": {
+          "$ref": "#/$defs/node_inputs"
+        },
+        "run_if": {
+          "type": "object",
+          "properties": {
+            "ref": {
+              "$ref": "#/$defs/input_ref"
+            },
+            "exists": {
+              "type": "boolean"
+            }
+          },
+          "required": ["ref", "exists"]
+        },
+        "retry": {
+          "$ref": "#/$defs/retry"
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+
+    "workflow_output": {
+      "type": "string",
+      "pattern": "^\\$steps\\.[a-zA-Z0-9_-]+(\\.[a-zA-Z0-9_-]+)*$"
+    },
+
+    "workflow": {
+      "type": "object",
+      "required": [
+        "wf_name",
+        "wf_input_schema",
+        "wf_nodes",
+        "wf_output"
+      ],
+      "properties": {
+        "wf_name": {
+          "type": "string"
+        },
+        "wf_desc": {
+          "type": "string"
+        },
+        "wf_version": {
+          "type": "string"
+        },
+        "wf_input_schema": {
+          "$ref": "https://json-schema.org/draft/2020-12/schema"
+        },
+        "wf_nodes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/node"
+          },
+          "minItems": 1
+        },
+        "wf_output": {
+          "$ref": "#/$defs/workflow_output"
+        }
+      }
+    }
+  }
+}
