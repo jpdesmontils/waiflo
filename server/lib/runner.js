@@ -132,26 +132,49 @@ export async function runPromptStep(step, inputs, user, res) {
   }
 }
 
+function renderTemplateString(template, vars) {
+  let out = String(template ?? '');
+  for (const [k, v] of Object.entries(vars || {})) {
+    const val = typeof v === 'object' ? JSON.stringify(v, null, 2) : String(v);
+    out = out.replaceAll(`{{{${k}}}}`, val);
+    out = out.replaceAll(`{{${k}}}`, val);
+  }
+  return out;
+}
+
+function renderTemplateDeep(value, vars) {
+  if (typeof value === 'string') return renderTemplateString(value, vars);
+  if (Array.isArray(value)) return value.map(v => renderTemplateDeep(v, vars));
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, renderTemplateDeep(v, vars)]));
+  }
+  return value;
+}
+
 /**
  * Execute an API step (HTTP GET/POST/etc).
  * Returns { results, total, size } or raw response body.
  */
 export async function runApiStep(step, inputs) {
   const apiConfig = step.ws_api || {};
-  let url = apiConfig.url || '';
+  let url = renderTemplateString(apiConfig.url || '', inputs);
 
-  // Substitute {{input}} variables in URL
-  for (const [k, v] of Object.entries(inputs)) {
-    url = url.replaceAll(`{{${k}}}`, encodeURI(String(v)));
+  const renderedQuery = renderTemplateDeep(apiConfig.query || {}, inputs);
+  const queryEntries = Object.entries(renderedQuery || {}).filter(([, v]) => v !== undefined && v !== null && String(v) !== '');
+  if (queryEntries.length) {
+    const qs = new URLSearchParams();
+    queryEntries.forEach(([k, v]) => qs.set(k, typeof v === 'string' ? v : JSON.stringify(v)));
+    url += (url.includes('?') ? '&' : '?') + qs.toString();
   }
 
   const method  = (apiConfig.method || 'GET').toUpperCase();
-  const headers = { 'Accept': 'application/json', ...(apiConfig.headers || {}) };
+  const headers = { 'Accept': 'application/json', ...renderTemplateDeep(apiConfig.headers || {}, inputs) };
 
   const fetchOpts = { method, headers };
-  if (apiConfig.body && method !== 'GET') {
-    fetchOpts.body = JSON.stringify(apiConfig.body);
-    headers['Content-Type'] = 'application/json';
+  if (apiConfig.body !== undefined && method !== 'GET') {
+    const renderedBody = renderTemplateDeep(apiConfig.body, inputs);
+    fetchOpts.body = JSON.stringify(renderedBody);
+    headers['Content-Type'] = headers['Content-Type'] || 'application/json';
   }
 
   const response = await fetch(url, fetchOpts);
@@ -164,4 +187,37 @@ export async function runApiStep(step, inputs) {
     return response.json();
   }
   return { raw: await response.text() };
+}
+
+/**
+ * Execute a webpage step (browser-like HTML fetch).
+ * Returns { url, status, contentType, html }.
+ */
+export async function runWebpageStep(step, inputs) {
+  const webpageConfig = step.ws_webpage || step.ws_api || {};
+  let url = webpageConfig.url || '';
+
+  // Substitute {{input}} variables in URL
+  for (const [k, v] of Object.entries(inputs)) {
+    url = url.replaceAll(`{{${k}}}`, encodeURI(String(v)));
+  }
+
+  const headers = {
+    Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    'Accept-Language': 'fr-FR,fr;q=0.9,en;q=0.8',
+    'User-Agent': webpageConfig.userAgent || 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+    ...(webpageConfig.headers || {})
+  };
+
+  const response = await fetch(url, { method: 'GET', headers, redirect: 'follow' });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status} — ${response.statusText} — ${url}`);
+  }
+
+  return {
+    url: response.url,
+    status: response.status,
+    contentType: response.headers.get('content-type') || '',
+    html: await response.text()
+  };
 }
