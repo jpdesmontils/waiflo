@@ -12,6 +12,7 @@
 import express from 'express';
 import fs      from 'fs/promises';
 import { authMiddleware } from './auth.js';
+import { deleteStepRunData } from '../lib/runStore.js';
 import { ensureUserDir } from '../lib/users.js';
 import { wfPath } from '../lib/utils.js';
 
@@ -49,7 +50,7 @@ function validateStep(step) {
   if (!step || typeof step !== 'object') return 'step must be an object';
   if (!step.ws_name || typeof step.ws_name !== 'string') return 'ws_name (string) is required';
   if (!/^[a-zA-Z0-9_\-]+$/.test(step.ws_name)) return 'ws_name must only contain letters, numbers, _ or -';
-  const validTypes = ['prompt', 'api', 'transform', 'script', 'tool'];
+  const validTypes = ['prompt', 'api', 'webpage', 'transform', 'script', 'tool'];
   if (step.ws_type && !validTypes.includes(step.ws_type)) {
     return `ws_type must be one of: ${validTypes.join(', ')}`;
   }
@@ -252,6 +253,7 @@ stepRouter.delete('/', async (req, res) => {
     });
 
     await writeWf(fp, data);
+    await deleteStepRunData(req.user.userId, workflow_name, ws_name);
     res.json({ ok: true, workflow_name, ws_name, deleted: true });
   } catch (err) {
     if (err.code === 'ENOENT') return res.status(404).json({ error: 'Workflow not found' });

@@ -6,16 +6,16 @@ import { createRoot } from 'react-dom/client';
 import {
   ReactFlow, Background, Controls, MiniMap,
   Handle, Position, MarkerType,
-  useNodesState, useEdgesState,
+  useNodesState, useEdgesState, addEdge,
   ReactFlowProvider, useReactFlow
 } from '@xyflow/react';
 import dagre from 'dagre';
 
 // ── CONSTANTS ────────────────────────────────────────────────────
-const FIELD_TYPES = ['string','number','integer','boolean','object','array'];
+const FIELD_TYPES = ['string','number','integer','boolean','object','array','image_url'];
 const NODE_W = 280, NODE_H = 164;
 const TYPE_COLORS = {
-  prompt:'#f59e0b', api:'#2dd4bf', transform:'#60a5fa', tool:'#a78bfa', script:'#fb923c'
+  prompt:'#f59e0b', api:'#2dd4bf', webpage:'#22d3ee', transform:'#60a5fa', tool:'#a78bfa', script:'#fb923c'
 };
 
 // ── DEMO WORKFLOW ────────────────────────────────────────────────
@@ -68,12 +68,26 @@ let currentWf      = null;
 let currentStep    = null;
 let rankDir        = 'TB';
 let _setGraphData  = null;
+let _getNodes      = null;
 let _fitView       = null;
 let _graphVersion  = 0;
 // fullscreen source: 'workflow' | 'step'
 let _jfsSource     = null;
 let _providersConfig  = {};   // loaded from /json_schemas/providers.json
 let _providerKeyStatus = {};  // loaded from /api/auth/me { anthropic: true, ... }
+let _lastStepRuns = {};       // keyed by workflow node id, stores latest parsed output
+let _stepRunUiState = {};     // keyed by workflow node id, stores log/meta/status/output ui state
+let _currentNodeId = null;    // currently edited node id (wf node id or step name)
+let _runController = null;
+let _isExecuting = false;
+let _runStepDefaultLabel = '▶ Run Step Only';
+let _runFlowDefaultLabel = '▶ Run Workflow From Here';
+let _edgeDeletePrompt = null;
+let _workflowExecLogs = [];
+let _activeRunNodeIds = new Set();
+let _lastEditorTab = 'edit';
+let _logsPanelDrag = null;
+let _activeRunEdgeIds = new Set();
 
 // ══════════════════════════════════════════════════════════════════
 //  REACT FLOW — CUSTOM NODE
@@ -89,7 +103,11 @@ const StepNode = memo(function StepNode({ data, selected }) {
 
   const llmBadge = llm
     ? h('span',{ className:'rf-llm-badge' }, `${llm.provider||''}·${(llm.model||'').split('-').slice(-1)[0]} t=${llm.temperature??'?'}`)
-    : (wsType==='api'&&s.ws_api ? h('span',{ className:'rf-llm-badge rf-api-badge' }, `HTTP ${s.ws_api?.method||'GET'}`) : null);
+    : ((wsType==='api'&&s.ws_api)
+      ? h('span',{ className:'rf-llm-badge rf-api-badge' }, `HTTP ${s.ws_api?.method||'GET'}`)
+      : ((wsType==='webpage'&&(s.ws_webpage?.url||s.ws_api?.url))
+        ? h('span',{ className:'rf-llm-badge rf-api-badge' }, 'HTML GET')
+        : null));
   const toolsBadge = s.ws_tools?.length
     ? h('span',{ className:'rf-tools-badge' }, `🔧 ${s.ws_tools.length} tool${s.ws_tools.length>1?'s':''}`) : null;
 
@@ -106,12 +124,12 @@ const StepNode = memo(function StepNode({ data, selected }) {
       : [h('div',{ key:'_', className:'rf-no-schema' },'—')];
 
   return h('div',{
-    className:`rf-step-node rf-type-border-${wsType}${selected?' selected':''}`,
+    className:`rf-step-node rf-type-border-${wsType}${selected?' selected':''}${data.isRunning?' running':''}`,
     onClick: () => openStepEditor(data.nodeId)
   },
     h(Handle,{ type:'target', position:Position.Top, id:'top' }),
     h(Handle,{ type:'source', position:Position.Bottom, id:'bottom' }),
-    h('div',{ className:'rf-card-header' },
+    h('div',{ className:`rf-card-header${data.isRunning ? ' running' : ''}` },
       h('span',{ className:`rf-type-badge rf-type-${wsType}` },wsType),
       h('span',{ className:'rf-card-name' },name)
     ),
@@ -134,12 +152,12 @@ const StepNode = memo(function StepNode({ data, selected }) {
 
 const nodeTypes = { step: StepNode };
 
-function FlowInner({ nodes, edges, onNodesChange, onEdgesChange, version }) {
+function FlowInner({ nodes, edges, onNodesChange, onEdgesChange, onConnect, onEdgeClick, onPaneClick, version }) {
   const { fitView } = useReactFlow();
   _fitView = fitView;
   useEffect(() => { setTimeout(()=>fitView({ padding:0.12, duration:400 }),60); }, [version]);
   return h(ReactFlow,{
-    nodes, edges, onNodesChange, onEdgesChange, nodeTypes,
+    nodes, edges, onNodesChange, onEdgesChange, onConnect, onEdgeClick, onPaneClick, nodeTypes,
     defaultEdgeOptions:{ type:'smoothstep', markerEnd:{ type:MarkerType.ArrowClosed, color:'#2a3f60' }, style:{ stroke:'#2a3f60', strokeWidth:1.5 } },
     fitView:true, fitViewOptions:{ padding:0.12 },
     minZoom:0.08, maxZoom:2,
@@ -154,15 +172,31 @@ function FlowInner({ nodes, edges, onNodesChange, onEdgesChange, version }) {
 }
 
 function AppGraph() {
-  const [gd, setGd] = useState({ nodes:[], edges:[], version:0 });
-  _setGraphData = setGd;
-  const [,,onNodesChange] = useNodesState([]);
-  const [,,onEdgesChange] = useEdgesState([]);
-  const [syncedNodes, setSyncedNodes] = useState([]);
-  const [syncedEdges, setSyncedEdges] = useState([]);
-  useEffect(()=>{ setSyncedNodes(gd.nodes); setSyncedEdges(gd.edges); }, [gd.version]);
+  const [nodes, setNodes, onNodesChange] = useNodesState([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const [version, setVersion] = useState(0);
+
+  const onConnect = (params) => {
+    setEdges((eds) => addEdge({
+      ...params,
+      id:`${params.source}->${params.target}`,
+      type:'smoothstep'
+    }, eds));
+    syncWorkflowDependencies(params.source, params.target);
+  };
+
+  const onEdgeClick = (evt, edge) => {
+    evt?.preventDefault?.();
+    evt?.stopPropagation?.();
+    showEdgeDeletePrompt(edge, evt?.clientX || 0, evt?.clientY || 0);
+  };
+
+  const onPaneClick = () => hideEdgeDeletePrompt();
+
+  _setGraphData = (gd) => { setNodes(gd.nodes); setEdges(gd.edges); setVersion(gd.version); };
+  _getNodes     = () => nodes;
   return h(ReactFlowProvider,null,
-    h(FlowInner,{ nodes:syncedNodes, edges:syncedEdges, onNodesChange, onEdgesChange, version:gd.version })
+    h(FlowInner,{ nodes, edges, onNodesChange, onEdgesChange, onConnect, onEdgeClick, onPaneClick, version })
   );
 }
 
@@ -189,7 +223,11 @@ function buildGraph(data) {
     wf.wf_nodes.forEach(node=>{
       const s = stepsMap[node.ws_ref]||{ ws_name:node.ws_ref, ws_type:'prompt' };
       rawNodes.push({ id:node.step_id, type:'step', position:{x:0,y:0}, data:{ step:s, nodeId:node.step_id } });
-      (node.depends_on||[]).forEach(dep=>rawEdges.push({ id:`${dep}->${node.step_id}`, source:dep, target:node.step_id }));
+      (node.depends_on||[]).forEach(dep=>{
+        const depNode = findWorkflowNode(wf, dep);
+        if (!depNode) return;
+        rawEdges.push({ id:`${depNode.step_id}->${node.step_id}`, source:depNode.step_id, target:node.step_id });
+      });
     });
     document.getElementById('meta-steps').textContent = wf.wf_nodes.length;
     document.getElementById('meta-wf').textContent    = wf.wf_name||'—';
@@ -197,21 +235,163 @@ function buildGraph(data) {
   } else {
     steps.forEach((s,i)=>{
       rawNodes.push({ id:s.ws_name, type:'step', position:{x:0,y:0}, data:{ step:s, nodeId:s.ws_name } });
-      if (i>0) rawEdges.push({ id:`${steps[i-1].ws_name}->${s.ws_name}`, source:steps[i-1].ws_name, target:s.ws_name });
     });
     document.getElementById('meta-steps').textContent = steps.length;
     document.getElementById('meta-wf-pill').style.display = 'none';
   }
   const layoutedNodes = computeLayout(rawNodes, rawEdges, rankDir);
+
+  // Préserver les positions des nœuds existants (drag utilisateur) et placer les nouveaux sous le dernier
+  const curPos = {};
+  if (_getNodes) _getNodes().forEach(n => { curPos[n.id] = n.position; });
+  let maxY = 0;
+  let refX = layoutedNodes[0]?.position?.x ?? 0;
+  layoutedNodes.forEach(n => { if (curPos[n.id]) { maxY = Math.max(maxY, curPos[n.id].y); refX = curPos[n.id].x; } });
+  const finalNodes = layoutedNodes.map(n => {
+    const base = curPos[n.id] ? { ...n, position: curPos[n.id] } : (() => {
+      maxY += NODE_H + 60;
+      return { ...n, position: { x: refX, y: maxY } };
+    })();
+    return {
+      ...base,
+      data: {
+        ...base.data,
+        isRunning: _activeRunNodeIds.has(base.id)
+      }
+    };
+  });
+  const finalEdges = rawEdges.map(e => ({
+    ...e,
+    className: _activeRunEdgeIds.has(e.id) ? 'rf-edge-running' : undefined,
+    animated: _activeRunEdgeIds.has(e.id)
+  }));
+
   document.getElementById('meta-name').textContent = data.lang_name||currentWf?.name||'—';
   document.getElementById('wf-meta').classList.remove('hidden');
   document.getElementById('empty-state').classList.add('hidden');
   _graphVersion++;
-  if (_setGraphData) _setGraphData({ nodes:layoutedNodes, edges:rawEdges, version:_graphVersion });
+  if (_setGraphData) _setGraphData({ nodes:finalNodes, edges:finalEdges, version:_graphVersion });
 }
 
 function fitGraph() { _fitView?.({ padding:0.12, duration:400 }); }
 function setLayout(dir) { rankDir=dir; if(currentWf) buildGraph(currentWf.data); }
+
+
+function ensureWorkflowGraph() {
+  if (!currentWf) return null;
+  const data = currentWf.data;
+  if (!Array.isArray(data.workflows)) data.workflows = [];
+
+  let wf = data.workflows.find(w => Array.isArray(w.wf_nodes));
+  if (!wf) {
+    wf = {
+      wf_name: data.lang_name || currentWf.name || 'main',
+      wf_nodes: (data.steps || []).map((step, idx) => ({
+        step_id: step.ws_name || `step_${idx+1}`,
+        ws_ref: step.ws_name,
+        depends_on: []
+      }))
+    };
+    data.workflows.push(wf);
+  }
+
+  if (!Array.isArray(wf.wf_nodes)) wf.wf_nodes = [];
+  return wf;
+}
+
+
+function ensureWorkflowNodeForStep(stepName) {
+  const wf = ensureWorkflowGraph();
+  if (!wf || !stepName) return null;
+
+  let node = wf.wf_nodes.find(n => n.ws_ref === stepName);
+  if (node) return node;
+
+  const base = `node_${stepName}`.replace(/[^a-zA-Z0-9_-]/g, '_');
+  let stepId = base;
+  let i = 2;
+  while (wf.wf_nodes.some(n => n.step_id === stepId)) {
+    stepId = `${base}_${i++}`;
+  }
+
+  node = { step_id: stepId, ws_ref: stepName, depends_on: [] };
+  wf.wf_nodes.push(node);
+  return node;
+}
+
+function removeWorkflowDependency(sourceId, targetId) {
+  if (!currentWf) return;
+  const wf = (currentWf.data.workflows || []).find(w => Array.isArray(w.wf_nodes));
+  if (!wf) return;
+  const targetNode = (wf.wf_nodes || []).find(n => n.step_id === targetId);
+  if (!targetNode) return;
+  targetNode.depends_on = (targetNode.depends_on || []).filter(d => d !== sourceId);
+  buildGraph(currentWf.data); _refreshWfJsonPanel();
+  if (guestMode) _guestSync(); else saveWorkflow();
+}
+
+function showEdgeDeletePrompt(edge, x, y) {
+  _edgeDeletePrompt = { edge, x, y };
+  renderEdgeDeletePrompt();
+}
+
+function hideEdgeDeletePrompt() {
+  _edgeDeletePrompt = null;
+  renderEdgeDeletePrompt();
+}
+
+function renderEdgeDeletePrompt() {
+  const el = document.getElementById('edge-delete-prompt');
+  if (!el) return;
+  if (!_edgeDeletePrompt) { el.classList.add('hidden'); return; }
+  el.classList.remove('hidden');
+  el.style.left = `${_edgeDeletePrompt.x}px`;
+  el.style.top = `${_edgeDeletePrompt.y}px`;
+}
+
+function confirmEdgeDelete() {
+  if (!_edgeDeletePrompt?.edge) return;
+  const { source, target } = _edgeDeletePrompt.edge;
+  hideEdgeDeletePrompt();
+  openConfirm('Supprimer la dépendance ?', `${source} → ${target}`, () => {
+    removeWorkflowDependency(source, target);
+    toast('Dépendance supprimée','ok');
+  });
+}
+
+function syncWorkflowDependencies(sourceId, targetId) {
+  const wf = ensureWorkflowGraph();
+  if (!wf) return;
+
+  let sourceNode = wf.wf_nodes.find(n => n.step_id === sourceId);
+  let targetNode = wf.wf_nodes.find(n => n.step_id === targetId);
+
+  if (!sourceNode) {
+    const sourceStep = (currentWf.data.steps || []).find(s => s.ws_name === sourceId);
+    if (sourceStep) {
+      sourceNode = { step_id: sourceId, ws_ref: sourceStep.ws_name, depends_on: [] };
+      wf.wf_nodes.push(sourceNode);
+    }
+  }
+
+  if (!targetNode) {
+    const targetStep = (currentWf.data.steps || []).find(s => s.ws_name === targetId);
+    if (targetStep) {
+      targetNode = { step_id: targetId, ws_ref: targetStep.ws_name, depends_on: [] };
+      wf.wf_nodes.push(targetNode);
+    }
+  }
+
+  if (!sourceNode || !targetNode) return;
+  if (!Array.isArray(targetNode.depends_on)) targetNode.depends_on = [];
+  if (!targetNode.depends_on.includes(sourceNode.step_id)) {
+    targetNode.depends_on.push(sourceNode.step_id);
+  }
+
+  _refreshWfJsonPanel();
+  if (guestMode) _guestSync();
+  else saveWorkflow();
+}
 
 // ── AUTH / SESSION ────────────────────────────────────────────────
 function doLogout() {
@@ -447,6 +627,11 @@ async function openWorkflow(name) {
     if (data.error) return toast(data.error,'err');
   }
   currentWf={name,data};
+  _lastStepRuns = {};
+  _stepRunUiState = {};
+  _runController = null;
+  _isExecuting = false;
+  setExecutionUiState(false);
   closeEditor(); buildGraph(data); renderWorkflowList();
   document.getElementById('btn-save').style.display='';
   document.getElementById('btn-download').style.display='';
@@ -559,25 +744,33 @@ function toggleTheme() {
 }
 
 // ── STEP EDITOR ──────────────────────────────────────────────────
-function openStepEditor(nodeId, tab='edit') {
+function openStepEditor(nodeId, tab=null) {
   if (!currentWf) return;
   const steps=currentWf.data.steps||[];
   let step=steps.find(s=>s.ws_name===nodeId);
+  let resolvedNodeId = step ? nodeId : null;
   if (!step) {
     const wf=(currentWf.data.workflows||[]).find(w=>w.wf_nodes?.length);
-    if (wf) { const node=wf.wf_nodes.find(n=>n.step_id===nodeId); if(node) step=steps.find(s=>s.ws_name===node.ws_ref); }
+    if (wf) {
+      const node=wf.wf_nodes.find(n=>n.step_id===nodeId);
+      if(node) {
+        step=steps.find(s=>s.ws_name===node.ws_ref);
+        resolvedNodeId = node.step_id;
+      }
+    }
   }
   if (!step) return;
   currentStep=step;
+  _currentNodeId = resolvedNodeId || step.ws_name;
   populateEditor(currentStep);
-  document.getElementById('right-panel').classList.remove('hidden');
-  switchEditorTab(tab);
+  setRightPanelVisible(true);
+  switchEditorTab(tab || _lastEditorTab || 'edit');
 }
 
 function openNewStepEditor() {
   currentStep=null;
   populateEditor({ ws_name:'',ws_type:'prompt', ws_llm:{ provider:'anthropic',model:'claude-sonnet-4-20250514',temperature:0 }, ws_inputs_schema:{ type:'object',required:[],properties:{} }, ws_output_schema:{ type:'object',required:[],properties:{} } });
-  document.getElementById('right-panel').classList.remove('hidden');
+  setRightPanelVisible(true);
   switchEditorTab('edit');
 }
 
@@ -590,7 +783,7 @@ function populateEditor(s) {
   document.getElementById('f-sysprompt').value = s.ws_system_prompt||'';
   document.getElementById('f-template').value  = s.ws_prompt_template||'';
   document.getElementById('f-method').value    = s.ws_api?.method||'GET';
-  document.getElementById('f-url').value       = s.ws_api?.url||'';
+  document.getElementById('f-url').value       = s.ws_webpage?.url || s.ws_api?.url || '';
   renderSchemaFields('inputs-fields',  s.ws_inputs_schema?.properties||{},  s.ws_inputs_schema?.required||[]);
   renderSchemaFields('outputs-fields', s.ws_output_schema?.properties||{}, s.ws_output_schema?.required||[]);
   onTypeChange(); updateJsonTab(); updateRunTab(s);
@@ -598,11 +791,15 @@ function populateEditor(s) {
 
 function onTypeChange() {
   const t=document.getElementById('f-type').value;
-  const p=t==='prompt', a=t==='api';
+  const p=t==='prompt', a=t==='api'||t==='webpage', w=t==='webpage';
   document.getElementById('llm-section').style.display       = p?'':'none';
   document.getElementById('sysprompt-section').style.display = p?'':'none';
   document.getElementById('template-section').style.display  = p?'':'none';
   document.getElementById('api-section').style.display       = a?'':'none';
+  document.getElementById('method-section').style.display    = w?'none':'';
+  document.getElementById('url-hint').textContent            = w
+    ? 'Fetches browser-like raw HTML from this URL. Use {{input_name}} for dynamic params.'
+    : 'Use {{input_name}} for dynamic params';
 }
 
 // ── Model default per provider (fallback si providers.json non chargé) ──
@@ -671,6 +868,7 @@ function collectStep() {
     s.ws_prompt_template=document.getElementById('f-template').value;
   }
   if (type==='api') s.ws_api={ method:document.getElementById('f-method').value, url:document.getElementById('f-url').value.trim() };
+  if (type==='webpage') s.ws_webpage={ url:document.getElementById('f-url').value.trim() };
   return s;
 }
 
@@ -679,14 +877,32 @@ function applyStepEdit() {
   const s=collectStep();
   if (!s.ws_name) return toast('ws_name is required','err');
   const steps=currentWf.data.steps||[];
+
   if (currentStep) {
     const idx=steps.findIndex(x=>x.ws_name===currentStep.ws_name);
     if (idx>=0) steps[idx]=s; else steps.push(s);
+
+    // Keep workflow graph references in sync if the step name changed.
+    if (currentStep.ws_name !== s.ws_name) {
+      (currentWf.data.workflows||[]).forEach(wf=>{
+        (wf.wf_nodes||[]).forEach(n=>{
+          if (n.ws_ref === currentStep.ws_name) n.ws_ref = s.ws_name;
+        });
+      });
+    }
   } else {
     if (steps.find(x=>x.ws_name===s.ws_name)) return toast('A step with this name already exists','err');
     steps.push(s);
+
+    // If a workflow graph already exists (e.g. because of connections),
+    // ensure the new step is also added as a node so it appears in the UI.
+    if ((currentWf.data.workflows||[]).some(w => Array.isArray(w.wf_nodes))) {
+      ensureWorkflowNodeForStep(s.ws_name);
+    }
   }
-  currentWf.data.steps=steps; currentStep=s;
+
+  currentWf.data.steps=steps;
+  currentStep=s;
   buildGraph(currentWf.data); _refreshWfJsonPanel();
   if (guestMode) { _guestSync(); toast('Step saved (not persisted)','ok'); }
   else { saveWorkflow(); toast('Step saved','ok'); }
@@ -698,8 +914,9 @@ function deleteCurrentStep() {
   openConfirm(`Delete step "${name}"?`,'It will also be removed from workflow nodes.',()=>{
     currentWf.data.steps=(currentWf.data.steps||[]).filter(s=>s.ws_name!==name);
     (currentWf.data.workflows||[]).forEach(wf=>{
+      const removedIds = new Set((wf.wf_nodes||[]).filter(n=>n.ws_ref===name).map(n=>n.step_id));
       wf.wf_nodes=(wf.wf_nodes||[]).filter(n=>n.ws_ref!==name);
-      wf.wf_nodes.forEach(n=>{ n.depends_on=(n.depends_on||[]).filter(d=>d!==name); });
+      wf.wf_nodes.forEach(n=>{ n.depends_on=(n.depends_on||[]).filter(d=>!removedIds.has(d)); });
     });
     closeModal(); closeEditor(); buildGraph(currentWf.data); _refreshWfJsonPanel();
     saveWorkflow(); toast('Step deleted','ok');
@@ -707,15 +924,199 @@ function deleteCurrentStep() {
 }
 
 function closeEditor() {
-  document.getElementById('right-panel').classList.add('hidden');
+  setRightPanelVisible(false);
   currentStep=null;
+  _currentNodeId = null;
+  document.querySelectorAll('.form-textarea.maximized').forEach(el => el.classList.remove('maximized'));
+  document.querySelectorAll('.maximize-btn.active').forEach(el => el.classList.remove('active'));
+}
+
+function setExecutionUiState(running) {
+  _isExecuting = running;
+  document.documentElement.classList.toggle('exec-running', running);
+  const stepBtn = document.getElementById('run-step-btn');
+  const flowBtn = document.getElementById('run-flow-btn');
+  if (!stepBtn || !flowBtn) return;
+  if (!running) {
+    _runStepDefaultLabel = stepBtn.dataset.defaultLabel || stepBtn.textContent;
+    _runFlowDefaultLabel = flowBtn.dataset.defaultLabel || flowBtn.textContent;
+  }
+  if (running) {
+    stepBtn.textContent = '■ Stop';
+    flowBtn.textContent = '■ Stop';
+  } else {
+    stepBtn.textContent = _runStepDefaultLabel;
+    flowBtn.textContent = _runFlowDefaultLabel;
+  }
+}
+
+function truncLog(v) {
+  const txt = typeof v === 'string' ? v : JSON.stringify(v);
+  return txt.length > 256 ? `${txt.slice(0,256)}…` : txt;
+}
+
+function wfTs() {
+  const d = new Date();
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+function appendWorkflowExecLog(line) {
+  _workflowExecLogs.push(line);
+  const pre = document.getElementById('wf-exec-logs-content');
+  if (pre) { pre.textContent = _workflowExecLogs.join('\n'); pre.scrollTop = pre.scrollHeight; }
+}
+
+async function copyWorkflowExecLogs() {
+  const txt = _workflowExecLogs.join('\n');
+  if (!txt) { toast('No logs to copy', 'err'); return; }
+  try {
+    await navigator.clipboard.writeText(txt);
+    toast('Workflow logs copied', 'ok');
+  } catch {
+    toast('Clipboard unavailable', 'err');
+  }
+}
+
+function clearWorkflowExecLogs() {
+  _workflowExecLogs = [];
+  const pre = document.getElementById('wf-exec-logs-content');
+  if (pre) pre.textContent = '';
+}
+
+function setRunningGraphState(nodeId, includeDeps = false) {
+  _activeRunNodeIds = new Set();
+  _activeRunEdgeIds = new Set();
+  if (!currentWf || !nodeId) {
+    if (currentWf) buildGraph(currentWf.data);
+    return;
+  }
+  const wf = (currentWf.data.workflows || []).find(w => w.wf_nodes?.length);
+  if (!wf) return;
+  const node = findWorkflowNode(wf, nodeId);
+  if (!node) return;
+
+  _activeRunNodeIds.add(node.step_id);
+  if (includeDeps) {
+    for (const depRef of (node.depends_on || [])) {
+      const depNode = findWorkflowNode(wf, depRef);
+      if (!depNode) continue;
+      _activeRunNodeIds.add(depNode.step_id);
+      _activeRunEdgeIds.add(`${depNode.step_id}->${node.step_id}`);
+    }
+  }
+  buildGraph(currentWf.data);
+}
+
+function clearRunningGraphState() {
+  if (!_activeRunNodeIds.size && !_activeRunEdgeIds.size) return;
+  _activeRunNodeIds.clear();
+  _activeRunEdgeIds.clear();
+  if (currentWf) buildGraph(currentWf.data);
+}
+
+function toggleWorkflowExecLogs() {
+  const body = document.getElementById('wf-exec-logs-body');
+  const icon = document.getElementById('wf-exec-logs-toggle');
+  if (!body || !icon) return;
+  const closed = body.classList.toggle('hidden');
+  icon.textContent = closed ? '▸' : '▾';
+  updateFloatingAddStepPosition();
+}
+
+
+function setRightPanelVisible(visible) {
+  const panel = document.getElementById('right-panel');
+  const btn = document.getElementById('btn-toggle-right');
+  if (!panel || !btn) return;
+  panel.classList.toggle('hidden', !visible);
+  btn.textContent = visible ? '›' : '‹';
+  btn.title = visible ? 'Hide editor' : 'Show editor';
+  btn.style.right = visible ? 'var(--right-w)' : '0';
+  updateFloatingAddStepPosition();
+}
+
+function toggleRightPanel() {
+  const panel = document.getElementById('right-panel');
+  if (!panel) return;
+  setRightPanelVisible(panel.classList.contains('hidden'));
+  if (!panel.classList.contains('hidden') && currentStep) {
+    switchEditorTab(_lastEditorTab || 'edit');
+  }
+}
+
+function updateFloatingAddStepPosition() {
+  const btn = document.getElementById('btn-add-step');
+  const logs = document.getElementById('wf-exec-logs');
+  if (!btn || !logs) return;
+  const rect = logs.getBoundingClientRect();
+  const bottom = Math.max(16, Math.ceil(window.innerHeight - rect.top + 8));
+  btn.style.bottom = `${bottom}px`;
+}
+
+function initWorkflowLogsPanel() {
+  const panel = document.getElementById('wf-exec-logs');
+  const header = document.getElementById('wf-exec-logs-header');
+  if (!panel || !header) return;
+
+  const onMove = (ev) => {
+    if (!_logsPanelDrag) return;
+    const width = panel.offsetWidth;
+    const height = panel.offsetHeight;
+    const maxLeft = Math.max(0, window.innerWidth - width);
+    const maxTop = Math.max(0, window.innerHeight - height);
+    const left = Math.min(maxLeft, Math.max(0, ev.clientX - _logsPanelDrag.dx));
+    const top = Math.min(maxTop, Math.max(0, ev.clientY - _logsPanelDrag.dy));
+    panel.style.left = `${left}px`;
+    panel.style.top = `${top}px`;
+    panel.style.right = 'auto';
+    panel.style.bottom = 'auto';
+    updateFloatingAddStepPosition();
+  };
+
+  const onUp = () => {
+    _logsPanelDrag = null;
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+  };
+
+  header.addEventListener('mousedown', (ev) => {
+    if (ev.target.closest('.wf-log-action')) return;
+    const rect = panel.getBoundingClientRect();
+    _logsPanelDrag = { dx: ev.clientX - rect.left, dy: ev.clientY - rect.top };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+
+  if (window.ResizeObserver) {
+    const ro = new ResizeObserver(() => updateFloatingAddStepPosition());
+    ro.observe(panel);
+  }
+  window.addEventListener('resize', updateFloatingAddStepPosition);
+  updateFloatingAddStepPosition();
 }
 
 function switchEditorTab(tab) {
-  document.querySelectorAll('.etab').forEach((b,i)=>b.classList.toggle('active',['edit','run','json'][i]===tab));
+  _lastEditorTab = tab || _lastEditorTab || 'edit';
+  document.querySelectorAll('.etab').forEach((b,i)=>b.classList.toggle('active',['edit','run','log','json'][i]===_lastEditorTab));
   document.querySelectorAll('.etab-content').forEach(c=>c.classList.remove('active'));
-  document.getElementById(`etab-${tab}`)?.classList.add('active');
-  if (tab==='json') updateJsonTab();
+  document.getElementById(`etab-${_lastEditorTab}`)?.classList.add('active');
+  if (_lastEditorTab==='json') updateJsonTab();
+}
+
+function toggleTechSection() {
+  const content = document.getElementById('tech-content');
+  const btn = document.getElementById('tech-toggle');
+  if (!content || !btn) return;
+  const collapsed = content.classList.toggle('collapsed');
+  btn.textContent = `${btn.textContent.replace(/[▾▸]/g, '').trim()} ${collapsed ? '▸' : '▾'}`;
+}
+
+function toggleEditorMaximize(textareaId, btn) {
+  const ta = document.getElementById(textareaId);
+  if (!ta) return;
+  const isOpen = ta.classList.toggle('maximized');
+  if (btn) btn.classList.toggle('active', isOpen);
 }
 
 function updateJsonTab() {
@@ -724,73 +1125,309 @@ function updateJsonTab() {
 }
 
 // ── RUN ──────────────────────────────────────────────────────────
+function rememberStepResult(step, nodeId, result) {
+  if (!result) return;
+  const key = nodeId || step.ws_name;
+  _lastStepRuns[key] = result;
+}
+
+function buildInheritedInputs(step, nodeId) {
+  if (!currentWf || !nodeId) return {};
+  const wf = (currentWf.data.workflows || []).find(w => w.wf_nodes?.length);
+  if (!wf) return {};
+
+  const node = findWorkflowNode(wf, nodeId);
+  if (!node) return {};
+
+  const inherited = {};
+  for (const depId of (node.depends_on || [])) {
+    const depNode = findWorkflowNode(wf, depId);
+    if (!depNode) continue;
+    const depOutput = _lastStepRuns[depNode.step_id] || _lastStepRuns[depNode.ws_ref];
+    if (!depOutput || typeof depOutput !== 'object') continue;
+
+    Object.assign(inherited, depOutput);
+    inherited[depNode.ws_ref] = depOutput;
+    inherited[`${depNode.ws_ref}_output`] = depOutput;
+  }
+
+  return inherited;
+}
+
+
+
+function getAvailableConnectedInputs(step, nodeId) {
+  if (!currentWf || !nodeId) return [];
+  const wf = (currentWf.data.workflows || []).find(w => w.wf_nodes?.length);
+  if (!wf) return [];
+
+  const node = findWorkflowNode(wf, nodeId);
+  if (!node) return [];
+
+  const names = new Set();
+  for (const depId of (node.depends_on || [])) {
+    const depNode = findWorkflowNode(wf, depId);
+    if (!depNode) continue;
+    const depStep = (currentWf.data.steps || []).find(s => s.ws_name === depNode.ws_ref);
+    const outProps = depStep?.ws_output_schema?.properties || {};
+    Object.keys(outProps).forEach(k => names.add(k));
+    names.add(depNode.ws_ref);
+    names.add(`${depNode.ws_ref}_output`);
+  }
+
+  return Array.from(names).sort();
+}
+
 function updateRunTab(s) {
   const area=document.getElementById('run-inputs-area'); area.innerHTML='';
+  const availableEl = document.getElementById('edit-available-inputs');
   const inProps=s?.ws_inputs_schema?.properties||{}, inReq=s?.ws_inputs_schema?.required||[];
   Object.keys(inProps).forEach(k=>{
     const div=document.createElement('div');
     div.innerHTML=`<div class="run-input-label">${k} <span class="field-type">${inProps[k].type||''}</span>${inReq.includes(k)?'<span class="run-input-req">req</span>':''}</div><textarea class="form-textarea" id="run-in-${k}" placeholder="Value for ${k}…"></textarea>`;
     area.appendChild(div);
   });
-}
 
-async function runStep() {
-  const s=currentStep||collectStep();
-  if (!s.ws_name) return toast('Save the step first','err');
-  const inProps=s.ws_inputs_schema?.properties||{}, inputs={};
-  for (const k of Object.keys(inProps)) {
-    const el=document.getElementById(`run-in-${k}`); if(!el) continue;
-    let val=el.value; try{ val=JSON.parse(val); }catch{} inputs[k]=val;
+  const state = getStepRunState(s, _currentNodeId);
+  if (state?.lastInputs) {
+    Object.entries(state.lastInputs).forEach(([k,v]) => {
+      const el = document.getElementById(`run-in-${k}`);
+      if (!el) return;
+      el.value = typeof v === 'string' ? v : JSON.stringify(v, null, 2);
+    });
   }
 
-  const outEl=document.getElementById('run-output'),metaEl=document.getElementById('run-meta'),btn=document.getElementById('run-btn');
-  outEl.textContent=''; outEl.className='run-output'; metaEl.innerHTML=''; btn.disabled=true; btn.textContent='Running…';
+  if (availableEl) {
+    const vars = getAvailableConnectedInputs(s, _currentNodeId);
+    availableEl.innerHTML = vars.length
+      ? vars.map(v => `<span class="run-var-chip">{{${v}}}</span>`).join('')
+      : '<span class="run-available-empty">Aucune variable disponible (connectez un step entrant).</span>';
+  }
+
+  renderRunState(s, _currentNodeId);
+  hydrateRunStateFromServer(s, _currentNodeId);
+}
+
+async function hydrateRunStateFromServer(step, nodeId) {
+  if (!token || !currentWf || getStepRunState(step, nodeId)) return;
+  const wf = encodeURIComponent(currentWf.name);
+  const ws = encodeURIComponent(step.ws_name);
+  const res = await api(`/api/exec/history/latest?workflow=${wf}&step=${ws}`);
+  if (res?.record) {
+    saveStepRunState(step, nodeId, {
+      status: res.record.status || 'idle',
+      output: typeof res.record.output === 'string' ? res.record.output : JSON.stringify(res.record.output || '', null, 2),
+      logOutput: `${res.record.prompt ? `PROMPT:\n${res.record.prompt}\n\n` : ''}${res.record.logOutput || ''}`,
+      logMeta: res.record.logMeta || '',
+      logError: res.record.status === 'error',
+      lastInputs: res.record.inputs || {}
+    });
+    renderRunState(step, nodeId);
+    updateRunTab(step);
+  }
+}
+
+function stopExecution() {
+  if (_runController) _runController.abort();
+}
+
+function findWorkflowNode(wf, ref) {
+  if (!wf || !ref) return null;
+  return (wf.wf_nodes || []).find(n => n.step_id === ref || n.ws_ref === ref) || null;
+}
+
+function getDownstreamExecutionOrder(startNodeId) {
+  const wf = (currentWf?.data?.workflows || []).find(w => w.wf_nodes?.length);
+  if (!wf) return [];
+  const nodes = wf.wf_nodes || [];
+  const byId = new Map(nodes.map(n => [n.step_id, n]));
+  const children = new Map(nodes.map(n => [n.step_id, []]));
+  nodes.forEach(n => (n.depends_on || []).forEach(dep => {
+    const depNode = findWorkflowNode(wf, dep);
+    if (depNode && children.has(depNode.step_id)) children.get(depNode.step_id).push(n.step_id);
+  }));
+
+  const startNode = findWorkflowNode(wf, startNodeId);
+  if (!startNode) return [];
+
+  const included = new Set();
+  const stack = [startNode.step_id];
+  while (stack.length) {
+    const id = stack.pop();
+    if (!id || included.has(id)) continue;
+    included.add(id);
+    (children.get(id) || []).forEach(c => stack.push(c));
+  }
+
+  const indeg = new Map();
+  included.forEach(id => indeg.set(id, 0));
+  included.forEach(id => {
+    const node = byId.get(id);
+    (node?.depends_on || []).forEach(dep => {
+      const depNode = findWorkflowNode(wf, dep);
+      if (depNode && included.has(depNode.step_id)) indeg.set(id, (indeg.get(id) || 0) + 1);
+    });
+  });
+  const q = [...included].filter(id => indeg.get(id) === 0);
+  const order = [];
+  while (q.length) {
+    const id = q.shift();
+    order.push(id);
+    (children.get(id) || []).forEach(c => {
+      if (!included.has(c)) return;
+      indeg.set(c, indeg.get(c) - 1);
+      if (indeg.get(c) === 0) q.push(c);
+    });
+  }
+  return order;
+}
+
+function getStepRunState(step, nodeId) {
+  const key = nodeId || step?.ws_name;
+  if (!key) return null;
+  return _stepRunUiState[key] || null;
+}
+
+function saveStepRunState(step, nodeId, patch) {
+  const key = nodeId || step?.ws_name;
+  if (!key) return;
+  _stepRunUiState[key] = {
+    status: 'idle',
+    output: '',
+    lastInputs: {},
+    logOutput: '',
+    logMeta: '',
+    ...(_stepRunUiState[key] || {}),
+    ...(patch || {})
+  };
+}
+
+function renderRunState(step, nodeId) {
+  const state = getStepRunState(step, nodeId);
+  const statusEl = document.getElementById('run-status');
+  const varsEl = document.getElementById('run-output-vars');
+  const logOutEl = document.getElementById('run-log-output');
+  const logMetaEl = document.getElementById('run-log-meta');
+  if (!statusEl || !varsEl || !logOutEl || !logMetaEl) return;
+
+  if (!state) {
+    statusEl.textContent = 'idle';
+    statusEl.className = 'run-status idle';
+    varsEl.textContent = '// No output captured yet…';
+    logOutEl.textContent = '// Full prompt + execution log will appear here…';
+    logOutEl.className = 'run-output';
+    logMetaEl.innerHTML = '';
+    return;
+  }
+
+  statusEl.textContent = state.status || 'idle';
+  statusEl.className = `run-status ${(state.status||'idle').toLowerCase()}`;
+  renderOutputVars(varsEl, state.output);
+  logOutEl.textContent = state.logOutput || '// Full prompt + execution log will appear here…';
+  logOutEl.className = `run-output${state.logError ? ' error' : ''}`;
+  logMetaEl.innerHTML = state.logMeta || '';
+}
+
+function escapeHtml(v) {
+  return String(v)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;');
+}
+
+function renderOutputVars(container, rawOutput) {
+  if (!container) return;
+  if (!rawOutput) { container.textContent = '// No output captured yet…'; return; }
+
+  let parsed = null;
+  if (typeof rawOutput === 'object' && rawOutput !== null) parsed = rawOutput;
+  else if (typeof rawOutput === 'string') {
+    try { parsed = JSON.parse(rawOutput); } catch { /* keep raw */ }
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    container.textContent = typeof rawOutput === 'string' ? rawOutput : JSON.stringify(rawOutput, null, 2);
+    return;
+  }
+
+  container.innerHTML = Object.entries(parsed).map(([k, v]) => {
+    const txt = typeof v === 'string' ? v : JSON.stringify(v, null, 2);
+    if (txt.includes('\n')) {
+      return `<details><summary><span class="var-name">${escapeHtml(k)}</span></summary><pre>${escapeHtml(txt)}</pre></details>`;
+    }
+    return `<div class="var-row"><span class="var-name">${escapeHtml(k)}</span><span>${escapeHtml(txt)}</span></div>`;
+  }).join('');
+}
+
+async function executeStep(stepDef, runMode='step_only') {
+  const s = stepDef || currentStep || collectStep();
+  if (!s.ws_name) { toast('Save the step first','err'); return false; }
+
+  const inProps=s.ws_inputs_schema?.properties||{}, inputs={};
+  const inheritedInputs = buildInheritedInputs(s, _currentNodeId);
+  for (const k of Object.keys(inProps)) {
+    const el=document.getElementById(`run-in-${k}`); if(!el) continue;
+    if (!el.value.trim()) continue;
+    let val=el.value; try{ val=JSON.parse(val); }catch{}
+    inputs[k]=val;
+  }
+  const finalInputs = { ...inheritedInputs, ...inputs };
+
+  const statusEl=document.getElementById('run-status');
+  const varsEl=document.getElementById('run-output-vars');
+  const outEl=document.getElementById('run-log-output');
+  const metaEl=document.getElementById('run-log-meta');
+  varsEl.textContent='';
+  outEl.textContent=''; outEl.className='run-output'; metaEl.innerHTML='';
+  statusEl.textContent='running'; statusEl.className='run-status running';
+  saveStepRunState(s, _currentNodeId, { status:'running', output:'', lastInputs: inputs, logOutput:'', logMeta:'', logError:false });
+  _runController = new AbortController();
 
   const tsStart = Date.now();
-  const ts = () => new Date().toISOString().slice(11,23); // HH:MM:SS.mmm
+  const ts = () => new Date().toISOString().slice(11,23);
+  setRunningGraphState(_currentNodeId || s.ws_name, runMode === 'workflow_from_here');
 
-  console.group(`[waiflo] runStep — ${s.ws_name} (${s.ws_type||'prompt'}) @ ${ts()}`);
-  console.log('step def:', s);
-  console.log('inputs:',   inputs);
-
-  // ── API step ──────────────────────────────────────────────────────────────
-  if ((s.ws_type||'').toLowerCase()==='api') {
+  if (['api','webpage'].includes((s.ws_type||'').toLowerCase())) {
     const headers = { 'Content-Type':'application/json' };
     if (token) headers['Authorization'] = `Bearer ${token}`;
     let res;
     try {
-      const r = await fetch('/api/exec/step', { method:'POST', headers, body:JSON.stringify({ step:s, inputs }) });
+      const r = await fetch('/api/exec/step', { method:'POST', headers, signal:_runController.signal, body:JSON.stringify({ step:s, inputs: finalInputs, context:{ workflowName: currentWf?.name, nodeId:_currentNodeId, runMode } }) });
       res = await r.json();
-    } catch(e) { res = { error: e.message }; }
+    } catch(e) {
+      const msg = e.name === 'AbortError' ? 'Execution stopped by user' : e.message;
+      outEl.className='run-output error'; outEl.textContent=msg;
+      statusEl.textContent=e.name === 'AbortError' ? 'stopped' : 'error'; statusEl.className='run-status error';
+      saveStepRunState(s, _currentNodeId, { status:statusEl.textContent, output:'', logOutput:msg, logMeta:'', logError:true });
+      return false;
+    }
     const elapsed = Date.now()-tsStart;
-    btn.disabled=false; btn.textContent='▶ Run Step';
     if (res.error) {
       outEl.className='run-output error'; outEl.textContent=res.error;
       metaEl.innerHTML=`<span style="color:var(--red)">✕ error</span> · ${elapsed}ms · ${ts()}`;
-      console.error('[waiflo] api step error:', res.error);
-      console.groupEnd(); return;
+      statusEl.textContent='error'; statusEl.className='run-status error';
+      saveStepRunState(s, _currentNodeId, { status:'error', logOutput:res.error, logMeta:metaEl.innerHTML, logError:true });
+      return false;
     }
-    outEl.textContent=JSON.stringify(res.result,null,2);
-    metaEl.innerHTML=`✓ api · ${elapsed}ms · ${ts()}`;
-    console.log('[waiflo] api result:', res.result);
-    console.groupEnd(); return;
+    const resultText = JSON.stringify(res.result,null,2);
+    outEl.textContent=resultText;
+    varsEl.textContent=resultText;
+    rememberStepResult(s, _currentNodeId, res.result);
+    metaEl.innerHTML=`✓ ${(s.ws_type||'api').toLowerCase()} · ${elapsed}ms · ${ts()}`;
+    statusEl.textContent='done'; statusEl.className='run-status done';
+    saveStepRunState(s, _currentNodeId, { status:'done', output:resultText, logOutput:resultText, logMeta:metaEl.innerHTML, logError:false });
+    return true;
   }
 
-  // ── Prompt step (SSE) ─────────────────────────────────────────────────────
   try {
     const headers = { 'Content-Type':'application/json' };
     if (token) headers['Authorization'] = `Bearer ${token}`;
-
-    const resp = await fetch('/api/exec/step', { method:'POST', headers, body:JSON.stringify({ step:s, inputs }) });
-
+    const resp = await fetch('/api/exec/step', { method:'POST', headers, signal:_runController.signal, body:JSON.stringify({ step:s, inputs: finalInputs, context:{ workflowName: currentWf?.name, nodeId:_currentNodeId, runMode } }) });
     if (!resp.ok) {
       const errBody = await resp.json().catch(()=>({ error:`HTTP ${resp.status}` }));
       throw new Error(errBody.error || `HTTP ${resp.status}`);
     }
-
     const reader=resp.body.getReader(), decoder=new TextDecoder();
     let buffer='', full='';
-
     while(true) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -801,53 +1438,93 @@ async function runStep() {
         const event = lines.find(l=>l.startsWith('event: '))?.slice(7) || 'message';
         const data  = lines.find(l=>l.startsWith('data: '))?.slice(6);
         if (!data) continue;
-        try {
-          const obj = JSON.parse(data);
-          if (event==='token') {
-            full += obj.text;
+        const obj = JSON.parse(data);
+        if (event==='token') {
+          full += obj.text;
+          outEl.textContent = full;
+          saveStepRunState(s, _currentNodeId, { status:'running', logOutput:full });
+        } else if (event==='done') {
+          const elapsed = Date.now()-tsStart;
+          if (obj.parsed) {
+            const parsedText = JSON.stringify(obj.parsed, null, 2);
+            outEl.textContent = parsedText;
+            varsEl.textContent = parsedText;
+            rememberStepResult(s, _currentNodeId, obj.parsed);
+            metaEl.innerHTML  = `✓ parsed json · ${elapsed}ms · ${ts()}`;
+            statusEl.textContent='done'; statusEl.className='run-status done';
+            saveStepRunState(s, _currentNodeId, { status:'done', output:parsedText, logOutput:parsedText, logMeta:metaEl.innerHTML, logError:false });
+          } else {
             outEl.textContent = full;
-            outEl.scrollTop = outEl.scrollHeight;
-
-          } else if (event==='done') {
-            const elapsed = Date.now()-tsStart;
-            const usagePart = obj.usage
-              ? `in: <span>${obj.usage.input_tokens}</span> · out: <span>${obj.usage.output_tokens}</span> tok · `
-              : '';
-            if (obj.parsed) {
-              outEl.textContent = JSON.stringify(obj.parsed, null, 2);
-              metaEl.innerHTML  = `✓ parsed json · ${usagePart}${elapsed}ms · ${ts()}`;
-              console.log('[waiflo] done — parsed output:', obj.parsed);
-            } else {
-              outEl.textContent = full;
-              metaEl.innerHTML  = `<span style="color:var(--amber)">⚠ json parse failed — raw output</span> · ${usagePart}${elapsed}ms · ${ts()}`;
-              console.warn('[waiflo] done — JSON parse failed. Raw LLM output:', full);
-              console.warn('[waiflo] Expected ws_output_schema:', s.ws_output_schema);
-            }
-            if (obj.usage) console.log('[waiflo] usage:', obj.usage);
-            console.groupEnd();
-
-          } else if (event==='error') {
-            const elapsed = Date.now()-tsStart;
-            outEl.className='run-output error'; outEl.textContent=obj.message;
-            metaEl.innerHTML=`<span style="color:var(--red)">✕ ${ts()}</span> · ${elapsed}ms`;
-            console.error('[waiflo] SSE error:', obj.message);
-            console.groupEnd();
+            varsEl.textContent = full;
+            metaEl.innerHTML = `<span style="color:var(--amber)">⚠ json parse failed — raw output</span> · ${elapsed}ms · ${ts()}`;
+            statusEl.textContent='done_raw'; statusEl.className='run-status done';
+            saveStepRunState(s, _currentNodeId, { status:'done_raw', output:full, logOutput:full, logMeta:metaEl.innerHTML, logError:false });
           }
-        } catch(parseErr) {
-          console.warn('[waiflo] SSE frame parse error:', parseErr, '— raw:', data);
+        } else if (event==='error') {
+          const elapsed = Date.now()-tsStart;
+          outEl.className='run-output error'; outEl.textContent=obj.message;
+          metaEl.innerHTML=`<span style="color:var(--red)">✕ ${ts()}</span> · ${elapsed}ms`;
+          statusEl.textContent='error'; statusEl.className='run-status error';
+          saveStepRunState(s, _currentNodeId, { status:'error', output:'', logOutput:obj.message, logMeta:metaEl.innerHTML, logError:true });
+          return false;
         }
       }
     }
   } catch(e) {
     const elapsed = Date.now()-tsStart;
-    outEl.className='run-output error'; outEl.textContent=e.message;
-    metaEl.innerHTML=`<span style="color:var(--red)">✕ fetch error · ${ts()}</span> · ${elapsed}ms`;
-    console.error('[waiflo] fetch/stream error:', e);
-    console.groupEnd();
+    const aborted = e.name === 'AbortError';
+    const msg = aborted ? 'Execution stopped by user' : e.message;
+    outEl.className='run-output error'; outEl.textContent=msg;
+    metaEl.innerHTML=`<span style="color:var(--red)">✕ ${ts()}</span> · ${elapsed}ms`;
+    statusEl.textContent=aborted ? 'stopped' : 'error'; statusEl.className='run-status error';
+    saveStepRunState(s, _currentNodeId, { status:aborted ? 'stopped' : 'error', output:'', logOutput:msg, logMeta:metaEl.innerHTML, logError:true });
+    return false;
   }
-  btn.disabled=false; btn.textContent='▶ Run Step';
+  return true;
 }
 
+async function runStepOnly() {
+  if (_isExecuting) return stopExecution();
+  if (!currentStep) return;
+  setExecutionUiState(true);
+  try { await executeStep(currentStep, 'step_only'); }
+  finally { _runController = null; setExecutionUiState(false); clearRunningGraphState(); }
+}
+
+async function runWorkflowFromHere() {
+  if (_isExecuting) return stopExecution();
+  if (!currentStep || !_currentNodeId) return;
+  setExecutionUiState(true);
+  try {
+    clearWorkflowExecLogs();
+    clearRunningGraphState();
+    appendWorkflowExecLog(`${wfTs()} ## Workflow ## Start from ${_currentNodeId}`);
+    const order = getDownstreamExecutionOrder(_currentNodeId);
+    const wf = (currentWf?.data?.workflows || []).find(w => w.wf_nodes?.length);
+    for (const nodeId of order) {
+      if (!_isExecuting) break;
+      const node = findWorkflowNode(wf, nodeId);
+      if (!node) continue;
+      const step = (currentWf.data.steps || []).find(st => st.ws_name === node.ws_ref);
+      if (!step) continue;
+      currentStep = step;
+      _currentNodeId = nodeId;
+      appendWorkflowExecLog(`${wfTs()} ## ${step.ws_name} ## Start`);
+      const inVars = buildInheritedInputs(step, nodeId);
+      const inTxt = Object.entries(inVars).map(([k,v]) => `${k}=${truncLog(v)}`).join(', ');
+      appendWorkflowExecLog(`${wfTs()} ## ${step.ws_name} ## inputs : ${inTxt || 'none'}`);
+      const ok = await executeStep(step, 'workflow_from_here');
+      const st = getStepRunState(step, nodeId) || {};
+      appendWorkflowExecLog(`${wfTs()} ## ${step.ws_name} ## End, status ${st.status || (ok?'OK':'ERR')}, output=${truncLog(st.output || '')}`);
+      if (!ok) break;
+    }
+    appendWorkflowExecLog(`${wfTs()} ## Workflow ## End`);
+  } finally {
+    _runController = null;
+    setExecutionUiState(false);
+    clearRunningGraphState();
+  }
+}
 
 // ── SETTINGS ─────────────────────────────────────────────────────
 const PROVIDER_KEY_PLACEHOLDERS = {
@@ -882,11 +1559,32 @@ function openSettings() {
       <input class="settings-input" id="s-newpw" type="password" placeholder="New password (min. 8 chars)">
       <button class="settings-btn" onclick="changePassword()" style="margin-top:8px">Change</button>
       <div id="s-pw-msg"></div>
+    </div>
+    <div class="settings-section">
+      <div class="settings-title">Language</div>
+      <div class="settings-row">
+        <select class="settings-input" id="s-lang" onchange="setLanguage(this.value)">
+          <option value="en">English</option>
+          <option value="fr">Français</option>
+        </select>
+      </div>
     </div>`,
     [{ label:'Close', action:closeModal }]
   );
   // Load provider key status from /me
   loadProviderKeyStatus();
+  const qpLang = new URLSearchParams(window.location.search).get('lang');
+  const cookieLang = document.cookie.split('; ').find(v=>v.startsWith('lang='))?.split('=')[1];
+  const currentLang = qpLang || cookieLang || 'en';
+  const sLang = document.getElementById('s-lang');
+  if (sLang) sLang.value = currentLang;
+}
+
+function setLanguage(lang) {
+  if (!['fr','en'].includes(lang)) return;
+  const u = new URL(window.location.href);
+  u.searchParams.set('lang', lang);
+  window.location.href = u.toString();
 }
 
 function onSettingsProviderChange() {
@@ -995,11 +1693,13 @@ Object.assign(window,{
   openNewStepEditor, openStepEditor,
   applyStepEdit, deleteCurrentStep, closeEditor, switchEditorTab,
   addInputField, addOutputField, onTypeChange,
-  runStep, closeModal, showSignupCTA,
+  toggleTechSection, toggleEditorMaximize,
+  runStepOnly, runWorkflowFromHere, closeModal, showSignupCTA,
+  confirmEdgeDelete, toggleWorkflowExecLogs, toggleRightPanel,
   deleteWorkflow, copyWfJson, applyWfJson, closeWfJson, onWfJsonInput, copyWfJsonByName,
   openJsonFullscreen, closeJsonFullscreen, jfsCopy, jfsApply, jfsValidate,
   saveApiKey, deleteApiKey, changePassword,
-  onProviderChange, onSettingsProviderChange
+  onProviderChange, onSettingsProviderChange, setLanguage
 });
 
 // ── KEYBOARD ────────────────────────────────────────────────────
@@ -1025,6 +1725,9 @@ window.addEventListener('load', async () => {
     const cfg = await fetch('/json_schemas/providers.json').then(r=>r.json());
     _providersConfig = cfg;
   } catch { /* fallback sur PROVIDER_MODEL_HINTS */ }
+
+  initWorkflowLogsPanel();
+  setRightPanelVisible(false);
 
   // Mount React Flow
   const root = createRoot(document.getElementById('rf-container'));

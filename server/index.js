@@ -58,6 +58,8 @@ app.use(express.text({ limit: '10mb' }));
 
 // Static assets (CSS, JS, images) — served before page routes
 app.use(express.static(path.join(__dirname, '../public')));
+// JSON schemas (providers catalogue, workflow definitions) — served from root json_schemas/
+app.use('/json_schemas', express.static(path.join(__dirname, '../json_schemas')));
 
 // ── Language detection ────────────────────────────────────────────
 app.use(langMiddleware);
