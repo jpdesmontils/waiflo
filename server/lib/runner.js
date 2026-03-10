@@ -132,26 +132,49 @@ export async function runPromptStep(step, inputs, user, res) {
   }
 }
 
+function renderTemplateString(template, vars) {
+  let out = String(template ?? '');
+  for (const [k, v] of Object.entries(vars || {})) {
+    const val = typeof v === 'object' ? JSON.stringify(v, null, 2) : String(v);
+    out = out.replaceAll(`{{{${k}}}}`, val);
+    out = out.replaceAll(`{{${k}}}`, val);
+  }
+  return out;
+}
+
+function renderTemplateDeep(value, vars) {
+  if (typeof value === 'string') return renderTemplateString(value, vars);
+  if (Array.isArray(value)) return value.map(v => renderTemplateDeep(v, vars));
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, renderTemplateDeep(v, vars)]));
+  }
+  return value;
+}
+
 /**
  * Execute an API step (HTTP GET/POST/etc).
  * Returns { results, total, size } or raw response body.
  */
 export async function runApiStep(step, inputs) {
   const apiConfig = step.ws_api || {};
-  let url = apiConfig.url || '';
+  let url = renderTemplateString(apiConfig.url || '', inputs);
 
-  // Substitute {{input}} variables in URL
-  for (const [k, v] of Object.entries(inputs)) {
-    url = url.replaceAll(`{{${k}}}`, encodeURI(String(v)));
+  const renderedQuery = renderTemplateDeep(apiConfig.query || {}, inputs);
+  const queryEntries = Object.entries(renderedQuery || {}).filter(([, v]) => v !== undefined && v !== null && String(v) !== '');
+  if (queryEntries.length) {
+    const qs = new URLSearchParams();
+    queryEntries.forEach(([k, v]) => qs.set(k, typeof v === 'string' ? v : JSON.stringify(v)));
+    url += (url.includes('?') ? '&' : '?') + qs.toString();
   }
 
   const method  = (apiConfig.method || 'GET').toUpperCase();
-  const headers = { 'Accept': 'application/json', ...(apiConfig.headers || {}) };
+  const headers = { 'Accept': 'application/json', ...renderTemplateDeep(apiConfig.headers || {}, inputs) };
 
   const fetchOpts = { method, headers };
-  if (apiConfig.body && method !== 'GET') {
-    fetchOpts.body = JSON.stringify(apiConfig.body);
-    headers['Content-Type'] = 'application/json';
+  if (apiConfig.body !== undefined && method !== 'GET') {
+    const renderedBody = renderTemplateDeep(apiConfig.body, inputs);
+    fetchOpts.body = JSON.stringify(renderedBody);
+    headers['Content-Type'] = headers['Content-Type'] || 'application/json';
   }
 
   const response = await fetch(url, fetchOpts);
@@ -164,4 +187,101 @@ export async function runApiStep(step, inputs) {
     return response.json();
   }
   return { raw: await response.text() };
+}
+
+async function runWebpageHttpStep(webpageConfig, inputs) {
+  const url = renderTemplateString(webpageConfig.url || '', inputs);
+  const headers = {
+    Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    'Accept-Language': 'fr-FR,fr;q=0.9,en;q=0.8',
+    'User-Agent': webpageConfig.userAgent || 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+    ...renderTemplateDeep(webpageConfig.headers || {}, inputs)
+  };
+
+  const response = await fetch(url, { method: 'GET', headers, redirect: 'follow' });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status} — ${response.statusText} — ${url}`);
+  }
+
+  return {
+    url,
+    finalUrl: response.url,
+    status: response.status,
+    contentType: response.headers.get('content-type') || '',
+    html: await response.text(),
+    meta: { mode: 'http' }
+  };
+}
+
+async function runWebpageBrowserStep(webpageConfig, inputs) {
+  let chromium = null;
+  try {
+    ({ chromium } = await import('playwright'));
+  } catch {
+    throw new Error('Playwright is required for ws_webpage.mode="browser". Install dependency: npm i playwright');
+  }
+
+  const url = renderTemplateString(webpageConfig.url || '', inputs);
+  const headers = renderTemplateDeep(webpageConfig.headers || {}, inputs);
+  const timeout = Number(webpageConfig.timeoutMs || 30000);
+  const waitUntil = webpageConfig.waitUntil || 'networkidle';
+  const waitForSelector = webpageConfig.waitForSelector ? renderTemplateString(webpageConfig.waitForSelector, inputs) : '';
+  const viewport = webpageConfig.viewport && typeof webpageConfig.viewport === 'object'
+    ? { width: Number(webpageConfig.viewport.width || 1366), height: Number(webpageConfig.viewport.height || 768) }
+    : { width: 1366, height: 768 };
+
+  let browser;
+  const tsStart = Date.now();
+  try {
+    browser = await chromium.launch({ headless: true });
+    const context = await browser.newContext({
+      userAgent: webpageConfig.userAgent || undefined,
+      viewport,
+      extraHTTPHeaders: headers
+    });
+
+    const page = await context.newPage();
+    const response = await page.goto(url, { waitUntil, timeout });
+
+    if (waitForSelector) {
+      await page.waitForSelector(waitForSelector, { timeout });
+    }
+
+    const html = await page.content();
+    const title = await page.title();
+
+    await context.close();
+
+    return {
+      url,
+      finalUrl: page.url(),
+      status: response?.status?.() || 200,
+      contentType: response?.headers?.()['content-type'] || 'text/html',
+      html,
+      title,
+      meta: {
+        mode: 'browser',
+        waitUntil,
+        waitForSelector: waitForSelector || null,
+        timingMs: Date.now() - tsStart
+      }
+    };
+  } finally {
+    if (browser) await browser.close().catch(() => {});
+  }
+}
+
+/**
+ * Execute a webpage step.
+ * mode=http (default): simple fetch
+ * mode=browser: Playwright headless render
+ */
+export async function runWebpageStep(step, inputs) {
+  const webpageConfig = step.ws_webpage || step.ws_api || {};
+  const mode = (webpageConfig.mode || 'http').toLowerCase();
+
+  if (mode === 'browser') {
+    return runWebpageBrowserStep(webpageConfig, inputs || {});
+  }
+  return runWebpageHttpStep(webpageConfig, inputs || {});
 }
