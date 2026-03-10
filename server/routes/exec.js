@@ -3,7 +3,7 @@ import jwt        from 'jsonwebtoken';
 import rateLimit  from 'express-rate-limit';
 import { authMiddleware } from './auth.js';
 import { getUser } from '../lib/users.js';
-import { runPromptStep, runApiStep, runWebpageStep, runMcpStep } from '../lib/runner.js';
+import { runPromptStep, runApiStep, runWebpageStep } from '../lib/runner.js';
 import { PROVIDER_META } from '../lib/providers/index.js';
 import { getLatestStepRunRecord, saveStepRunRecord } from '../lib/runStore.js';
 
@@ -79,14 +79,12 @@ router.post('/step', execLimiter, async (req, res) => {
         });
       }
 
-    } else if (wsType === 'api' || wsType === 'webpage' || wsType === 'mcp') {
+    } else if (wsType === 'api' || wsType === 'webpage') {
       // Synchronous HTTP
       try {
         const result = wsType === 'webpage'
           ? await runWebpageStep(step, inputs || {})
-          : wsType === 'mcp'
-            ? await runMcpStep(step, inputs || {})
-            : await runApiStep(step, inputs || {});
+          : await runApiStep(step, inputs || {});
         if (req.user?.userId) {
           await saveStepRunRecord(req.user.userId, workflowName, step.ws_name, {
             workflowName,

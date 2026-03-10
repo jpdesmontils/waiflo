@@ -1,6 +1,5 @@
 import { decrypt } from './crypto.js';
 import { createProvider, PROVIDER_META } from './providers/index.js';
-import { getMcpToolExecutor } from './mcpRuntime.js';
 
 /**
  * Resolve the API key for a given provider from user record or env fallback.
@@ -285,34 +284,4 @@ export async function runWebpageStep(step, inputs) {
     return runWebpageBrowserStep(webpageConfig, inputs || {});
   }
   return runWebpageHttpStep(webpageConfig, inputs || {});
-}
-
-
-/**
- * Execute an MCP tool step.
- */
-export async function runMcpStep(step, inputs) {
-  const mcpConfig = step.ws_mcp || {};
-  const server = (mcpConfig.server || '').trim();
-  const tool = (mcpConfig.tool || '').trim();
-
-  if (!server) throw new Error('MCP server is required (step.ws_mcp.server)');
-  if (!tool) throw new Error('MCP tool is required (step.ws_mcp.tool)');
-
-  const rawInput = mcpConfig.input && typeof mcpConfig.input === 'object'
-    ? renderTemplateDeep(mcpConfig.input, inputs || {})
-    : (inputs || {});
-
-  const executor = await getMcpToolExecutor();
-  const response = await executor.executeTool({
-    server,
-    tool,
-    input: rawInput
-  });
-
-  if (!response?.ok) {
-    throw new Error(response?.message || response?.error_code || 'MCP tool execution failed');
-  }
-
-  return response.data;
 }
