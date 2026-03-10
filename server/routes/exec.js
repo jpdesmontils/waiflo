@@ -6,7 +6,6 @@ import { getUser } from '../lib/users.js';
 import { runPromptStep, runApiStep, runWebpageStep, runMcpStep } from '../lib/runner.js';
 import { PROVIDER_META } from '../lib/providers/index.js';
 import { getLatestStepRunRecord, saveStepRunRecord } from '../lib/runStore.js';
-import { decrypt } from '../lib/crypto.js';
 
 const router = express.Router();
 
@@ -45,14 +44,6 @@ router.post('/step', execLimiter, async (req, res) => {
     if (req.user?.userId) {
       user = await getUser(req.user.userId);
     }
-    if (user?.mcpSettings?.apiKeys) {
-      const secrets = {};
-      for (const [k, v] of Object.entries(user.mcpSettings.apiKeys || {})) {
-        try { secrets[k] = await decrypt(v); } catch { /* ignore malformed secret */ }
-      }
-      user.mcpSecrets = secrets;
-    }
-
     if (!user) {
       // Guest: only prompt steps require an LLM API key.
       if (wsType === 'prompt') {
@@ -88,13 +79,13 @@ router.post('/step', execLimiter, async (req, res) => {
         });
       }
 
-    } else if (wsType === 'api' || wsType === 'webpage' || wsType === 'mcp' || wsType === 'tool') {
+    } else if (wsType === 'api' || wsType === 'webpage' || wsType === 'mcp') {
       // Synchronous HTTP
       try {
         const result = wsType === 'webpage'
           ? await runWebpageStep(step, inputs || {})
-          : wsType === 'mcp' || wsType === 'tool'
-            ? await runMcpStep(step, inputs || {}, user)
+          : wsType === 'mcp'
+            ? await runMcpStep(step, inputs || {})
             : await runApiStep(step, inputs || {});
         if (req.user?.userId) {
           await saveStepRunRecord(req.user.userId, workflowName, step.ws_name, {
