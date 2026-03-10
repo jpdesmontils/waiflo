@@ -12,7 +12,7 @@ import {
 import dagre from 'dagre';
 
 // ── CONSTANTS ────────────────────────────────────────────────────
-const FIELD_TYPES = ['string','number','integer','boolean','object','array'];
+const FIELD_TYPES = ['string','number','integer','boolean','object','array','image_url'];
 const NODE_W = 280, NODE_H = 164;
 const TYPE_COLORS = {
   prompt:'#f59e0b', api:'#2dd4bf', transform:'#60a5fa', tool:'#a78bfa', script:'#fb923c'

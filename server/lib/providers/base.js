@@ -22,7 +22,7 @@ export class cLLM {
    * @param {number} [params.maxTokens]
    * @yields {{ text: string }}
    */
-  async *stream({ model, system, userPrompt, temperature, maxTokens }) { // eslint-disable-line
+  async *stream({ model, system, userPrompt, temperature, maxTokens, imageUrls }) { // eslint-disable-line
     throw new Error(`${this.constructor.name}.stream() not implemented`);
   }
 
