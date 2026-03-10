@@ -984,12 +984,12 @@ function buildInheritedInputs(step, nodeId) {
   const wf = (currentWf.data.workflows || []).find(w => w.wf_nodes?.length);
   if (!wf) return {};
 
-  const node = wf.wf_nodes.find(n => n.step_id === nodeId || n.ws_ref === nodeId);
+  const node = findWorkflowNode(wf, nodeId);
   if (!node) return {};
 
   const inherited = {};
   for (const depId of (node.depends_on || [])) {
-    const depNode = wf.wf_nodes.find(n => n.step_id === depId);
+    const depNode = findWorkflowNode(wf, depId);
     if (!depNode) continue;
     const depOutput = _lastStepRuns[depNode.step_id] || _lastStepRuns[depNode.ws_ref];
     if (!depOutput || typeof depOutput !== 'object') continue;
@@ -1009,12 +1009,12 @@ function getAvailableConnectedInputs(step, nodeId) {
   const wf = (currentWf.data.workflows || []).find(w => w.wf_nodes?.length);
   if (!wf) return [];
 
-  const node = wf.wf_nodes.find(n => n.step_id === nodeId || n.ws_ref === nodeId);
+  const node = findWorkflowNode(wf, nodeId);
   if (!node) return [];
 
   const names = new Set();
   for (const depId of (node.depends_on || [])) {
-    const depNode = wf.wf_nodes.find(n => n.step_id === depId);
+    const depNode = findWorkflowNode(wf, depId);
     if (!depNode) continue;
     const depStep = (currentWf.data.steps || []).find(s => s.ws_name === depNode.ws_ref);
     const outProps = depStep?.ws_output_schema?.properties || {};
@@ -1079,16 +1079,27 @@ function stopExecution() {
   if (_runController) _runController.abort();
 }
 
+function findWorkflowNode(wf, ref) {
+  if (!wf || !ref) return null;
+  return (wf.wf_nodes || []).find(n => n.step_id === ref || n.ws_ref === ref) || null;
+}
+
 function getDownstreamExecutionOrder(startNodeId) {
   const wf = (currentWf?.data?.workflows || []).find(w => w.wf_nodes?.length);
   if (!wf) return [];
   const nodes = wf.wf_nodes || [];
   const byId = new Map(nodes.map(n => [n.step_id, n]));
   const children = new Map(nodes.map(n => [n.step_id, []]));
-  nodes.forEach(n => (n.depends_on || []).forEach(dep => { if (children.has(dep)) children.get(dep).push(n.step_id); }));
+  nodes.forEach(n => (n.depends_on || []).forEach(dep => {
+    const depNode = findWorkflowNode(wf, dep);
+    if (depNode && children.has(depNode.step_id)) children.get(depNode.step_id).push(n.step_id);
+  }));
+
+  const startNode = findWorkflowNode(wf, startNodeId);
+  if (!startNode) return [];
 
   const included = new Set();
-  const stack = [startNodeId];
+  const stack = [startNode.step_id];
   while (stack.length) {
     const id = stack.pop();
     if (!id || included.has(id)) continue;
@@ -1100,7 +1111,10 @@ function getDownstreamExecutionOrder(startNodeId) {
   included.forEach(id => indeg.set(id, 0));
   included.forEach(id => {
     const node = byId.get(id);
-    (node?.depends_on || []).forEach(dep => { if (included.has(dep)) indeg.set(id, (indeg.get(id) || 0) + 1); });
+    (node?.depends_on || []).forEach(dep => {
+      const depNode = findWorkflowNode(wf, dep);
+      if (depNode && included.has(depNode.step_id)) indeg.set(id, (indeg.get(id) || 0) + 1);
+    });
   });
   const q = [...included].filter(id => indeg.get(id) === 0);
   const order = [];
@@ -1335,7 +1349,8 @@ async function runWorkflowFromHere() {
     const wf = (currentWf?.data?.workflows || []).find(w => w.wf_nodes?.length);
     for (const nodeId of order) {
       if (!_isExecuting) break;
-      const node = wf.wf_nodes.find(n => n.step_id === nodeId);
+      const node = findWorkflowNode(wf, nodeId);
+      if (!node) continue;
       const step = (currentWf.data.steps || []).find(st => st.ws_name === node.ws_ref);
       if (!step) continue;
       currentStep = step;
