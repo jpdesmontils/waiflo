@@ -5,16 +5,8 @@ import MCPClient from '../../mcp/mcp_client.js';
 import MCPToolRuntime from '../../mcp/mcp_runtime.js';
 import ToolExecutor from '../../tools/tool_executor.js';
 import BaseMCPAdapter from '../../adapters/base_adapter.js';
-import GoogleMapsAdapter from '../../adapters/google_maps_adapter.js';
-import MapboxAdapter from '../../adapters/mapbox_adapter.js';
 
 let _defaultExecutor = null;
-
-export const MCP_ADAPTERS_META = [
-  { id: 'default', className: 'BaseMCPAdapter', description: 'Pass-through adapter' },
-  { id: 'google_maps', className: 'GoogleMapsAdapter', description: 'Google Maps normalization' },
-  { id: 'mapbox', className: 'MapboxAdapter', description: 'Mapbox normalization' }
-];
 
 async function loadRegistryConfig() {
   const inlineJson = process.env.MCP_SERVERS_JSON?.trim();
@@ -28,14 +20,6 @@ async function loadRegistryConfig() {
     if (err.code === 'ENOENT') return { mcp_servers: {} };
     throw err;
   }
-}
-
-function buildAdapters() {
-  return {
-    google_maps: new GoogleMapsAdapter(),
-    mapbox: new MapboxAdapter(),
-    default: new BaseMCPAdapter()
-  };
 }
 
 function resolvePlaceholdersDeep(value, secretMap = {}) {
@@ -57,7 +41,7 @@ function buildExecutor(registryConfig, secretMap) {
   const resolved = resolvePlaceholdersDeep(registryConfig || { mcp_servers: {} }, secretMap || {});
   const registry = new MCPRegistry(resolved);
   const client = new MCPClient({ registry });
-  const runtime = new MCPToolRuntime({ registry, client, adapters: buildAdapters() });
+  const runtime = new MCPToolRuntime({ registry, client, adapter: new BaseMCPAdapter() });
   return new ToolExecutor({ runtime });
 }
 

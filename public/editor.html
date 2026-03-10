@@ -192,26 +192,16 @@
 
           <div id="mcp-section" style="display:none">
             <div class="form-section">
-              <div class="form-label">Adapter MCP</div>
-              <select class="form-select" id="f-mcp-adapter"></select>
-              <div class="form-hint" id="mcp-adapters-hint">Adapters disponibles: —</div>
-            </div>
-            <div class="form-section">
               <div class="form-label">MCP server</div>
-              <input class="form-input" id="f-mcp-server" placeholder="google_maps">
-              <div class="form-hint">ID défini dans la registry MCP (ex: mcp_servers.google_maps)</div>
+              <select class="form-select" id="f-mcp-server" onchange="onStepMcpServerChange()"></select>
+              <div class="form-hint">Sélectionne un serveur MCP configuré dans Settings → Configuration MCP.</div>
             </div>
             <div class="form-section">
               <div class="form-label">Tool name</div>
               <div class="form-row">
-                <input class="form-input" list="mcp-tools-list" id="f-mcp-tool" placeholder="maps.search_places">
-                <button class="settings-btn" type="button" onclick="discoverMcpTools()">Discover</button>
+                <select class="form-select" id="f-mcp-tool"></select>
+                <button class="settings-btn" type="button" onclick="discoverMcpTools()">Refresh tools</button>
               </div>
-              <datalist id="mcp-tools-list"></datalist>
-            </div>
-            <div class="form-section">
-              <div class="form-label">Tools disponibles (découverte)</div>
-              <textarea class="form-textarea" id="f-mcp-tools-preview" placeholder="Lance Discover pour charger les tools MCP" readonly></textarea>
             </div>
             <div class="form-section">
               <div class="form-label">Tool input override (JSON, optionnel)</div>

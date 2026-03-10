@@ -176,3 +176,9 @@ All `/api/workflows/*` and `/api/exec/*` routes require `Authorization: Bearer <
 ## License
 
 MIT
+
+---
+
+## MCP docs (FR)
+
+- Voir `docs/mcp-fr.md` pour une explication détaillée de la logique MCP, du paramétrage registry, et des exemples d'étapes Mapbox / Google Maps.

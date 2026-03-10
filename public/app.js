@@ -75,10 +75,9 @@ let _graphVersion  = 0;
 let _jfsSource     = null;
 let _providersConfig  = {};   // loaded from /json_schemas/providers.json
 let _providerKeyStatus = {};  // loaded from /api/auth/me { anthropic: true, ... }
-let _mcpAdapters = [];
 let _mcpApiKeyStatus = {};
 let _mcpRegistryDraft = { mcp_servers: {} };
-let _mcpDiscoveredTools = [];
+let _mcpToolsCatalog = {};
 let _lastStepRuns = {};       // keyed by workflow node id, stores latest parsed output
 let _stepRunUiState = {};     // keyed by workflow node id, stores log/meta/status/output ui state
 let _currentNodeId = null;    // currently edited node id (wf node id or step name)
@@ -815,11 +814,9 @@ function populateEditor(s) {
   document.getElementById('f-api-query').value   = formatJsonForEditor(s.ws_api?.query);
   document.getElementById('f-api-body').value    = formatJsonForEditor(s.ws_api?.body);
   document.getElementById('f-webpage-mode').value = s.ws_webpage?.mode || 'http';
-  document.getElementById('f-mcp-server').value = s.ws_mcp?.server || '';
-  document.getElementById('f-mcp-tool').value = s.ws_mcp?.tool || '';
+  renderMcpServerOptions(s.ws_mcp?.server || '');
+  renderMcpToolOptions(s.ws_mcp?.server || '', s.ws_mcp?.tool || '');
   document.getElementById('f-mcp-input').value = formatJsonForEditor(s.ws_mcp?.input);
-  renderMcpAdapters(_mcpAdapters);
-  if (document.getElementById('f-mcp-adapter')) document.getElementById('f-mcp-adapter').value = s.ws_mcp?.adapter || 'default';
   document.getElementById('f-webpage-browser-options').value = formatJsonForEditor({
     waitUntil: s.ws_webpage?.waitUntil,
     timeoutMs: s.ws_webpage?.timeoutMs,
@@ -964,7 +961,6 @@ function collectStep() {
     if ([toolInput].includes(null)) return null;
 
     const mcp = {
-      adapter: document.getElementById('f-mcp-adapter')?.value || 'default',
       server: document.getElementById('f-mcp-server').value.trim(),
       tool: document.getElementById('f-mcp-tool').value.trim()
     };
@@ -1661,60 +1657,199 @@ function switchSettingsTab(tab) {
   });
 }
 
-function renderMcpAdapters(adapters = []) {
-  const select = document.getElementById('f-mcp-adapter');
-  const hint = document.getElementById('mcp-adapters-hint');
+function mcpServerIds() {
+  return Object.keys(_mcpRegistryDraft?.mcp_servers || {});
+}
+
+function renderMcpServerOptions(selected = '') {
+  const select = document.getElementById('f-mcp-server');
   if (!select) return;
-  const list = Array.isArray(adapters) && adapters.length ? adapters : [{ id: 'default', className: 'BaseMCPAdapter' }];
-  select.innerHTML = list.map(a => `<option value="${a.id}">${a.id} (${a.className})</option>`).join('');
-  if (hint) hint.textContent = `Adapters disponibles: ${list.map(a => a.id).join(', ')}`;
+  const ids = mcpServerIds();
+  const current = selected || select.value || ids[0] || '';
+  select.innerHTML = ['<option value="">— Select MCP server —</option>']
+    .concat(ids.map(id => `<option value="${id}">${id}</option>`))
+    .join('');
+  select.value = current;
+}
+
+function renderMcpToolOptions(serverId, selected = '') {
+  const select = document.getElementById('f-mcp-tool');
+  if (!select) return;
+  const tools = Array.isArray(_mcpToolsCatalog?.[serverId]) ? _mcpToolsCatalog[serverId] : [];
+  const names = tools.map(t => t.name).filter(Boolean);
+  const current = selected || select.value || names[0] || '';
+  select.innerHTML = ['<option value="">— Select tool —</option>']
+    .concat(names.map(name => `<option value="${name}">${name}</option>`))
+    .join('');
+  if (current) select.value = current;
+}
+
+function onStepMcpServerChange() {
+  const server = document.getElementById('f-mcp-server')?.value?.trim() || '';
+  renderMcpToolOptions(server, '');
 }
 
 async function discoverMcpTools() {
   const server = document.getElementById('f-mcp-server')?.value?.trim();
-  const datalist = document.getElementById('mcp-tools-list');
-  if (!server || !datalist) return toast('Saisis un MCP server pour découvrir les tools','err');
+  if (!server) return toast('Saisis un MCP server pour découvrir les tools','err');
 
-  const res = await api(`/api/mcp/tools?server=${encodeURIComponent(server)}`,'GET');
-  if (res.error || !res.ok) return toast(res.error || 'Impossible de récupérer les tools MCP','err');
+  const res = await api('/api/mcp/validate','POST',{ server });
+  if (res.error || !res.ok) return toast(res.error || 'Impossible de valider le serveur MCP','err');
 
-  _mcpDiscoveredTools = res.data || [];
-  datalist.innerHTML = _mcpDiscoveredTools.map(t => `<option value=\"${t.name}\">${t.description || ''}</option>`).join('');
-  const preview = document.getElementById('f-mcp-tools-preview');
-  if (preview) preview.value = _mcpDiscoveredTools.map(t => `${t.name} — ${t.description || ''}`).join('\n');
-  toast(`${_mcpDiscoveredTools.length} tool(s) MCP détecté(s)`,'ok');
+  _mcpToolsCatalog[server] = res.tools || [];
+  renderMcpToolOptions(server, '');
+  toast(`${(res.tools || []).length} tool(s) MCP détecté(s)`,'ok');
+}
+
+function getMcpServerDraftRows() {
+  return Array.from(document.querySelectorAll('[data-mcp-server-row]')).map(row => ({
+    id: row.querySelector('[data-field="id"]')?.value?.trim(),
+    transport: row.querySelector('[data-field="transport"]')?.value?.trim() || 'http',
+    url: row.querySelector('[data-field="url"]')?.value?.trim(),
+    apiKeyName: row.querySelector('[data-field="apiKeyName"]')?.value?.trim(),
+    headerName: row.querySelector('[data-field="headerName"]')?.value?.trim() || 'Authorization',
+    timeoutMs: Number(row.querySelector('[data-field="timeoutMs"]')?.value || 30000)
+  }));
+}
+
+function registryFromRows(rows = []) {
+  const mcp_servers = {};
+  for (const row of rows) {
+    if (!row.id || !row.url) continue;
+    mcp_servers[row.id] = {
+      transport: row.transport || 'http',
+      url: row.url,
+      timeoutMs: Number.isFinite(row.timeoutMs) ? row.timeoutMs : 30000,
+      auth: row.apiKeyName ? {
+        type: 'bearer',
+        tokenEnvVar: row.apiKeyName,
+        headerName: row.headerName || 'Authorization'
+      } : undefined
+    };
+  }
+  return { mcp_servers };
+}
+
+function serverRowsFromRegistry(registry = { mcp_servers: {} }) {
+  return Object.entries(registry.mcp_servers || {}).map(([id, cfg]) => ({
+    id,
+    transport: cfg.transport || 'http',
+    url: cfg.url || '',
+    apiKeyName: cfg.auth?.tokenEnvVar || '',
+    headerName: cfg.auth?.headerName || 'Authorization',
+    timeoutMs: Number(cfg.timeoutMs || 30000)
+  }));
+}
+
+function renderMcpServerEditor() {
+  const host = document.getElementById('s-mcp-servers-list');
+  if (!host) return;
+  const rows = serverRowsFromRegistry(_mcpRegistryDraft);
+  if (!rows.length) rows.push({ id: '', transport: 'http', url: '', apiKeyName: '', headerName: 'Authorization', timeoutMs: 30000 });
+  host.innerHTML = rows.map((row, idx) => {
+    const connKey = row.id || `row-${idx}`;
+    return `
+      <div class="form-section" data-mcp-server-row style="border:1px solid var(--border);padding:10px;border-radius:8px;margin-bottom:8px;">
+        <div class="settings-row" style="margin-bottom:6px">
+          <input class="settings-input" data-field="id" placeholder="server_id" value="${row.id || ''}">
+          <select class="settings-input" data-field="transport" style="max-width:120px;flex:none">
+            <option value="http" ${row.transport === 'http' ? 'selected' : ''}>http</option>
+            <option value="websocket" ${row.transport === 'websocket' ? 'selected' : ''}>websocket</option>
+          </select>
+          <input class="settings-input" data-field="timeoutMs" type="number" min="1000" step="1000" value="${row.timeoutMs || 30000}" style="max-width:120px;flex:none">
+          <button class="settings-btn danger" type="button" onclick="removeMcpServerRow(${idx})" style="max-width:42px;flex:none">✕</button>
+        </div>
+        <input class="settings-input" data-field="url" placeholder="https://your-mcp-host/mcp" value="${row.url || ''}" style="margin-bottom:6px">
+        <div class="settings-row" style="margin-bottom:6px">
+          <input class="settings-input" data-field="apiKeyName" placeholder="MCP key var (GOOGLE_MAPS_API_KEY)" value="${row.apiKeyName || ''}">
+          <input class="settings-input" data-field="headerName" placeholder="Authorization" value="${row.headerName || 'Authorization'}">
+        </div>
+        <div class="settings-row">
+          <button class="settings-btn" type="button" onclick="validateMcpServerConnection('${connKey}')">Valider connexion</button>
+          <span id="mcp-conn-${connKey}" class="settings-desc"></span>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function removeMcpServerRow(index) {
+  const rows = getMcpServerDraftRows();
+  rows.splice(index, 1);
+  _mcpRegistryDraft = registryFromRows(rows);
+  renderMcpServerEditor();
+}
+
+function addMcpServerRow() {
+  const rows = getMcpServerDraftRows();
+  rows.push({ id: '', transport: 'http', url: '', apiKeyName: '', headerName: 'Authorization', timeoutMs: 30000 });
+  _mcpRegistryDraft = registryFromRows(rows);
+  renderMcpServerEditor();
 }
 
 async function loadMcpConfig() {
   const res = await api('/api/mcp/config','GET');
   if (res.error || !res.ok) return;
-  _mcpAdapters = res.adapters || [];
   _mcpApiKeyStatus = res.apiKeyStatus || {};
   _mcpRegistryDraft = res.registry || { mcp_servers: {} };
+  _mcpToolsCatalog = res.toolsCatalog || {};
 
-  const ta = document.getElementById('s-mcp-registry');
-  if (ta) ta.value = JSON.stringify(_mcpRegistryDraft, null, 2);
+  renderMcpServerEditor();
   const status = document.getElementById('s-mcp-apikey-status');
   if (status) status.textContent = Object.keys(_mcpApiKeyStatus).length
     ? `✓ Secrets MCP enregistrés: ${Object.keys(_mcpApiKeyStatus).join(', ')}`
     : 'Aucun secret MCP enregistré.';
 
-  renderMcpAdapters(_mcpAdapters);
+  renderMcpServerOptions(document.getElementById('f-mcp-server')?.value || '');
+  renderMcpToolOptions(document.getElementById('f-mcp-server')?.value || '', document.getElementById('f-mcp-tool')?.value || '');
 }
 
 async function saveMcpRegistryConfig() {
   const msg = document.getElementById('s-mcp-registry-msg');
   try {
-    const registry = JSON.parse(document.getElementById('s-mcp-registry').value || '{"mcp_servers":{}}');
+    const registry = registryFromRows(getMcpServerDraftRows());
     const res = await api('/api/mcp/config','PUT',{ registry });
     if (res.error) throw new Error(res.error);
     msg.className = 'settings-ok';
     msg.textContent = 'Configuration MCP sauvegardée';
     _mcpRegistryDraft = registry;
+    renderMcpServerOptions(document.getElementById('f-mcp-server')?.value || '');
   } catch (err) {
     msg.className = 'settings-err';
     msg.textContent = err.message;
   }
+}
+
+async function validateMcpServerConnection(serverKey) {
+  const msg = document.getElementById('s-mcp-registry-msg');
+  await saveMcpRegistryConfig();
+
+  const rows = getMcpServerDraftRows();
+  const idFromRow = rows.find((_, idx) => `row-${idx}` === serverKey)?.id;
+  const server = idFromRow || serverKey;
+  if (!server) return;
+
+  const indicator = document.getElementById(`mcp-conn-${serverKey}`) || document.getElementById(`mcp-conn-${server}`);
+  if (indicator) indicator.textContent = 'Validation…';
+
+  const res = await api('/api/mcp/validate','POST',{ server });
+  if (res.error || !res.ok) {
+    if (indicator) {
+      indicator.textContent = '● Connexion KO';
+      indicator.style.color = '#ef4444';
+    }
+    if (msg) { msg.className = 'settings-err'; msg.textContent = res.error || 'Connexion MCP échouée'; }
+    return;
+  }
+
+  _mcpToolsCatalog[server] = res.tools || [];
+  if (indicator) {
+    indicator.textContent = `● Connecté (${(res.tools || []).length} tools)`;
+    indicator.style.color = '#22c55e';
+  }
+  if (msg) { msg.className = 'settings-ok'; msg.textContent = 'Connexion MCP validée'; }
+  renderMcpServerOptions(document.getElementById('f-mcp-server')?.value || server);
+  renderMcpToolOptions(server, document.getElementById('f-mcp-tool')?.value || '');
 }
 
 async function saveMcpApiKey() {
@@ -1769,14 +1904,14 @@ function openSettings() {
     </div>
 
     <div class="settings-section" data-settings-tab="mcp" style="display:none">
-      <div class="settings-title">MCP Registry & Secrets</div>
-      <div class="settings-desc">Configure les serveurs MCP, les adapters et les secrets API utilisés par les tools.</div>
-      <div class="form-section">
-        <div class="form-label">Registry MCP (JSON)</div>
-        <textarea class="form-textarea tall" id="s-mcp-registry" placeholder='{"mcp_servers":{"google_maps":{"transport":"http","url":"http://...","headers":{"Authorization":"Bearer \${GOOGLE_MAPS_API_KEY}"}}}}'></textarea>
+      <div class="settings-title">Configuration MCP</div>
+      <div class="settings-desc">Ajoute des serveurs MCP, configure URL + clé API, puis valide la connexion.</div>
+      <div id="s-mcp-servers-list"></div>
+      <div class="settings-row" style="margin-bottom:8px">
+        <button class="settings-btn" type="button" onclick="addMcpServerRow()">+ Ajouter un serveur MCP</button>
       </div>
       <div class="settings-row">
-        <button class="settings-btn" onclick="saveMcpRegistryConfig()">Sauvegarder registry</button>
+        <button class="settings-btn" onclick="saveMcpRegistryConfig()">Sauvegarder configuration MCP</button>
         <span id="s-mcp-registry-msg"></span>
       </div>
       <hr style="border-color:var(--border);margin:10px 0;">
@@ -1938,7 +2073,7 @@ Object.assign(window,{
   deleteWorkflow, copyWfJson, applyWfJson, closeWfJson, onWfJsonInput, copyWfJsonByName,
   openJsonFullscreen, closeJsonFullscreen, jfsCopy, jfsApply, jfsValidate,
   saveApiKey, deleteApiKey, changePassword,
-  saveMcpRegistryConfig, saveMcpApiKey, deleteMcpApiKey, discoverMcpTools, switchSettingsTab,
+  saveMcpRegistryConfig, saveMcpApiKey, deleteMcpApiKey, discoverMcpTools, switchSettingsTab, addMcpServerRow, removeMcpServerRow, validateMcpServerConnection, onStepMcpServerChange,
   onProviderChange, onSettingsProviderChange, setLanguage
 });
 

@@ -33,17 +33,13 @@ function toOpenAITool(definition) {
 }
 
 export class MCPToolRuntime {
-  constructor({ registry, client, adapters = {}, logger = console, cacheTtlMs = 60_000 } = {}) {
+  constructor({ registry, client, adapter = new BaseMCPAdapter(), logger = console, cacheTtlMs = 60_000 } = {}) {
     this.registry = registry;
     this.client = client;
-    this.adapters = adapters;
+    this.adapter = adapter;
     this.logger = logger;
     this.cacheTtlMs = cacheTtlMs;
     this.toolCache = new Map();
-  }
-
-  _adapterFor(serverId) {
-    return this.adapters[serverId] || new BaseMCPAdapter();
   }
 
   _isAllowed(serverConfig, toolName) {
@@ -58,7 +54,7 @@ export class MCPToolRuntime {
 
     if (useCache && cached && cached.expiresAt > now) return cached.value;
 
-    const adapter = this._adapterFor(serverId);
+    const adapter = this.adapter;
     const response = await this.client.listTools(serverId);
     if (!response.ok) return response;
 
@@ -84,7 +80,7 @@ export class MCPToolRuntime {
         return normalizeError('MCP_TOOL_FORBIDDEN', `Tool not allowed: ${tool}`, { server, tool });
       }
 
-      const adapter = this._adapterFor(server);
+      const adapter = this.adapter;
       const discovery = await this.discoverTools(server, { useCache: true, openAIFormat: false });
       if (!discovery.ok) return discovery;
 
