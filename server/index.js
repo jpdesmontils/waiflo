@@ -29,7 +29,6 @@ import authRoutes               from './routes/auth.js';
 import workflowRoutes           from './routes/workflows.js';
 import execRoutes               from './routes/exec.js';
 import { wfRouter, stepRouter } from './routes/design.js';
-import mcpRoutes                from './routes/mcp.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT      = process.env.PORT || 3001;
@@ -72,7 +71,6 @@ app.use('/', pageRoutes);
 app.use('/api/auth',                 authRoutes);
 app.use('/api/workflows',            workflowRoutes);
 app.use('/api/exec',                 execRoutes);
-app.use('/api/mcp',                  mcpRoutes);
 app.use('/api/workflow/design',      wfRouter);
 app.use('/api/workflow-step/design', stepRouter);
 app.get('/api/health', (_, res) => res.json({ ok: true }));

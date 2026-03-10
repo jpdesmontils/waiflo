@@ -111,10 +111,10 @@
                   <option value="api">api</option>
                   <option value="webpage">webpage</option>
                   <option value="mcp">mcp</option>
-                  <option value="tool">tool</option>
                   <option value="transform">transform</option>
                   <option value="script">script</option>
-                                  </select>
+                  <option value="tool">tool</option>
+                </select>
               </div>
               <div id="llm-section">
                 <div class="form-row">
@@ -192,26 +192,13 @@
 
           <div id="mcp-section" style="display:none">
             <div class="form-section">
-              <div class="form-label">Adapter MCP</div>
-              <select class="form-select" id="f-mcp-adapter"></select>
-              <div class="form-hint" id="mcp-adapters-hint">Adapters disponibles: —</div>
-            </div>
-            <div class="form-section">
               <div class="form-label">MCP server</div>
               <input class="form-input" id="f-mcp-server" placeholder="google_maps">
               <div class="form-hint">ID défini dans la registry MCP (ex: mcp_servers.google_maps)</div>
             </div>
             <div class="form-section">
               <div class="form-label">Tool name</div>
-              <div class="form-row">
-                <input class="form-input" list="mcp-tools-list" id="f-mcp-tool" placeholder="maps.search_places">
-                <button class="settings-btn" type="button" onclick="discoverMcpTools()">Discover</button>
-              </div>
-              <datalist id="mcp-tools-list"></datalist>
-            </div>
-            <div class="form-section">
-              <div class="form-label">Tools disponibles (découverte)</div>
-              <textarea class="form-textarea" id="f-mcp-tools-preview" placeholder="Lance Discover pour charger les tools MCP" readonly></textarea>
+              <input class="form-input" id="f-mcp-tool" placeholder="maps.search_places">
             </div>
             <div class="form-section">
               <div class="form-label">Tool input override (JSON, optionnel)</div>
