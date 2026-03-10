@@ -287,7 +287,13 @@ option { background:var(--panel2); }
 .run-status.running { color:var(--amber); border-color:rgba(245,158,11,.35); }
 .run-status.done { color:var(--green); border-color:rgba(52,211,153,.35); }
 .run-status.error { color:var(--red); border-color:rgba(248,113,113,.35); }
+.run-output-title { font-family:'JetBrains Mono',monospace; font-size:9px; color:var(--dim); letter-spacing:.7px; text-transform:uppercase; }
 .run-output-vars { flex:1; background:var(--panel2); border:1px solid var(--border); border-radius:5px; padding:12px; font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--teal); line-height:1.7; overflow-y:auto; min-height:200px; white-space:pre-wrap; word-break:break-word; }
+.run-output-vars .var-row { margin-bottom:6px; }
+.run-output-vars .var-name { font-weight:700; color:var(--hi); margin-right:6px; }
+.run-output-vars details { margin:6px 0; border:1px solid var(--border); border-radius:4px; padding:4px 6px; }
+.run-output-vars summary { cursor:pointer; color:var(--teal); }
+.run-output-vars pre { margin:6px 0 0; white-space:pre-wrap; word-break:break-word; color:var(--text); }
 .run-meta { font-family:'JetBrains Mono',monospace; font-size:9px; color:var(--dim); display:flex; gap:12px; flex-wrap:wrap; }
 .run-meta span { color:var(--teal); }
 
@@ -356,7 +362,7 @@ option { background:var(--panel2); }
 .edge-trash-btn { border:1px solid rgba(248,113,113,.45); background:var(--panel); color:var(--red); border-radius:999px; width:28px; height:28px; cursor:pointer; }
 .edge-trash-btn:hover { background:rgba(248,113,113,.12); }
 
-#wf-exec-logs { position:fixed; left:12px; right:12px; bottom:8px; z-index:900; border:1px solid var(--border); border-radius:8px; background:var(--panel); }
+#wf-exec-logs { position:fixed; left:calc(var(--left-w) + 12px); right:calc(var(--right-w) + 12px); bottom:8px; z-index:20; border:1px solid var(--border); border-radius:8px; background:var(--panel); }
 #wf-exec-logs-header { width:100%; display:flex; justify-content:space-between; background:transparent; border:0; color:var(--dim); font-family:'JetBrains Mono',monospace; font-size:10px; padding:8px 10px; cursor:pointer; }
 #wf-exec-logs-body.hidden { display:none; }
 #wf-exec-logs-content { margin:0; max-height:180px; overflow:auto; color:var(--text); font-family:'JetBrains Mono',monospace; font-size:10px; line-height:1.6; border-top:1px solid var(--border); padding:10px; white-space:pre-wrap; }
