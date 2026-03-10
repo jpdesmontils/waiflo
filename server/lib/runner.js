@@ -291,7 +291,7 @@ export async function runWebpageStep(step, inputs) {
 /**
  * Execute an MCP tool step.
  */
-export async function runMcpStep(step, inputs) {
+export async function runMcpStep(step, inputs, user = null) {
   const mcpConfig = step.ws_mcp || {};
   const server = (mcpConfig.server || '').trim();
   const tool = (mcpConfig.tool || '').trim();
@@ -303,7 +303,10 @@ export async function runMcpStep(step, inputs) {
     ? renderTemplateDeep(mcpConfig.input, inputs || {})
     : (inputs || {});
 
-  const executor = await getMcpToolExecutor();
+  const executor = await getMcpToolExecutor({
+    registryConfig: user?.mcpSettings?.registry,
+    secretMap: user?.mcpSecrets || null
+  });
   const response = await executor.executeTool({
     server,
     tool,
