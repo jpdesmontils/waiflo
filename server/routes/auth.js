@@ -13,40 +13,91 @@ const SALT_ROUNDS = 10;
 
 const SUPPORTED_PROVIDERS = Object.keys(PROVIDER_META); // ['anthropic','openai','perplexity','mistral']
 
-async function discoverMcpTools({ server_url, api_key, timeoutMs = 30000 }) {
-  if (!server_url) throw new Error('server_url is required');
-  if (!api_key) throw new Error('api_key is required');
+const MCP_REGISTRY = [
+  { id: 'mapbox',      match: /mcp\.mapbox\.com/i,              headers: (k) => ({ 'Authorization': `Bearer ${k}`, 'Accept': 'application/json, text/event-stream' }) },
+  { id: 'google-maps', match: /maps\.googleapis\.com/i,         headers: (k) => ({ 'Authorization': `Bearer ${k}` }) },
+  { id: 'stripe',      match: /stripe\.com/i,                   headers: (k) => ({ 'Authorization': `Bearer ${k}` }) },
+  { id: 'notion',      match: /notion\.(so|com)/i,              headers: (k) => ({ 'Authorization': `Bearer ${k}` }) },
+  { id: 'postgres',    match: /localhost|127\.0\.0\.1/i,        headers: ()  => ({}) },
+];
 
+const FALLBACK_STRATEGIES = [
+  (k) => ({ 'Authorization': `Bearer ${k}` }),
+  (k) => ({ 'Authorization': `Bearer ${k}`, 'Accept': 'application/json, text/event-stream' }),
+  (k) => ({ 'x-api-key': k }),
+  ()  => ({}),
+];
+
+const PAYLOAD = JSON.stringify({ jsonrpc: '2.0', id: 'discover-tools', method: 'tools/list', params: {} });
+
+async function fetchTools(url, extraHeaders, timeoutMs) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), Number(timeoutMs) || 30000);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(server_url, {
+    const res = await fetch(url, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${api_key}`
-      },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 'waiflo-tools-list',
-        method: 'tools/list',
-        params: {}
-      }),
-      signal: controller.signal
+      headers: { 'Content-Type': 'application/json', ...extraHeaders },
+      body: PAYLOAD,
+      signal: controller.signal,
     });
+    if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
 
-    if (!response.ok) {
-      throw new Error(`MCP HTTP ${response.status} ${response.statusText}`);
+    // SSE: read stream line by line until we find a tools array
+    if ((res.headers.get('content-type') || '').includes('text/event-stream')) {
+      const text = await res.text();
+      for (const line of text.split('\n')) {
+        if (!line.startsWith('data:')) continue;
+        try {
+          const body = JSON.parse(line.slice(5).trim());
+          if (body?.error) throw new Error(body.error?.message || 'MCP error');
+          const tools = body?.result?.tools ?? body?.tools;
+          if (Array.isArray(tools)) return tools;
+        } catch {}
+      }
+      throw new Error('SSE stream: no tools found');
     }
 
-    const body = await response.json();
-    if (body?.error) throw new Error(body.error?.message || 'MCP returned an error');
-    const tools = body?.result?.tools || body?.tools || [];
-    if (!Array.isArray(tools)) throw new Error('Invalid MCP response (tools list not found)');
+    // Standard JSON
+    const body = await res.json();
+    if (body?.error) throw new Error(body.error?.message || 'MCP error');
+    const tools = body?.result?.tools ?? body?.tools ?? [];
+    if (!Array.isArray(tools)) throw new Error('Invalid response: tools not found');
     return tools;
+
   } finally {
     clearTimeout(timer);
   }
+}
+
+async function discoverMcpTools({ server_url, api_key, timeoutMs = 30_000 } = {}) {
+  if (!server_url) throw new Error('server_url is required');
+
+  const known = MCP_REGISTRY.find((p) => p.match.test(server_url));
+
+  console.log(`[MCP] ${server_url} → ${known ? `provider: ${known.id}` : 'unknown, discovery mode'}`);
+
+  // Known provider — direct attempt
+  if (known) {
+    const headers = known.headers(api_key);
+    console.log(`[MCP] trying ${known.id} with headers:`, Object.keys(headers).join(', ') || 'none');
+    return fetchTools(server_url, headers, timeoutMs);
+  }
+
+  // Unknown provider — try all strategies
+  const errors = [];
+  for (const [i, buildHeaders] of FALLBACK_STRATEGIES.entries()) {
+    if (!api_key && i < FALLBACK_STRATEGIES.length - 1) continue; // skip auth strategies if no key
+    const headers = buildHeaders(api_key);
+    console.log(`[MCP] attempt ${i + 1}/${FALLBACK_STRATEGIES.length} — headers: ${Object.keys(headers).join(', ') || 'none'}`);
+    try {
+      return await fetchTools(server_url, headers, timeoutMs);
+    } catch (err) {
+      console.warn(`[MCP] ✗ ${err.message}`);
+      errors.push(err.message);
+    }
+  }
+
+  throw new Error(`discoverMcpTools failed:\n${errors.join('\n')}`);
 }
 
 async function sanitizeMcpServersForClient(rawServers = []) {
@@ -59,7 +110,7 @@ async function sanitizeMcpServersForClient(rawServers = []) {
       server_label: srv.server_label || '',
       server_url: srv.server_url || '',
       api_key: apiKey,
-      transport: srv.transport || 'http',
+      transport: srv.transport || 'https',
       timeoutMs: srv.timeoutMs || 30000,
       tools: Array.isArray(srv.tools) ? srv.tools : [],
       last_status: srv.last_status || 'unknown',
@@ -157,21 +208,81 @@ router.get('/me', authMiddleware, async (req, res) => {
 });
 
 router.post('/mcp-validate', authMiddleware, async (req, res) => {
+  const startedAt = Date.now();
+  const requestId = `mcpval_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+  console.log(`[MCP_VALIDATE][${requestId}] Incoming request`);
+
   try {
     const { server_label, server_url, api_key, timeoutMs } = req.body || {};
-    if (!server_label?.trim()) return res.status(400).json({ error: 'server_label is required' });
-    if (!server_url?.trim()) return res.status(400).json({ error: 'server_url is required' });
-    if (!api_key?.trim()) return res.status(400).json({ error: 'api_key is required' });
+    const effectiveTimeoutMs = Number(timeoutMs) || 30000;
+
+    console.log(`[MCP_VALIDATE][${requestId}] Payload received`, {
+      server_label: server_label || null,
+      server_url: server_url || null,
+      has_api_key: !!(api_key && api_key.trim()),
+      timeoutMs_raw: timeoutMs,
+      timeoutMs_effective: effectiveTimeoutMs,
+      user_id: req.user && req.user.id ? req.user.id : null
+    });
+
+    if (!server_label?.trim()) {
+      console.warn(`[MCP_VALIDATE][${requestId}] Validation error: server_label is required`);
+      return res.status(400).json({ error: 'server_label is required' });
+    }
+
+    if (!server_url?.trim()) {
+      console.warn(`[MCP_VALIDATE][${requestId}] Validation error: server_url is required`);
+      return res.status(400).json({ error: 'server_url is required' });
+    }
+
+    if (!api_key?.trim()) {
+      console.warn(`[MCP_VALIDATE][${requestId}] Validation error: api_key is required`);
+      return res.status(400).json({ error: 'api_key is required' });
+    }
+
+    console.log(`[MCP_VALIDATE][${requestId}] Starting MCP discovery`, {
+      server_url: server_url.trim(),
+      timeoutMs: effectiveTimeoutMs
+    });
 
     const tools = await discoverMcpTools({
       server_url: server_url.trim(),
       api_key: api_key.trim(),
-      timeoutMs: Number(timeoutMs) || 30000
+      timeoutMs: effectiveTimeoutMs
     });
 
-    res.json({ ok: true, tools, count: tools.length });
+    console.log(`[MCP_VALIDATE][${requestId}] MCP discovery succeeded`, {
+      durationMs: Date.now() - startedAt,
+      toolsCount: Array.isArray(tools) ? tools.length : null,
+      toolNames: Array.isArray(tools) ? tools.map(t => t.name || t.id || 'unknown') : []
+    });
+
+    return res.json({
+      ok: true,
+      tools,
+      count: Array.isArray(tools) ? tools.length : 0
+    });
   } catch (err) {
-    res.status(502).json({ error: err.message || 'MCP validation failed' });
+    const durationMs = Date.now() - startedAt;
+
+    console.error(`[MCP_VALIDATE][${requestId}] MCP discovery failed`, {
+      durationMs,
+      error_message: err && err.message ? err.message : 'Unknown error',
+      error_name: err && err.name ? err.name : null,
+      error_code: err && err.code ? err.code : null,
+      error_type: err && err.type ? err.type : null,
+      error_status: err && err.status ? err.status : null,
+      error_statusCode: err && err.statusCode ? err.statusCode : null,
+      error_errno: err && err.errno ? err.errno : null,
+      error_stack: err && err.stack ? err.stack : null,
+      error_response_data: err && err.response && err.response.data ? err.response.data : null
+    });
+
+    return res.status(502).json({
+      error: err && err.message ? err.message : 'MCP validation failed',
+      requestId
+    });
   }
 });
 
@@ -193,7 +304,7 @@ router.put('/mcp-servers', authMiddleware, async (req, res) => {
       normalized.push({
         server_label,
         server_url,
-        transport: 'http',
+        transport: 'https',
         headers: { Authorization: 'Bearer ${api_key}' },
         timeoutMs: Number(row?.timeoutMs) || 30000,
         retry: { retries: 1, backoffMs: 300 },
