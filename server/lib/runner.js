@@ -314,7 +314,11 @@ function renderMcpHeaderValue(value, apiKey) {
 
 function buildMcpRequestHeaders(server, apiKey) {
   const configured = (server?.headers && typeof server.headers === 'object') ? server.headers : {};
-  const headers = { 'Content-Type': 'application/json' };
+  const headers = {
+    'Content-Type': 'application/json',
+    // Required by several MCP HTTP servers (including Mapbox) to avoid 406 Not Acceptable.
+    Accept: 'application/json, text/event-stream'
+  };
 
   for (const [key, value] of Object.entries(configured)) {
     headers[key] = renderMcpHeaderValue(value, apiKey);
@@ -323,6 +327,12 @@ function buildMcpRequestHeaders(server, apiKey) {
   const hasAuthorization = Object.keys(headers).some((k) => k.toLowerCase() === 'authorization');
   if (!hasAuthorization) {
     headers.Authorization = `Bearer ${apiKey}`;
+  }
+
+  // Mapbox MCP expects the MCP protocol version header for HTTP transport.
+  const hasMcpProtocolVersion = Object.keys(headers).some((k) => k.toLowerCase() === 'mcp-protocol-version');
+  if (!hasMcpProtocolVersion && /mcp\.mapbox\.com/i.test(String(server?.server_url || ''))) {
+    headers['MCP-Protocol-Version'] = '2025-03-26';
   }
 
   return headers;
