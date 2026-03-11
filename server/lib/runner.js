@@ -305,6 +305,29 @@ function resolveToolConfig(step) {
 /**
  * Execute an MCP tool step against a configured user MCP server.
  */
+function renderMcpHeaderValue(value, apiKey) {
+  return String(value ?? '')
+    .replaceAll('${api_key}', apiKey)
+    .replaceAll('{{api_key}}', apiKey)
+    .trim();
+}
+
+function buildMcpRequestHeaders(server, apiKey) {
+  const configured = (server?.headers && typeof server.headers === 'object') ? server.headers : {};
+  const headers = { 'Content-Type': 'application/json' };
+
+  for (const [key, value] of Object.entries(configured)) {
+    headers[key] = renderMcpHeaderValue(value, apiKey);
+  }
+
+  const hasAuthorization = Object.keys(headers).some((k) => k.toLowerCase() === 'authorization');
+  if (!hasAuthorization) {
+    headers.Authorization = `Bearer ${apiKey}`;
+  }
+
+  return headers;
+}
+
 export async function runToolStep(step, inputs, user) {
   const { mcpServerLabel, toolName } = resolveToolConfig(step);
   const servers = Array.isArray(user?.mcpServers) ? user.mcpServers : [];
@@ -317,6 +340,7 @@ export async function runToolStep(step, inputs, user) {
   if (!server.apiKeyEnc) throw new Error(`MCP server "${mcpServerLabel}" has no API key configured`);
 
   const apiKey = await decrypt(server.apiKeyEnc);
+  const headers = buildMcpRequestHeaders(server, apiKey);
   const controller = new AbortController();
   const timeoutMs = Number(server.timeoutMs || 30000);
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -324,10 +348,7 @@ export async function runToolStep(step, inputs, user) {
   try {
     const response = await fetch(endpoint, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`
-      },
+      headers,
       body: JSON.stringify({
         jsonrpc: '2.0',
         id: `waiflo-tool-${Date.now()}`,
