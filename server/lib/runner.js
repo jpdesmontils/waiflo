@@ -285,3 +285,72 @@ export async function runWebpageStep(step, inputs) {
   }
   return runWebpageHttpStep(webpageConfig, inputs || {});
 }
+
+function resolveToolConfig(step) {
+  const wsTool = step?.ws_tool || {};
+  const mcpServerLabel = String(
+    wsTool.mcp_server_label || wsTool.server_label || wsTool.server || ''
+  ).trim();
+
+  const toolName = String(
+    wsTool.tool_name || wsTool.name || step?.ws_tools?.[0] || ''
+  ).trim();
+
+  if (!mcpServerLabel) throw new Error('tool step requires ws_tool.mcp_server_label');
+  if (!toolName) throw new Error('tool step requires ws_tool.tool_name or ws_tools[0]');
+
+  return { mcpServerLabel, toolName };
+}
+
+/**
+ * Execute an MCP tool step against a configured user MCP server.
+ */
+export async function runToolStep(step, inputs, user) {
+  const { mcpServerLabel, toolName } = resolveToolConfig(step);
+  const servers = Array.isArray(user?.mcpServers) ? user.mcpServers : [];
+  const server = servers.find((row) => String(row?.server_label || '').trim() === mcpServerLabel);
+
+  if (!server) throw new Error(`MCP server "${mcpServerLabel}" not found in your settings`);
+
+  const endpoint = String(server.server_url || '').trim();
+  if (!endpoint) throw new Error(`MCP server "${mcpServerLabel}" has no server_url configured`);
+  if (!server.apiKeyEnc) throw new Error(`MCP server "${mcpServerLabel}" has no API key configured`);
+
+  const apiKey = await decrypt(server.apiKeyEnc);
+  const controller = new AbortController();
+  const timeoutMs = Number(server.timeoutMs || 30000);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: `waiflo-tool-${Date.now()}`,
+        method: 'tools/call',
+        params: {
+          name: toolName,
+          arguments: inputs || {}
+        }
+      }),
+      signal: controller.signal
+    });
+
+    if (!response.ok) {
+      throw new Error(`MCP HTTP ${response.status} ${response.statusText}`);
+    }
+
+    const body = await response.json();
+    if (body?.error) {
+      throw new Error(body.error?.message || `MCP tool call failed: ${toolName}`);
+    }
+
+    return body?.result ?? body;
+  } finally {
+    clearTimeout(timer);
+  }
+}
