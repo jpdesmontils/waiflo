@@ -6,20 +6,13 @@ import rateLimit      from 'express-rate-limit';
 import { encrypt, decrypt } from '../lib/crypto.js';
 import { readUsers, saveUser, userExists, findByEmail, ensureUserDir } from '../lib/users.js';
 import { PROVIDER_META } from '../lib/providers/index.js';
+import { saveDiscoveredToolSchemas, readSharedMcpRegistry, readSharedToolSchemas, upsertSharedMcpRegistry, urlMatchesRegistry } from '../lib/mcpShared.js';
 
 const router = express.Router();
 const JWT_SECRET  = () => process.env.JWT_SECRET; // Required — validated at startup
 const SALT_ROUNDS = 10;
 
 const SUPPORTED_PROVIDERS = Object.keys(PROVIDER_META); // ['anthropic','openai','perplexity','mistral']
-
-const MCP_REGISTRY = [
-  { id: 'mapbox',      match: /mcp\.mapbox\.com/i,              headers: (k) => ({ 'Authorization': `Bearer ${k}`, 'Accept': 'application/json, text/event-stream' }) },
-  { id: 'google-maps', match: /maps\.googleapis\.com/i,         headers: (k) => ({ 'Authorization': `Bearer ${k}` }) },
-  { id: 'stripe',      match: /stripe\.com/i,                   headers: (k) => ({ 'Authorization': `Bearer ${k}` }) },
-  { id: 'notion',      match: /notion\.(so|com)/i,              headers: (k) => ({ 'Authorization': `Bearer ${k}` }) },
-  { id: 'postgres',    match: /localhost|127\.0\.0\.1/i,        headers: ()  => ({}) },
-];
 
 const FALLBACK_STRATEGIES = [
   (k) => ({ 'Authorization': `Bearer ${k}` }),
@@ -29,6 +22,22 @@ const FALLBACK_STRATEGIES = [
 ];
 
 const PAYLOAD = JSON.stringify({ jsonrpc: '2.0', id: 'discover-tools', method: 'tools/list', params: {} });
+
+function renderTemplateValue(value, apiKey) {
+  return String(value ?? '')
+    .replaceAll('${api_key}', String(apiKey || ''))
+    .replaceAll('{{api_key}}', String(apiKey || ''))
+    .trim();
+}
+
+function buildHeadersFromRegistryProvider(provider, apiKey) {
+  const templates = (provider?.headers && typeof provider.headers === 'object') ? provider.headers : {};
+  const built = {};
+  for (const [key, value] of Object.entries(templates)) {
+    built[key] = renderTemplateValue(value, apiKey);
+  }
+  return built;
+}
 
 async function fetchTools(url, extraHeaders, timeoutMs) {
   const controller = new AbortController();
@@ -72,15 +81,22 @@ async function fetchTools(url, extraHeaders, timeoutMs) {
 async function discoverMcpTools({ server_url, api_key, timeoutMs = 30_000 } = {}) {
   if (!server_url) throw new Error('server_url is required');
 
-  const known = MCP_REGISTRY.find((p) => p.match.test(server_url));
+  const sharedRegistry = await upsertSharedMcpRegistry();
+  const providers = Array.isArray(sharedRegistry?.providers)
+    ? sharedRegistry.providers
+    : (await readSharedMcpRegistry()).providers || [];
+
+  const known = providers.find((p) => urlMatchesRegistry(server_url, p));
 
   console.log(`[MCP] ${server_url} → ${known ? `provider: ${known.id}` : 'unknown, discovery mode'}`);
 
   // Known provider — direct attempt
   if (known) {
-    const headers = known.headers(api_key);
+    const headers = buildHeadersFromRegistryProvider(known, api_key);
     console.log(`[MCP] trying ${known.id} with headers:`, Object.keys(headers).join(', ') || 'none');
-    return fetchTools(server_url, headers, timeoutMs);
+    const tools = await fetchTools(server_url, headers, timeoutMs);
+    await saveDiscoveredToolSchemas({ serverUrl: server_url, providerId: known.id, tools });
+    return tools;
   }
 
   // Unknown provider — try all strategies
@@ -90,7 +106,9 @@ async function discoverMcpTools({ server_url, api_key, timeoutMs = 30_000 } = {}
     const headers = buildHeaders(api_key);
     console.log(`[MCP] attempt ${i + 1}/${FALLBACK_STRATEGIES.length} — headers: ${Object.keys(headers).join(', ') || 'none'}`);
     try {
-      return await fetchTools(server_url, headers, timeoutMs);
+      const tools = await fetchTools(server_url, headers, timeoutMs);
+      await saveDiscoveredToolSchemas({ serverUrl: server_url, tools });
+      return tools;
     } catch (err) {
       console.warn(`[MCP] ✗ ${err.message}`);
       errors.push(err.message);
@@ -117,6 +135,55 @@ async function sanitizeMcpServersForClient(rawServers = []) {
       last_error: srv.last_error || ''
     };
   }));
+}
+
+async function listAvailableMcpToolsForUser(rawServers = []) {
+  const servers = Array.isArray(rawServers) ? rawServers : [];
+  const shared = await readSharedToolSchemas();
+  const sharedTools = (shared?.tools && typeof shared.tools === 'object') ? shared.tools : {};
+
+  const available = [];
+  for (const srv of servers) {
+    const serverLabel = String(srv?.server_label || '').trim();
+    const serverUrl = String(srv?.server_url || '').trim().toLowerCase();
+    if (!serverLabel || !serverUrl) continue;
+
+    const fromShared = Object.values(sharedTools)
+      .filter((tool) => String(tool?.server_url || '').trim().toLowerCase() === serverUrl)
+      .map((tool) => ({
+        tool_name: String(tool?.tool_name || '').trim(),
+        description: String(tool?.description || ''),
+        inputSchema: tool?.inputSchema || null,
+        outputSchema: tool?.outputSchema || null,
+        provider_id: String(tool?.provider_id || '').trim()
+      }))
+      .filter((tool) => tool.tool_name);
+
+    const fallback = Array.isArray(srv?.tools)
+      ? srv.tools
+          .map((tool) => ({
+            tool_name: String(tool?.name || tool?.tool_name || '').trim(),
+            description: String(tool?.description || ''),
+            inputSchema: tool?.inputSchema || tool?.parameters || null,
+            outputSchema: tool?.outputSchema || null,
+            provider_id: ''
+          }))
+          .filter((tool) => tool.tool_name)
+      : [];
+
+    const dedup = new Map();
+    for (const tool of [...fromShared, ...fallback]) {
+      if (!dedup.has(tool.tool_name)) dedup.set(tool.tool_name, tool);
+    }
+
+    available.push({
+      server_label: serverLabel,
+      server_url: serverUrl,
+      tools: [...dedup.values()]
+    });
+  }
+
+  return available;
 }
 
 // ── Rate limiting ──────────────────────────────────────────────────
@@ -203,7 +270,8 @@ router.get('/me', authMiddleware, async (req, res) => {
     hasApiKey: !!(u.apiKeyEnc || Object.values(providerKeys).some(Boolean)), // legacy compat
     providerKeys: providerKeyStatus,
     createdAt: u.createdAt,
-    mcpServers: await sanitizeMcpServersForClient(u.mcpServers || [])
+    mcpServers: await sanitizeMcpServersForClient(u.mcpServers || []),
+    mcpAvailableTools: await listAvailableMcpToolsForUser(u.mcpServers || [])
   });
 });
 
@@ -250,6 +318,12 @@ router.post('/mcp-validate', authMiddleware, async (req, res) => {
       server_url: server_url.trim(),
       api_key: api_key.trim(),
       timeoutMs: effectiveTimeoutMs
+    });
+
+    await saveDiscoveredToolSchemas({
+      serverUrl: server_url.trim(),
+      serverLabel: server_label.trim(),
+      tools
     });
 
     console.log(`[MCP_VALIDATE][${requestId}] MCP discovery succeeded`, {
@@ -301,6 +375,7 @@ router.put('/mcp-servers', authMiddleware, async (req, res) => {
       }
 
       const tools = Array.isArray(row?.tools) ? row.tools : await discoverMcpTools({ server_url, api_key, timeoutMs: Number(row?.timeoutMs) || 30000 });
+      await saveDiscoveredToolSchemas({ serverUrl: server_url, serverLabel: server_label, tools });
       normalized.push({
         server_label,
         server_url,
