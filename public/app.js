@@ -7,7 +7,6 @@ import {
   ReactFlow, Background, Controls, MiniMap,
   Handle, Position, MarkerType,
   useNodesState, useEdgesState, addEdge,
-  applyNodeChanges,
   ReactFlowProvider, useReactFlow
 } from '@xyflow/react';
 import dagre from 'dagre';
@@ -178,11 +177,6 @@ function AppGraph() {
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [version, setVersion] = useState(0);
 
-  const handleNodesChange = (changes) => {
-    setNodes((nds) => applyNodeChanges(changes, nds));
-    syncWorkflowNodePositions(changes);
-  };
-
   const onConnect = (params) => {
     setEdges((eds) => addEdge({
       ...params,
@@ -203,7 +197,7 @@ function AppGraph() {
   _setGraphData = (gd) => { setNodes(gd.nodes); setEdges(gd.edges); setVersion(gd.version); };
   _getNodes     = () => nodes;
   return h(ReactFlowProvider,null,
-    h(FlowInner,{ nodes, edges, onNodesChange:handleNodesChange, onEdgesChange, onConnect, onEdgeClick, onPaneClick, version })
+    h(FlowInner,{ nodes, edges, onNodesChange, onEdgesChange, onConnect, onEdgeClick, onPaneClick, version })
   );
 }
 
@@ -250,24 +244,12 @@ function buildGraph(data) {
 
   // Préserver les positions des nœuds existants (drag utilisateur) et placer les nouveaux sous le dernier
   const curPos = {};
-  const savedPos = {};
   if (_getNodes) _getNodes().forEach(n => { curPos[n.id] = n.position; });
-  if (wf) {
-    (wf.wf_nodes || []).forEach(n => {
-      if (n.position && Number.isFinite(n.position.x) && Number.isFinite(n.position.y)) {
-        savedPos[n.step_id] = n.position;
-      }
-    });
-  }
   let maxY = 0;
   let refX = layoutedNodes[0]?.position?.x ?? 0;
-  layoutedNodes.forEach(n => {
-    const pos = curPos[n.id] || savedPos[n.id];
-    if (pos) { maxY = Math.max(maxY, pos.y); refX = pos.x; }
-  });
+  layoutedNodes.forEach(n => { if (curPos[n.id]) { maxY = Math.max(maxY, curPos[n.id].y); refX = curPos[n.id].x; } });
   const finalNodes = layoutedNodes.map(n => {
-    const persistedPos = curPos[n.id] || savedPos[n.id];
-    const base = persistedPos ? { ...n, position: persistedPos } : (() => {
+    const base = curPos[n.id] ? { ...n, position: curPos[n.id] } : (() => {
       maxY += NODE_H + 60;
       return { ...n, position: { x: refX, y: maxY } };
     })();
@@ -347,33 +329,6 @@ function removeWorkflowDependency(sourceId, targetId) {
   targetNode.depends_on = (targetNode.depends_on || []).filter(d => d !== sourceId);
   buildGraph(currentWf.data); _refreshWfJsonPanel();
   if (guestMode) _guestSync(); else saveWorkflow();
-}
-
-function syncWorkflowNodePositions(changes = []) {
-  if (!currentWf || !Array.isArray(changes) || !changes.length) return;
-  const wf = (currentWf.data.workflows || []).find(w => Array.isArray(w.wf_nodes));
-  if (!wf) return;
-
-  let updated = false;
-  let shouldPersist = false;
-  for (const change of changes) {
-    if (change?.type !== 'position' || !change.position) continue;
-    const node = findWorkflowNode(wf, change.id);
-    if (!node) continue;
-    node.position = {
-      x: Math.round(change.position.x),
-      y: Math.round(change.position.y)
-    };
-    updated = true;
-    if (change.dragging === false) shouldPersist = true;
-  }
-
-  if (!updated) return;
-  _refreshWfJsonPanel();
-  if (shouldPersist) {
-    if (guestMode) _guestSync();
-    else saveWorkflow();
-  }
 }
 
 function showEdgeDeletePrompt(edge, x, y) {
@@ -1060,7 +1015,8 @@ function closeEditor() {
   setRightPanelVisible(false);
   currentStep=null;
   _currentNodeId = null;
-  closeMaximizedEditors();
+  document.querySelectorAll('.form-textarea.maximized').forEach(el => el.classList.remove('maximized'));
+  document.querySelectorAll('.maximize-btn.active').forEach(el => el.classList.remove('active'));
 }
 
 function setExecutionUiState(running) {
@@ -1154,14 +1110,6 @@ function toggleWorkflowExecLogs() {
   const closed = body.classList.toggle('hidden');
   icon.textContent = closed ? '▸' : '▾';
   updateFloatingAddStepPosition();
-}
-
-function openWorkflowExecLogs() {
-  const body = document.getElementById('wf-exec-logs-body');
-  const icon = document.getElementById('wf-exec-logs-toggle');
-  if (!body || !icon) return;
-  body.classList.remove('hidden');
-  icon.textContent = '▾';
 }
 
 
@@ -1301,22 +1249,8 @@ function onToolMcpServerChange(selectedTool = '') {
 function toggleEditorMaximize(textareaId, btn) {
   const ta = document.getElementById(textareaId);
   if (!ta) return;
-  document.querySelectorAll('.form-textarea.maximized').forEach(el => {
-    if (el !== ta) el.classList.remove('maximized');
-  });
-  document.querySelectorAll('.maximize-btn.active').forEach(el => {
-    if (el !== btn) el.classList.remove('active');
-  });
   const isOpen = ta.classList.toggle('maximized');
   if (btn) btn.classList.toggle('active', isOpen);
-  const closeBtn = document.getElementById('editor-maximize-close');
-  if (closeBtn) closeBtn.classList.toggle('hidden', !document.querySelector('.form-textarea.maximized'));
-}
-
-function closeMaximizedEditors() {
-  document.querySelectorAll('.form-textarea.maximized').forEach(el => el.classList.remove('maximized'));
-  document.querySelectorAll('.maximize-btn.active').forEach(el => el.classList.remove('active'));
-  document.getElementById('editor-maximize-close')?.classList.add('hidden');
 }
 
 function updateJsonTab() {
@@ -1515,7 +1449,7 @@ function renderRunState(step, nodeId) {
     statusEl.textContent = 'idle';
     statusEl.className = 'run-status idle';
     varsEl.textContent = '// No output captured yet…';
-    renderStructuredOutput(logOutEl, '// Full prompt + execution log will appear here…');
+    logOutEl.textContent = '// Full prompt + execution log will appear here…';
     logOutEl.className = 'run-output';
     logMetaEl.innerHTML = '';
     return;
@@ -1524,7 +1458,7 @@ function renderRunState(step, nodeId) {
   statusEl.textContent = state.status || 'idle';
   statusEl.className = `run-status ${(state.status||'idle').toLowerCase()}`;
   renderOutputVars(varsEl, state.output);
-  renderStructuredOutput(logOutEl, state.logOutput || '// Full prompt + execution log will appear here…');
+  logOutEl.textContent = state.logOutput || '// Full prompt + execution log will appear here…';
   logOutEl.className = `run-output${state.logError ? ' error' : ''}`;
   logMetaEl.innerHTML = state.logMeta || '';
 }
@@ -1559,13 +1493,6 @@ function renderOutputVars(container, rawOutput) {
   }).join('');
 }
 
-function renderStructuredOutput(container, rawOutput) {
-  if (!container) return;
-  container.textContent = '';
-  container.innerHTML = '';
-  renderOutputVars(container, rawOutput);
-}
-
 async function executeStep(stepDef, runMode='step_only') {
   const s = stepDef || currentStep || collectStep();
   if (!s) return false;
@@ -1586,7 +1513,7 @@ async function executeStep(stepDef, runMode='step_only') {
   const outEl=document.getElementById('run-log-output');
   const metaEl=document.getElementById('run-log-meta');
   varsEl.textContent='';
-  renderStructuredOutput(outEl, ''); outEl.className='run-output'; metaEl.innerHTML='';
+  outEl.textContent=''; outEl.className='run-output'; metaEl.innerHTML='';
   statusEl.textContent='running'; statusEl.className='run-status running';
   saveStepRunState(s, _currentNodeId, { status:'running', output:'', lastInputs: inputs, logOutput:'', logMeta:'', logError:false });
   _runController = new AbortController();
@@ -1604,21 +1531,21 @@ async function executeStep(stepDef, runMode='step_only') {
       res = await r.json();
     } catch(e) {
       const msg = e.name === 'AbortError' ? 'Execution stopped by user' : e.message;
-      outEl.className='run-output error'; renderStructuredOutput(outEl, msg);
+      outEl.className='run-output error'; outEl.textContent=msg;
       statusEl.textContent=e.name === 'AbortError' ? 'stopped' : 'error'; statusEl.className='run-status error';
       saveStepRunState(s, _currentNodeId, { status:statusEl.textContent, output:'', logOutput:msg, logMeta:'', logError:true });
       return false;
     }
     const elapsed = Date.now()-tsStart;
     if (res.error) {
-      outEl.className='run-output error'; renderStructuredOutput(outEl, res.error);
+      outEl.className='run-output error'; outEl.textContent=res.error;
       metaEl.innerHTML=`<span style="color:var(--red)">✕ error</span> · ${elapsed}ms · ${ts()}`;
       statusEl.textContent='error'; statusEl.className='run-status error';
       saveStepRunState(s, _currentNodeId, { status:'error', logOutput:res.error, logMeta:metaEl.innerHTML, logError:true });
       return false;
     }
     const resultText = JSON.stringify(res.result,null,2);
-    renderStructuredOutput(outEl, resultText);
+    outEl.textContent=resultText;
     varsEl.textContent=resultText;
     rememberStepResult(s, _currentNodeId, res.result);
     metaEl.innerHTML=`✓ ${(s.ws_type||'api').toLowerCase()} · ${elapsed}ms · ${ts()}`;
@@ -1656,14 +1583,14 @@ async function executeStep(stepDef, runMode='step_only') {
           const elapsed = Date.now()-tsStart;
           if (obj.parsed) {
             const parsedText = JSON.stringify(obj.parsed, null, 2);
-              renderStructuredOutput(outEl, parsedText);
+            outEl.textContent = parsedText;
             varsEl.textContent = parsedText;
             rememberStepResult(s, _currentNodeId, obj.parsed);
             metaEl.innerHTML  = `✓ parsed json · ${elapsed}ms · ${ts()}`;
             statusEl.textContent='done'; statusEl.className='run-status done';
             saveStepRunState(s, _currentNodeId, { status:'done', output:parsedText, logOutput:parsedText, logMeta:metaEl.innerHTML, logError:false });
           } else {
-            renderStructuredOutput(outEl, full);
+            outEl.textContent = full;
             varsEl.textContent = full;
             metaEl.innerHTML = `<span style="color:var(--amber)">⚠ json parse failed — raw output</span> · ${elapsed}ms · ${ts()}`;
             statusEl.textContent='done_raw'; statusEl.className='run-status done';
@@ -1671,7 +1598,7 @@ async function executeStep(stepDef, runMode='step_only') {
           }
         } else if (event==='error') {
           const elapsed = Date.now()-tsStart;
-          outEl.className='run-output error'; renderStructuredOutput(outEl, obj.message);
+          outEl.className='run-output error'; outEl.textContent=obj.message;
           metaEl.innerHTML=`<span style="color:var(--red)">✕ ${ts()}</span> · ${elapsed}ms`;
           statusEl.textContent='error'; statusEl.className='run-status error';
           saveStepRunState(s, _currentNodeId, { status:'error', output:'', logOutput:obj.message, logMeta:metaEl.innerHTML, logError:true });
@@ -1683,7 +1610,7 @@ async function executeStep(stepDef, runMode='step_only') {
     const elapsed = Date.now()-tsStart;
     const aborted = e.name === 'AbortError';
     const msg = aborted ? 'Execution stopped by user' : e.message;
-    outEl.className='run-output error'; renderStructuredOutput(outEl, msg);
+    outEl.className='run-output error'; outEl.textContent=msg;
     metaEl.innerHTML=`<span style="color:var(--red)">✕ ${ts()}</span> · ${elapsed}ms`;
     statusEl.textContent=aborted ? 'stopped' : 'error'; statusEl.className='run-status error';
     saveStepRunState(s, _currentNodeId, { status:aborted ? 'stopped' : 'error', output:'', logOutput:msg, logMeta:metaEl.innerHTML, logError:true });
@@ -1705,9 +1632,8 @@ async function runWorkflowFromHere() {
   if (!currentStep || !_currentNodeId) return;
   setExecutionUiState(true);
   try {
-    openWorkflowExecLogs();
+    clearWorkflowExecLogs();
     clearRunningGraphState();
-    appendWorkflowExecLog('');
     appendWorkflowExecLog(`${wfTs()} ## Workflow ## Start from ${_currentNodeId}`);
     const order = getDownstreamExecutionOrder(_currentNodeId);
     const wf = (currentWf?.data?.workflows || []).find(w => w.wf_nodes?.length);
@@ -2017,7 +1943,7 @@ Object.assign(window,{
   openNewStepEditor, openStepEditor,
   applyStepEdit, deleteCurrentStep, closeEditor, switchEditorTab,
   addInputField, addOutputField, onTypeChange,
-  toggleTechSection, toggleApiAdvancedSection, toggleToolAdvancedSection, toggleEditorMaximize, closeMaximizedEditors,
+  toggleTechSection, toggleApiAdvancedSection, toggleToolAdvancedSection, toggleEditorMaximize,
   runStepOnly, runWorkflowFromHere, closeModal, showSignupCTA,
   confirmEdgeDelete, toggleWorkflowExecLogs, toggleRightPanel,
   deleteWorkflow, copyWfJson, applyWfJson, closeWfJson, onWfJsonInput, copyWfJsonByName,
@@ -2030,7 +1956,6 @@ Object.assign(window,{
 document.addEventListener('keydown',e=>{
   if (e.key==='Escape') {
     if (!document.getElementById('json-fullscreen').classList.contains('hidden')) { closeJsonFullscreen(); return; }
-    if (document.querySelector('.form-textarea.maximized')) { closeMaximizedEditors(); return; }
     closeModal();
   }
   if ((e.ctrlKey||e.metaKey)&&e.key==='s') { e.preventDefault(); saveWorkflow(); }
