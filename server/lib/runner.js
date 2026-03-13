@@ -79,7 +79,122 @@ function buildPrompt(template, inputs) {
  * Execute a prompt step with SSE streaming.
  * Writes SSE events to res (Express response).
  */
-export async function runPromptStep(step, inputs, user, res) {
+export async function runPromptStep(step, inputs, user, req, res) {
+
+  const llm      = step.ws_llm || {};
+  const provider = (llm.provider || 'anthropic').toLowerCase();
+  const meta     = PROVIDER_META[provider] || PROVIDER_META.anthropic;
+
+  const model  = llm.model || meta.defaultModel;
+  const temp   = llm.temperature ?? 0;
+  const maxTok = llm.max_tokens || 2048;
+  const system = step.ws_system_prompt || '';
+
+  const stream = req.query.stream === '1' || req.query.stream === 'true';
+
+  let apiKey = await resolveApiKey(user, provider);
+  const llmProvider = createProvider(provider, apiKey);
+  apiKey = null;
+
+  const allInputs = {
+    ...inputs,
+    ws_output_schema: JSON.stringify(step.ws_output_schema || {}, null, 2)
+  };
+
+  const userPrompt = buildPrompt(step.ws_prompt_template || '', allInputs);
+
+  let send = () => {};
+
+  if (stream) {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+
+    send = (event, data) => {
+      res.write(`event: ${event}\n`);
+      res.write(`data: ${JSON.stringify(data)}\n\n`);
+    };
+  }
+
+  try {
+
+    let fullText = '';
+
+    const imageUrls = collectImageUrls(step, inputs);
+
+    for await (const chunk of llmProvider.stream({
+      model,
+      system,
+      userPrompt,
+      imageUrls,
+      temperature: temp,
+      maxTokens: maxTok
+    })) {
+
+      const text = chunk.text || chunk.delta || chunk.content || '';
+
+      if (text && stream) {
+        send('token', { text });
+      }
+
+      fullText += text;
+    }
+
+    let parsed = null;
+
+    try {
+      const clean = fullText
+        .replace(/^```json\s*/i, '')
+        .replace(/```\s*$/, '')
+        .trim();
+
+      parsed = JSON.parse(clean);
+
+    } catch {
+      parsed = null;
+    }
+
+    if (stream) {
+      send('done', { full: fullText, parsed });
+      res.end();
+    } else {
+      res.json({
+        ok: true,
+        full: fullText,
+        parsed
+      });
+    }
+
+    return {
+      fullText,
+      parsed,
+      userPrompt,
+      error: null
+    };
+
+  } catch (err) {
+
+    if (stream) {
+      send('error', { message: err.message });
+      res.end();
+    } else {
+      res.status(500).json({
+        ok: false,
+        error: err.message
+      });
+    }
+
+    return {
+      fullText: '',
+      parsed: null,
+      userPrompt,
+      error: err.message
+    };
+  }
+}
+
+
+export async function runPromptStep_legacy(step, inputs, user, res) {
   const llm      = step.ws_llm || {};
   const provider = (llm.provider || 'anthropic').toLowerCase();
   const meta     = PROVIDER_META[provider] || PROVIDER_META.anthropic;
@@ -132,6 +247,7 @@ export async function runPromptStep(step, inputs, user, res) {
     return { fullText: '', parsed: null, userPrompt, error: err.message };
   }
 }
+
 
 function renderTemplateString(template, vars) {
   let out = String(template ?? '');
