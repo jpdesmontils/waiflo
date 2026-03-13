@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<title>Waiflo Editor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=JetBrains+Mono:wght@300;400;500;600&family=Figtree:ital,wght@0,300;0,400;0,500;1,300&display=swap" rel="stylesheet">
+
+<link rel="stylesheet" href="assets/editor.css">
+</head>
+<body>
+
+<div id="app-wrapper">
+
+<!-- TOPBAR -->
+<header id="topbar">
+  <div class="logo">waiflo <span class="logo-badge">EDITOR</span></div>
+  <div class="wf-meta hidden" id="wf-meta">
+    <span id="meta-name">—</span>
+    <span class="meta-pill"><span id="meta-steps">0</span> steps</span>
+    <span class="meta-pill" id="meta-wf-pill" style="display:none">wf: <span id="meta-wf">—</span></span>
+  </div>
+  <div class="topbar-actions">
+    <button class="tb-btn" onclick="saveWorkflow()" id="btn-save" style="display:none">Save ↑</button>
+    <button class="tb-btn" onclick="downloadWorkflow()" id="btn-download" style="display:none">Export ↓</button>
+    <button class="tb-btn theme-btn" id="btn-theme" onclick="toggleTheme()" title="Toggle theme">☀</button>
+    <button class="tb-btn" id="btn-settings" onclick="openSettings()">⚙ Settings</button>
+    <span id="user-badge"></span>
+    <span id="guest-badge" style="display:none">GUEST</span>
+    <button class="tb-btn danger" onclick="doLogout()">Logout</button>
+  </div>
+</header>
+
+<!-- GUEST BANNER -->
+<div id="guest-banner" class="hidden">
+  ⚠ Mode invité — workflows non sauvegardés ·
+  <span class="banner-cta" onclick="showSignupCTA()">Créer un compte pour sauvegarder</span>
+</div>
+
+<div id="main">
+  <!-- LEFT — file browser -->
+  <div id="left-panel">
+    <div id="left-inner">
+      <div class="panel-title">Workflows</div>
+      <div id="wf-list"></div>
+
+      <!-- JSON EDITOR PANEL -->
+      <div id="wf-json-panel">
+        <div id="wf-json-panel-header">
+          <span id="wf-json-panel-name">—</span>
+          <div class="wf-json-actions">
+            <button class="wf-json-btn maximize-btn" title="Fullscreen" onclick="openJsonFullscreen('workflow')">⛶</button>
+            <button class="wf-json-btn" title="Copy" onclick="copyWfJson()">Copy</button>
+            <button class="wf-json-btn apply" title="Apply" onclick="applyWfJson()">Apply</button>
+            <button class="wf-json-btn close-btn" title="Close" onclick="closeWfJson()">✕</button>
+          </div>
+        </div>
+        <textarea id="wf-json-textarea" spellcheck="false" oninput="onWfJsonInput()"></textarea>
+        <div id="wf-json-err"></div>
+      </div>
+
+      <div id="left-actions">
+        <button class="left-btn" onclick="importWorkflow()">Import</button>
+        <button class="left-btn primary" onclick="newWorkflow()">+ New</button>
+      </div>
+    </div>
+    <button id="btn-toggle-left" onclick="toggleLeft()">‹</button>
+  </div>
+
+  <!-- CENTER — graph -->
+  <div id="center">
+    <div id="rf-container"></div>
+    <div id="rf-layout-controls">
+      <button class="cy-btn" onclick="fitGraph()">⊡</button>
+      <button class="cy-btn" onclick="setLayout('TB')">TB</button>
+      <button class="cy-btn" onclick="setLayout('LR')">LR</button>
+    </div>
+    <div id="empty-state">
+      <div class="es-icon">⬡</div>
+      <div class="es-title">No workflow loaded</div>
+      <div class="es-sub">Select or create a workflow in the left panel</div>
+    </div>
+  </div>
+
+  <!-- RIGHT — step editor -->
+  <button id="btn-toggle-right" onclick="toggleRightPanel()">‹</button>
+  <div id="right-panel" class="hidden">
+    <div id="right-inner">
+      <div id="editor-tabs">
+        <button class="etab active" onclick="switchEditorTab('edit')">Edit</button>
+        <button class="etab" onclick="switchEditorTab('run')">▶ Run</button>
+        <button class="etab" onclick="switchEditorTab('log')">Logs</button>
+        <button class="etab" onclick="switchEditorTab('json')">JSON</button>
+      </div>
+
+      <!-- EDIT TAB -->
+      <div class="etab-content active" id="etab-edit">
+        <div id="form-editor">
+          <div class="form-section">
+            <div class="form-label">Step Name</div>
+            <input class="form-input" id="f-name" placeholder="my_step_name">
+          </div>
+          <div class="form-section tech-section">
+            <button class="tech-toggle" id="tech-toggle" type="button" onclick="toggleTechSection()">Technical settings ▾</button>
+            <div id="tech-content">
+              <div class="form-section">
+                <div class="form-label">Type</div>
+                <select class="form-select" id="f-type" onchange="onTypeChange()">
+                  <option value="prompt">prompt</option>
+                  <option value="api">api</option>
+                  <option value="webpage">webpage</option>
+                  <option value="transform">transform</option>
+                  <option value="script">script</option>
+                  <option value="tool">tool</option>
+                </select>
+              </div>
+              <div id="llm-section">
+                <div class="form-row">
+                  <div class="form-section">
+                    <div class="form-label">Provider</div>
+                    <select class="form-select" id="f-provider" onchange="onProviderChange()">
+                      <option value="anthropic">anthropic</option>
+                      <option value="openai">openai (ChatGPT)</option>
+                      <option value="perplexity">perplexity</option>
+                      <option value="mistral">mistral</option>
+                    </select>
+                  </div>
+                  <div class="form-section">
+                    <div class="form-label">Temperature</div>
+                    <input class="form-input" id="f-temp" type="number" min="0" max="1" step="0.1" value="0">
+                  </div>
+                </div>
+                <div class="form-section">
+                  <div class="form-label">Model</div>
+                  <select class="form-select" id="f-model"></select>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div id="api-section" style="display:none">
+            <div class="form-row">
+              <div class="form-section" id="method-section">
+                <div class="form-label">Method</div>
+                <select class="form-select" id="f-method">
+                  <option>GET</option><option>POST</option><option>PUT</option><option>DELETE</option>
+                </select>
+              </div>
+            </div>
+            <div class="form-section">
+              <div class="form-label">URL</div>
+              <input class="form-input" id="f-url" placeholder="https://api.example.com/{{param}}">
+              <div class="form-hint" id="url-hint">Use {{input_name}} for dynamic params</div>
+            </div>
+
+            <div class="form-section" id="webpage-mode-section" style="display:none">
+              <div class="form-label">Webpage mode</div>
+              <select class="form-select" id="f-webpage-mode">
+                <option value="http">http (source HTML)</option>
+                <option value="browser">browser (headless render)</option>
+              </select>
+              <div class="form-hint">Use browser mode to execute JavaScript before extracting HTML.</div>
+            </div>
+            <div class="form-section" id="webpage-browser-options" style="display:none">
+              <div class="form-label">Browser options (JSON object)</div>
+              <textarea class="form-textarea" id="f-webpage-browser-options" placeholder='{"waitUntil":"networkidle","timeoutMs":30000,"waitForSelector":"main","viewport":{"width":1366,"height":768}}'></textarea>
+              <div class="form-hint">Supports {{input_name}} in string fields.</div>
+            </div>
+
+            <div class="form-section">
+              <button class="tech-toggle" id="api-advanced-toggle" type="button" onclick="toggleApiAdvancedSection()">Advanced API parameters ▸</button>
+              <div id="api-advanced-content" class="collapsed" style="margin-top:8px;display:flex;flex-direction:column;gap:10px;">
+                <div class="form-section">
+                  <div class="form-label">Headers (JSON object)</div>
+                  <textarea class="form-textarea" id="f-api-headers" placeholder='{"Authorization":"Bearer {{api_token}}","X-Trace":"{{trace_id}}"}'></textarea>
+                  <div class="form-hint">Values accept {{input_name}} / {{variable_name}}</div>
+                </div>
+                <div class="form-section" id="api-query-section">
+                  <div class="form-label">Query params (JSON object)</div>
+                  <textarea class="form-textarea" id="f-api-query" placeholder='{"q":"{{keyword}}","lang":"fr"}'></textarea>
+                  <div class="form-hint">Merged to URL query string. Values accept {{...}}</div>
+                </div>
+                <div class="form-section" id="api-body-section">
+                  <div class="form-label">Body (JSON object/array/value)</div>
+                  <textarea class="form-textarea tall" id="f-api-body" placeholder='{"message":"{{my_input}}","meta":{"run":"{{run_id}}"}}'></textarea>
+                  <div class="form-hint">Used for non-GET methods. Supports nested {{...}} templating.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div id="tool-section" style="display:none">
+            <div class="form-section">
+              <button class="tech-toggle" id="tool-advanced-toggle" type="button" onclick="toggleToolAdvancedSection()">Paramètres ws_tool avancés ▸</button>
+              <div id="tool-advanced-content" class="collapsed" style="margin-top:8px;display:flex;flex-direction:column;gap:10px;">
+                <div class="form-section">
+                  <div class="form-label">MCP Server</div>
+                  <select class="form-select" id="f-tool-mcp-server" onchange="onToolMcpServerChange()"></select>
+                </div>
+                <div class="form-section">
+                  <div class="form-label">Tool MCP découvert</div>
+                  <select class="form-select" id="f-tool-name"></select>
+                </div>
+                <div class="form-hint">Le serveur MCP est configuré dans Paramètres → Configuration MCP.</div>
+              </div>
+            </div>
+          </div>
+          <div class="run-available-title">Inputs disponibles (connexions)</div>
+          <div class="run-available-inputs" id="edit-available-inputs"></div>
+          <div id="sysprompt-section">
+            <div class="form-label-row">
+              <div class="form-label">System Prompt</div>
+              <button class="wf-json-btn maximize-btn" type="button" onclick="toggleEditorMaximize('f-sysprompt', this)">⛶</button>
+            </div>
+            <textarea class="form-textarea tall" id="f-sysprompt" placeholder="You are…"></textarea>
+          </div>
+          <div id="template-section">
+            <div class="form-label-row">
+              <div class="form-label">Prompt Template</div>
+              <button class="wf-json-btn maximize-btn" type="button" onclick="toggleEditorMaximize('f-template', this)">⛶</button>
+            </div>
+            <textarea class="form-textarea" id="f-template" placeholder="{{input_name}} or {{{raw}}} or {{ws_output_schema}}"></textarea>
+            <div class="form-hint">{{var}} = escaped · {{{var}}} = raw · {{ws_output_schema}} = runtime injected</div>
+          </div>
+          <div class="form-section">
+            <div class="form-label">Inputs</div>
+            <div id="inputs-fields"></div>
+            <button class="schema-add-btn" onclick="addInputField()">+ Add input</button>
+          </div>
+          <div class="form-section">
+            <div class="form-label">Outputs</div>
+            <div id="outputs-fields"></div>
+            <button class="schema-add-btn" onclick="addOutputField()">+ Add output</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- RUN TAB -->
+      <div class="etab-content" id="etab-run">
+        <div id="run-panel">
+          <div class="run-inputs" id="run-inputs-area"></div>
+          <div class="run-actions">
+            <button class="run-btn" id="run-step-btn" data-default-label="▶ Run Step Only" onclick="runStepOnly()">▶ Run Step Only</button>
+            <button class="run-btn secondary" id="run-flow-btn" data-default-label="▶ Run Workflow From Here" onclick="runWorkflowFromHere()">▶ Run Workflow From Here</button>
+          </div>
+          <div class="run-status" id="run-status">idle</div>
+          <div class="run-output-title">Variables de sortie du prompt</div>
+          <div class="run-output-vars" id="run-output-vars">// Output variables will appear here…</div>
+        </div>
+      </div>
+
+      <!-- LOG TAB -->
+      <div class="etab-content" id="etab-log">
+        <div id="run-panel">
+          <div class="run-output" id="run-log-output">// Full prompt and execution log will appear here…</div>
+          <div class="run-meta" id="run-log-meta"></div>
+        </div>
+      </div>
+
+      <!-- JSON TAB -->
+      <div class="etab-content" id="etab-json">
+        <div class="etab-json-header">
+          <span class="etab-json-title">Step JSON</span>
+          <button class="wf-json-btn maximize-btn" onclick="openJsonFullscreen('step')" title="Fullscreen">⛶</button>
+        </div>
+        <div style="padding:14px;flex:1;overflow:auto;">
+          <pre id="step-json" style="font-family:'JetBrains Mono',monospace;font-size:10px;line-height:1.8;white-space:pre-wrap;word-break:break-word;"></pre>
+        </div>
+      </div>
+
+      <div id="editor-actions">
+        <button class="editor-btn del" onclick="deleteCurrentStep()">Delete</button>
+        <button class="editor-btn" onclick="closeEditor()">Cancel</button>
+        <button class="editor-btn save" onclick="applyStepEdit()">Save Step</button>
+      </div>
+    </div>
+  </div>
+  <div id="wf-exec-logs">
+    <button id="wf-exec-logs-header" onclick="toggleWorkflowExecLogs()">
+      <span>Workflow execution logs</span>
+      <span id="wf-exec-logs-actions">
+        <button type="button" class="wf-log-action" onclick="event.stopPropagation(); copyWorkflowExecLogs()">Copy</button>
+        <button type="button" class="wf-log-action" onclick="event.stopPropagation(); clearWorkflowExecLogs()">Clear</button>
+        <span id="wf-exec-logs-toggle">▸</span>
+      </span>
+    </button>
+    <div id="wf-exec-logs-body" class="hidden">
+      <pre id="wf-exec-logs-content"></pre>
+    </div>
+  </div>
+  <button id="btn-add-step" style="display:none" onclick="openNewStepEditor()">+ Add Step</button>
+  <div id="edge-delete-prompt" class="hidden">
+    <button class="edge-trash-btn" onclick="confirmEdgeDelete()">🗑</button>
+  </div>
+</div><!-- /#main -->
+</div><!-- /#app-wrapper -->
+<!-- JSON FULLSCREEN OVERLAY -->
+<div id="json-fullscreen" class="hidden">
+  <div id="json-fullscreen-header">
+    <span id="json-fullscreen-name">—</span>
+    <div style="display:flex;gap:6px;align-items:center">
+      <button class="jfs-btn" id="jfs-copy-btn" onclick="jfsCopy()">Copy</button>
+      <button class="jfs-btn apply" id="jfs-apply-btn" onclick="jfsApply()">Apply</button>
+      <button class="jfs-btn close" onclick="closeJsonFullscreen()">✕ Close</button>
+    </div>
+  </div>
+  <textarea id="json-fullscreen-textarea" spellcheck="false" oninput="jfsValidate()"></textarea>
+  <div id="json-fullscreen-err"></div>
+</div>
+
+<!-- MODAL -->
+<div id="modal-overlay" class="hidden">
+  <div id="modal">
+    <div class="modal-header">
+      <div class="modal-title" id="modal-title">Modal</div>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-body" id="modal-body"></div>
+    <div class="modal-actions" id="modal-actions"></div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script type="importmap">
+{
+  "imports": {
+    "react":            "https://esm.sh/react@18.3.1",
+    "react/jsx-runtime":"https://esm.sh/react@18.3.1/jsx-runtime",
+    "react-dom/client": "https://esm.sh/react-dom@18.3.1/client",
+    "@xyflow/react":    "https://esm.sh/@xyflow/react@12.3.6?deps=react@18.3.1",
+    "dagre":            "https://esm.sh/dagre@0.8.5"
+  }
+}
+</script>
+<link rel="stylesheet" href="https://unpkg.com/@xyflow/react@12/dist/style.css">
+<script type="module" src="app.js"></script>
+</body>
+</html>
