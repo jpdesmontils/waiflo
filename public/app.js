@@ -88,8 +88,6 @@ let _workflowExecLogs = [];
 let _activeRunNodeIds = new Set();
 let _lastEditorTab = 'edit';
 let _logsPanelDrag = null;
-let _maximizedTa = null;
-let _maximizedBtn = null;
 const WF_LOGS_PANEL_POS_KEY = 'wf_logs_panel_pos';
 let _activeRunEdgeIds = new Set();
 // FIX #6 — flag anti-réentrance pour hydrateRunStateFromServer
@@ -730,6 +728,7 @@ function closeJsonFullscreen() {
 }
 
 function jfsValidate() {
+  if (typeof _jfsSource === 'string' && _jfsSource.startsWith('textarea:')) return;
   const ta=document.getElementById('json-fullscreen-textarea');
   const errEl=document.getElementById('json-fullscreen-err');
   try { JSON.parse(ta.value); ta.classList.remove('err'); errEl.textContent=''; }
@@ -743,10 +742,17 @@ async function jfsCopy() {
 }
 
 function jfsApply() {
+  const fsTa = document.getElementById('json-fullscreen-textarea');
+  if (typeof _jfsSource === 'string' && _jfsSource.startsWith('textarea:')) {
+    const targetId = _jfsSource.slice('textarea:'.length);
+    const target = document.getElementById(targetId);
+    if (target) target.value = fsTa.value;
+    closeJsonFullscreen();
+    return;
+  }
   if (_jfsSource!=='workflow'||!currentWf) return;
-  const ta=document.getElementById('json-fullscreen-textarea');
   let parsed;
-  try { parsed=JSON.parse(ta.value); }
+  try { parsed=JSON.parse(fsTa.value); }
   catch(e) { document.getElementById('json-fullscreen-err').textContent='✕ '+e.message; return; }
   currentWf.data=parsed; buildGraph(parsed); _refreshWfJsonPanel();
   if (guestMode) { _guestSync(); toast('Applied (not persisted)','ok'); } else saveWorkflow();
@@ -1303,13 +1309,7 @@ function setRightPanelVisible(visible) {
   const btn = document.getElementById('btn-toggle-right');
   if (!panel || !btn) return;
   if (!visible) {
-    document.querySelectorAll('.form-textarea.maximized').forEach(el => el.classList.remove('maximized'));
-    document.querySelectorAll('.maximize-btn.active').forEach(el => el.classList.remove('active'));
-    const backdrop = document.getElementById('maximize-backdrop');
-    const closeBtn = document.getElementById('maximize-close-btn');
-    if (backdrop) backdrop.style.display = 'none';
-    if (closeBtn) closeBtn.style.display = 'none';
-    _maximizedTa = null; _maximizedBtn = null;
+    if (typeof _jfsSource === 'string' && _jfsSource.startsWith('textarea:')) closeJsonFullscreen();
   }
   panel.classList.toggle('hidden', !visible);
   btn.textContent = visible ? '›' : '‹';
@@ -1469,38 +1469,28 @@ function onToolMcpServerChange(selectedTool = '') {
   }).join('');
 }
 
-function toggleEditorMaximize(textareaId, btn) {
+const _textareaFullscreenLabels = {
+  'f-sysprompt': 'System Prompt',
+  'f-template':  'Prompt Template',
+};
+
+function toggleEditorMaximize(textareaId) {
   const ta = document.getElementById(textareaId);
   if (!ta) return;
-  const isOpen = ta.classList.toggle('maximized');
-  if (btn) btn.classList.toggle('active', isOpen);
-  let backdrop = document.getElementById('maximize-backdrop');
-  let closeBtn = document.getElementById('maximize-close-btn');
-  if (!backdrop) {
-    backdrop = document.createElement('div');
-    backdrop.id = 'maximize-backdrop';
-    backdrop.onclick = () => { if (_maximizedTa) toggleEditorMaximize(_maximizedTa, _maximizedBtn); };
-    document.body.appendChild(backdrop);
-  }
-  if (!closeBtn) {
-    closeBtn = document.createElement('button');
-    closeBtn.id = 'maximize-close-btn';
-    closeBtn.textContent = '✕';
-    closeBtn.title = 'Fermer';
-    closeBtn.onclick = () => { if (_maximizedTa) toggleEditorMaximize(_maximizedTa, _maximizedBtn); };
-    document.body.appendChild(closeBtn);
-  }
-  if (isOpen) {
-    _maximizedTa = textareaId;
-    _maximizedBtn = btn;
-    backdrop.style.display = 'block';
-    closeBtn.style.display = 'flex';
-  } else {
-    _maximizedTa = null;
-    _maximizedBtn = null;
-    backdrop.style.display = 'none';
-    closeBtn.style.display = 'none';
-  }
+  const label = _textareaFullscreenLabels[textareaId] || textareaId;
+  _jfsSource = 'textarea:' + textareaId;
+  const overlay = document.getElementById('json-fullscreen');
+  const fsTa    = document.getElementById('json-fullscreen-textarea');
+  const nameEl  = document.getElementById('json-fullscreen-name');
+  const applyBtn= document.getElementById('jfs-apply-btn');
+  const errEl   = document.getElementById('json-fullscreen-err');
+  nameEl.textContent = label;
+  fsTa.value = ta.value;
+  fsTa.classList.remove('err');
+  errEl.textContent = '';
+  applyBtn.style.display = '';
+  overlay.classList.remove('hidden');
+  setTimeout(() => fsTa.focus(), 50);
 }
 
 function toggleSyspromptSection() {
