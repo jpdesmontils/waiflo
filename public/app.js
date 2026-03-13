@@ -292,7 +292,7 @@ function buildGraph(data) {
     animated: _activeRunEdgeIds.has(e.id)
   }));
 
-  document.getElementById('meta-name').textContent = data.lang_name||currentWf?.name||'—';
+  _setWorkflowNameUI(currentWf?.name || data.lang_name || '—');
   document.getElementById('wf-meta').classList.remove('hidden');
   document.getElementById('empty-state').classList.add('hidden');
   _graphVersion++;
@@ -499,6 +499,89 @@ function showSignupCTA() {
       { label:'Créer un compte →', primary:true, action:()=>{ closeModal(); window.location.href='/login'; } }
     ]
   );
+}
+
+function _setWorkflowNameUI(name = '—') {
+  const label = document.getElementById('meta-name');
+  if (label) label.textContent = name;
+  const jsonName = document.getElementById('wf-json-panel-name');
+  if (jsonName && currentWf) jsonName.textContent = `${currentWf.name}.waiflo.json`;
+}
+
+function startWorkflowRename() {
+  if (!currentWf || _isRenamingWorkflow) return;
+  const label = document.getElementById('meta-name');
+  const input = document.getElementById('meta-name-input');
+  const btn = document.getElementById('meta-name-edit');
+  if (!label || !input || !btn) return;
+  _isRenamingWorkflow = true;
+
+  input.value = currentWf.name || currentWf.data?.lang_name || '';
+  input.classList.remove('hidden');
+  label.style.display = 'none';
+  btn.style.display = 'none';
+
+  const cancel = () => {
+    _isRenamingWorkflow = false;
+    input.classList.add('hidden');
+    label.style.display = '';
+    btn.style.display = '';
+    input.onkeydown = null;
+    input.onblur = null;
+  };
+
+  const submit = async () => {
+    const nextName = input.value.trim();
+    if (!nextName || nextName === currentWf.name) return cancel();
+    if (!/^[a-z0-9_\-]+$/.test(nextName)) {
+      toast('Use only lowercase letters, numbers, _ and -','err');
+      input.focus();
+      return;
+    }
+
+    if (guestMode) {
+      if (guestWorkflows.some(w => w.name === nextName)) {
+        toast('Name already exists','err');
+        input.focus();
+        return;
+      }
+      const item = guestWorkflows.find(w => w.name === currentWf.name);
+      if (item) item.name = nextName;
+      currentWf.name = nextName;
+      if (currentWf.data) currentWf.data.lang_name = nextName;
+      _guestSync();
+      renderWorkflowList();
+      _setWorkflowNameUI(nextName);
+      toast('Workflow renamed (not persisted)','ok');
+      return cancel();
+    }
+
+    const res = await api(`/api/workflows/${currentWf.name}/rename`, 'PATCH', { newName: nextName });
+    if (res.error) {
+      toast(res.error, 'err');
+      input.focus();
+      return;
+    }
+
+    currentWf.name = nextName;
+    if (currentWf.data) currentWf.data.lang_name = nextName;
+    _setWorkflowNameUI(nextName);
+    _refreshWfJsonPanel();
+    await loadWorkflowList();
+    toast('Workflow renamed','ok');
+    cancel();
+  };
+
+  input.onkeydown = (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); submit(); }
+    if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+  };
+  input.onblur = () => { if (_isRenamingWorkflow) submit(); };
+
+  setTimeout(() => {
+    input.focus();
+    input.select();
+  }, 0);
 }
 
 // ── API CLIENT ───────────────────────────────────────────────────
@@ -2159,7 +2242,8 @@ Object.assign(window,{
   deleteWorkflow, copyWfJson, applyWfJson, closeWfJson, onWfJsonInput, copyWfJsonByName,
   openJsonFullscreen, closeJsonFullscreen, jfsCopy, jfsApply, jfsValidate,
   saveApiKey, deleteApiKey, changePassword, switchSettingsTab, addMcpServerRow, removeMcpServerRow, validateMcpServer, saveMcpServers,
-  onProviderChange, onSettingsProviderChange, onToolMcpServerChange, setLanguage
+  onProviderChange, onSettingsProviderChange, onToolMcpServerChange, setLanguage,
+  startWorkflowRename
 });
 
 // ── KEYBOARD ────────────────────────────────────────────────────
