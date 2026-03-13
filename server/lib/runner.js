@@ -90,7 +90,7 @@ export async function runPromptStep(step, inputs, user, req, res) {
   const maxTok = llm.max_tokens || 2048;
   const system = step.ws_system_prompt || '';
 
-  const stream = req.query.stream === '1' || req.query.stream === 'true';
+  const stream = req.query.stream !== '0' && req.query.stream !== 'false';
 
   let apiKey = await resolveApiKey(user, provider);
   const llmProvider = createProvider(provider, apiKey);
