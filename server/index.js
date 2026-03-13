@@ -28,7 +28,10 @@ import pageRoutes               from './routes/pages.js';
 import authRoutes               from './routes/auth.js';
 import workflowRoutes           from './routes/workflows.js';
 import execRoutes               from './routes/exec.js';
+import execWorkflowRoutes       from './routes/execWorkflow.js';
 import { wfRouter, stepRouter } from './routes/design.js';
+import { scheduler }            from './lib/scheduler.js';
+import { startQueuePurge }      from './lib/queuePurge.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT      = process.env.PORT || 3001;
@@ -71,6 +74,7 @@ app.use('/', pageRoutes);
 app.use('/api/auth',                 authRoutes);
 app.use('/api/workflows',            workflowRoutes);
 app.use('/api/exec',                 execRoutes);
+app.use('/api/exec',                 execWorkflowRoutes);
 app.use('/api/workflow/design',      wfRouter);
 app.use('/api/workflow-step/design', stepRouter);
 app.get('/api/health', (_, res) => res.json({ ok: true }));
@@ -88,4 +92,8 @@ app.listen(PORT, () => {
   console.log(`NODE_ENV: ${process.env.NODE_ENV || 'development'}`);
   console.log(`MASTER_SECRET: ${process.env.MASTER_SECRET ? 'set ✓' : 'NOT SET ✗'}`);
   console.log(`JWT_SECRET:    ${process.env.JWT_SECRET    ? 'set ✓' : 'NOT SET ✗'}`);
+
+  // ── Background systems ───────────────────────────────────────────
+  scheduler.start().catch(err => console.error('[scheduler] Failed to start:', err));
+  startQueuePurge();
 });
