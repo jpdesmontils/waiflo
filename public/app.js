@@ -827,6 +827,37 @@ function newWorkflow() {
   setTimeout(()=>document.getElementById('new-wf-name')?.focus(),100);
 }
 
+function duplicateWorkflow() {
+  if (!currentWf) return;
+  const suggestedName = currentWf.name.replace(/_copy(_\d+)?$/, '') + '_copy';
+  openModal('Dupliquer le workflow',`
+    <div class="form-section">
+      <div class="form-label">Nom du nouveau workflow</div>
+      <input class="form-input" id="dup-wf-name" placeholder="my_pipeline_copy" value="${suggestedName}" style="width:100%">
+      <div class="form-hint" style="margin-top:6px">Minuscules, chiffres, _ et - uniquement.</div>
+    </div>`,
+    [
+      { label:'Annuler', action:closeModal },
+      { label:'Dupliquer', primary:true, action:async()=>{
+        const name = document.getElementById('dup-wf-name').value.trim();
+        if (!name) return;
+        if (!/^[a-z0-9_\-]+$/.test(name)) return toast('Use only lowercase letters, numbers, _ and -','err');
+        const data = JSON.parse(JSON.stringify(currentWf.data));
+        if (guestMode) {
+          if (guestWorkflows.find(w=>w.name===name)) return toast('Name already exists','err');
+          guestWorkflows.push({ name, data, updatedAt:new Date().toISOString() });
+          closeModal(); await loadWorkflowList(); selectWf(name); toast('Workflow dupliqué (non persisté)','ok');
+        } else {
+          const res = await api(`/api/workflows/${name}`,'POST',data);
+          if (res.error) return toast(res.error,'err');
+          closeModal(); await loadWorkflowList(); selectWf(name); toast('Workflow dupliqué','ok');
+        }
+      }}
+    ]
+  );
+  setTimeout(()=>{ const i=document.getElementById('dup-wf-name'); if(i){i.focus();i.select();} },100);
+}
+
 function importWorkflow() {
   const input=document.createElement('input');
   input.type='file'; input.accept='.json,.waiflo';
@@ -2231,7 +2262,7 @@ function syntaxHighlight(json) {
 // FIX #11 — copyWorkflowExecLogs et clearWorkflowExecLogs ajoutées
 Object.assign(window,{
   doLogout, openSettings, saveWorkflow, downloadWorkflow, newWorkflow, importWorkflow,
-  toggleLeft, toggleTheme, fitGraph, setLayout,
+  toggleLeft, toggleTheme, fitGraph, setLayout, duplicateWorkflow,
   openNewStepEditor, openStepEditor,
   applyStepEdit, deleteCurrentStep, closeEditor, switchEditorTab,
   addInputField, addOutputField, onTypeChange,
