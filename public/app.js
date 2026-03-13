@@ -6,7 +6,7 @@ import { createRoot } from 'react-dom/client';
 import {
   ReactFlow, Background, Controls, MiniMap,
   Handle, Position, MarkerType,
-  useNodesState, useEdgesState, addEdge,
+  useNodesState, useEdgesState, addEdge, applyNodeChanges,
   ReactFlowProvider, useReactFlow
 } from '@xyflow/react';
 import dagre from 'dagre';
@@ -88,6 +88,7 @@ let _workflowExecLogs = [];
 let _activeRunNodeIds = new Set();
 let _lastEditorTab = 'edit';
 let _logsPanelDrag = null;
+const WF_LOGS_PANEL_POS_KEY = 'wf_logs_panel_pos';
 let _activeRunEdgeIds = new Set();
 // FIX #6 — flag anti-réentrance pour hydrateRunStateFromServer
 let _hydratingNodes = new Set();
@@ -175,9 +176,14 @@ function FlowInner({ nodes, edges, onNodesChange, onEdgesChange, onConnect, onEd
 }
 
 function AppGraph() {
-  const [nodes, setNodes, onNodesChange] = useNodesState([]);
+  const [nodes, setNodes] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [version, setVersion] = useState(0);
+
+  const onNodesChange = (changes) => {
+    setNodes((nds) => applyNodeChanges(changes, nds));
+    persistWorkflowNodePositions(changes);
+  };
 
   const onConnect = (params) => {
     setEdges((eds) => addEdge({
@@ -225,7 +231,10 @@ function buildGraph(data) {
   if (wf) {
     wf.wf_nodes.forEach(node=>{
       const s = stepsMap[node.ws_ref]||{ ws_name:node.ws_ref, ws_type:'prompt' };
-      rawNodes.push({ id:node.step_id, type:'step', position:{x:0,y:0}, data:{ step:s, nodeId:node.step_id } });
+      const nodePos = node.position && Number.isFinite(node.position.x) && Number.isFinite(node.position.y)
+        ? { x: node.position.x, y: node.position.y }
+        : { x: 0, y: 0 };
+      rawNodes.push({ id:node.step_id, type:'step', position:nodePos, data:{ step:s, nodeId:node.step_id } });
       (node.depends_on||[]).forEach(dep=>{
         const depNode = findWorkflowNode(wf, dep);
         if (!depNode) return;
@@ -242,7 +251,11 @@ function buildGraph(data) {
     document.getElementById('meta-steps').textContent = steps.length;
     document.getElementById('meta-wf-pill').style.display = 'none';
   }
-  const layoutedNodes = computeLayout(rawNodes, rawEdges, rankDir);
+  const hasPersistedPositions = wf && rawNodes.some(n => {
+    const node = (wf.wf_nodes || []).find(wfn => wfn.step_id === n.id);
+    return Number.isFinite(node?.position?.x) && Number.isFinite(node?.position?.y);
+  });
+  const layoutedNodes = hasPersistedPositions ? rawNodes : computeLayout(rawNodes, rawEdges, rankDir);
 
   // FIX #4 — initialiser maxY à -Infinity pour gérer les positions négatives
   const curPos = {};
@@ -299,7 +312,8 @@ function ensureWorkflowGraph() {
       wf_nodes: (data.steps || []).map((step, idx) => ({
         step_id: step.ws_name || `step_${idx+1}`,
         ws_ref: step.ws_name,
-        depends_on: []
+        depends_on: [],
+        position: { x: 0, y: 0 }
       }))
     };
     data.workflows.push(wf);
@@ -323,9 +337,34 @@ function ensureWorkflowNodeForStep(stepName) {
     stepId = `${base}_${i++}`;
   }
 
-  node = { step_id: stepId, ws_ref: stepName, depends_on: [] };
+  node = { step_id: stepId, ws_ref: stepName, depends_on: [], position: { x: 0, y: 0 } };
   wf.wf_nodes.push(node);
   return node;
+}
+
+function persistWorkflowNodePositions(changes = []) {
+  if (!currentWf || !Array.isArray(changes) || !changes.length) return;
+  const wf = ensureWorkflowGraph();
+  if (!wf) return;
+
+  let updated = false;
+  for (const change of changes) {
+    if (change?.type !== 'position' || !change?.position || change?.dragging) continue;
+    const node = (wf.wf_nodes || []).find(n => n.step_id === change.id);
+    if (!node) continue;
+
+    const x = Math.round(change.position.x);
+    const y = Math.round(change.position.y);
+    if (node.position?.x === x && node.position?.y === y) continue;
+
+    node.position = { x, y };
+    updated = true;
+  }
+
+  if (!updated) return;
+  _refreshWfJsonPanel();
+  if (guestMode) _guestSync();
+  else saveWorkflow(true);
 }
 
 function removeWorkflowDependency(sourceId, targetId) {
@@ -383,7 +422,7 @@ function syncWorkflowDependencies(sourceId, targetId) {
   if (!sourceNode) {
     const sourceStep = (currentWf.data.steps || []).find(s => s.ws_name === sourceId);
     if (sourceStep) {
-      sourceNode = { step_id: sourceId, ws_ref: sourceStep.ws_name, depends_on: [] };
+      sourceNode = { step_id: sourceId, ws_ref: sourceStep.ws_name, depends_on: [], position: { x: 0, y: 0 } };
       wf.wf_nodes.push(sourceNode);
     }
   }
@@ -391,7 +430,7 @@ function syncWorkflowDependencies(sourceId, targetId) {
   if (!targetNode) {
     const targetStep = (currentWf.data.steps || []).find(s => s.ws_name === targetId);
     if (targetStep) {
-      targetNode = { step_id: targetId, ws_ref: targetStep.ws_name, depends_on: [] };
+      targetNode = { step_id: targetId, ws_ref: targetStep.ws_name, depends_on: [], position: { x: 0, y: 0 } };
       wf.wf_nodes.push(targetNode);
     }
   }
@@ -653,12 +692,13 @@ async function openWorkflow(name) {
   document.getElementById('btn-add-step').style.display='';
 }
 
-async function saveWorkflow() {
+async function saveWorkflow(silent = false) {
   if (!currentWf) return;
   if (guestMode) { showSignupCTA(); return; }
   const res=await api(`/api/workflows/${currentWf.name}`,'PUT',currentWf.data);
   if (res.error) return toast(res.error,'err');
-  toast('Saved','ok'); loadWorkflowList();
+  if (!silent) toast('Saved','ok');
+  loadWorkflowList();
 }
 
 function _guestSync() {
@@ -1146,14 +1186,30 @@ function updateFloatingAddStepPosition() {
   const logs = document.getElementById('wf-exec-logs');
   if (!btn || !logs) return;
   const rect = logs.getBoundingClientRect();
-  const bottom = Math.max(16, Math.ceil(window.innerHeight - rect.top + 8));
-  btn.style.bottom = `${bottom}px`;
+  const btnHeight = btn.offsetHeight || 34;
+  const margin = 10;
+  const top = Math.max(12, rect.top - btnHeight - margin);
+  const maxLeft = Math.max(12, window.innerWidth - btn.offsetWidth - 12);
+  const left = Math.min(maxLeft, Math.max(12, rect.left));
+  btn.style.top = `${top}px`;
+  btn.style.left = `${left}px`;
+  btn.style.bottom = 'auto';
 }
 
 function initWorkflowLogsPanel() {
   const panel = document.getElementById('wf-exec-logs');
   const header = document.getElementById('wf-exec-logs-header');
   if (!panel || !header) return;
+
+  const persistPanelFrame = () => {
+    const rect = panel.getBoundingClientRect();
+    localStorage.setItem(WF_LOGS_PANEL_POS_KEY, JSON.stringify({
+      left: Math.round(rect.left),
+      top: Math.round(rect.top),
+      width: Math.round(rect.width),
+      height: Math.round(rect.height)
+    }));
+  };
 
   const onMove = (ev) => {
     if (!_logsPanelDrag) return;
@@ -1167,11 +1223,13 @@ function initWorkflowLogsPanel() {
     panel.style.top = `${top}px`;
     panel.style.right = 'auto';
     panel.style.bottom = 'auto';
+    persistPanelFrame();
     updateFloatingAddStepPosition();
   };
 
   const onUp = () => {
     _logsPanelDrag = null;
+    persistPanelFrame();
     document.removeEventListener('mousemove', onMove);
     document.removeEventListener('mouseup', onUp);
   };
@@ -1184,8 +1242,20 @@ function initWorkflowLogsPanel() {
     document.addEventListener('mouseup', onUp);
   });
 
+  try {
+    const saved = JSON.parse(localStorage.getItem(WF_LOGS_PANEL_POS_KEY) || 'null');
+    if (saved && Number.isFinite(saved.left) && Number.isFinite(saved.top)) {
+      panel.style.left = `${Math.max(0, saved.left)}px`;
+      panel.style.top = `${Math.max(0, saved.top)}px`;
+      panel.style.right = 'auto';
+      panel.style.bottom = 'auto';
+      if (Number.isFinite(saved.width)) panel.style.width = `${Math.max(360, saved.width)}px`;
+      if (Number.isFinite(saved.height)) panel.style.height = `${Math.max(120, saved.height)}px`;
+    }
+  } catch (_) {}
+
   if (window.ResizeObserver) {
-    const ro = new ResizeObserver(() => updateFloatingAddStepPosition());
+    const ro = new ResizeObserver(() => { persistPanelFrame(); updateFloatingAddStepPosition(); });
     ro.observe(panel);
   }
   window.addEventListener('resize', updateFloatingAddStepPosition);
