@@ -1,6 +1,0 @@
-{
-  "max_parallel_workflows_global": 100,
-  "max_parallel_steps": 200,
-  "default_parallel_per_user": 2,
-  "queue_retention_days": 7
-}
