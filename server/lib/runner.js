@@ -32,6 +32,21 @@ async function resolveApiKey(user, provider) {
   );
 }
 
+function resolveToolConfig(step) {
+  const wsTool = step?.ws_tool || {};
+  const mcpServerLabel = String(
+    wsTool.mcp_server_label || wsTool.server_label || wsTool.server || ''
+  ).trim();
+
+  const toolName = String(
+    wsTool.tool_name || wsTool.name || step?.ws_tools?.[0] || ''
+  ).trim();
+
+  if (!mcpServerLabel) throw new Error('tool step requires ws_tool.mcp_server_label');
+  if (!toolName) throw new Error('tool step requires ws_tool.tool_name or ws_tools[0]');
+
+  return { mcpServerLabel, toolName };
+}
 
 function collectImageUrls(step, inputs) {
   const props = step?.ws_inputs_schema?.properties || {};
@@ -201,62 +216,6 @@ export async function runPromptStep(step, inputs, user, req, res) {
   }
 }
 
-
-export async function runPromptStep_legacy(step, inputs, user, res) {
-  const llm      = step.ws_llm || {};
-  const provider = (llm.provider || 'anthropic').toLowerCase();
-  const meta     = PROVIDER_META[provider] || PROVIDER_META.anthropic;
-  const model    = llm.model       || meta.defaultModel;
-  const temp     = llm.temperature ?? 0;
-  const maxTok   = llm.max_tokens  || 2048;
-  const system   = step.ws_system_prompt || '';
-
-  let apiKey = await resolveApiKey(user, provider);
-  const llmProvider = createProvider(provider, apiKey);
-  apiKey = null; // Clear from memory after use
-
-  // Inject ws_output_schema into inputs so {{ws_output_schema}} resolves
-  const allInputs = {
-    ...inputs,
-    ws_output_schema: JSON.stringify(step.ws_output_schema || {}, null, 2)
-  };
-  const userPrompt = buildPrompt(step.ws_prompt_template || '', allInputs);
-
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-
-  const send = (event, data) => {
-    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-  };
-
-  try {
-    let fullText = '';
-    const imageUrls = collectImageUrls(step, inputs);
-    for await (const chunk of llmProvider.stream({ model, system, userPrompt, imageUrls, temperature: temp, maxTokens: maxTok })) {
-      send('token', { text: chunk.text });
-      fullText += chunk.text;
-    }
-
-    // Try to parse as JSON
-    let parsed = null;
-    try {
-      const clean = fullText.replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim();
-      parsed = JSON.parse(clean);
-    } catch { /* not JSON */ }
-
-    send('done', { full: fullText, parsed });
-    res.end();
-    return { fullText, parsed, userPrompt, error: null };
-
-  } catch (err) {
-    send('error', { message: err.message });
-    res.end();
-    return { fullText: '', parsed: null, userPrompt, error: err.message };
-  }
-}
-
-
 function renderTemplateString(template, vars) {
   let out = String(template ?? '');
   for (const [k, v] of Object.entries(vars || {})) {
@@ -409,22 +368,6 @@ export async function runWebpageStep(step, inputs) {
     return runWebpageBrowserStep(webpageConfig, inputs || {});
   }
   return runWebpageHttpStep(webpageConfig, inputs || {});
-}
-
-function resolveToolConfig(step) {
-  const wsTool = step?.ws_tool || {};
-  const mcpServerLabel = String(
-    wsTool.mcp_server_label || wsTool.server_label || wsTool.server || ''
-  ).trim();
-
-  const toolName = String(
-    wsTool.tool_name || wsTool.name || step?.ws_tools?.[0] || ''
-  ).trim();
-
-  if (!mcpServerLabel) throw new Error('tool step requires ws_tool.mcp_server_label');
-  if (!toolName) throw new Error('tool step requires ws_tool.tool_name or ws_tools[0]');
-
-  return { mcpServerLabel, toolName };
 }
 
 /**
