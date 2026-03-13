@@ -61,7 +61,7 @@ router.post('/step', execLimiter, async (req, res) => {
 
     if (wsType === 'prompt') {
       // Streaming SSE
-      const promptRun = await runPromptStep(step, inputs || {}, user, req, res);
+      const promptRun = await runPromptStep(step, inputs || {}, user, res);
       if (req.user?.userId) {
         await saveStepRunRecord(req.user.userId, workflowName, step.ws_name, {
           workflowName,
