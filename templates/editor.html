@@ -90,6 +90,7 @@
   <!-- RIGHT — step editor -->
   <button id="btn-toggle-right" onclick="toggleRightPanel()">‹</button>
   <div id="right-panel" class="hidden">
+    <div id="right-resize-handle" onmousedown="startRightPanelResize(event)"></div>
     <div id="right-inner">
       <div id="editor-tabs">
         <button class="etab active" onclick="switchEditorTab('edit')">{{tab_edit}}</button>
@@ -210,25 +211,35 @@
           </div>
           <div class="run-available-title">{{edit_available_inputs_title}}</div>
           <div class="run-available-inputs" id="edit-available-inputs"></div>
-          <div id="sysprompt-section">
-            <div class="form-label-row">
-              <div class="form-label">{{label_sysprompt}}</div>
-              <button class="wf-json-btn maximize-btn" type="button" onclick="toggleEditorMaximize('f-sysprompt', this)">{{btn_fullscreen}}</button>
-            </div>
-            <textarea class="form-textarea tall" id="f-sysprompt" placeholder="You are…"></textarea>
-          </div>
-          <div id="template-section">
-            <div class="form-label-row">
-              <div class="form-label">{{label_template}}</div>
-              <button class="wf-json-btn maximize-btn" type="button" onclick="toggleEditorMaximize('f-template', this)">{{btn_fullscreen}}</button>
-            </div>
-            <textarea class="form-textarea" id="f-template" placeholder="{{input_name}} or {{{raw}}} or {{ws_output_schema}}"></textarea>
-            <div class="form-hint">{{hint_template}}</div>
-          </div>
           <div class="form-section">
             <div class="form-label">{{label_inputs}}</div>
             <div id="inputs-fields"></div>
             <button class="schema-add-btn" onclick="addInputField()">{{btn_add_input}}</button>
+          </div>
+          <div id="sysprompt-section">
+            <div class="form-label-row">
+              <div class="form-label">{{label_sysprompt}}</div>
+              <div style="display:flex;gap:4px;align-items:center">
+                <button class="wf-json-btn section-fold-btn" type="button" id="sysprompt-fold-btn" onclick="toggleSyspromptSection()" title="Plier/Déplier">▾</button>
+                <button class="wf-json-btn maximize-btn" type="button" onclick="toggleEditorMaximize('f-sysprompt', this)">{{btn_fullscreen}}</button>
+              </div>
+            </div>
+            <div id="sysprompt-content">
+              <textarea class="form-textarea tall" id="f-sysprompt" placeholder="You are…"></textarea>
+            </div>
+          </div>
+          <div id="template-section">
+            <div class="form-label-row">
+              <div class="form-label">{{label_template}}</div>
+              <div style="display:flex;gap:4px;align-items:center">
+                <button class="wf-json-btn section-fold-btn" type="button" id="template-fold-btn" onclick="toggleTemplateSection()" title="Plier/Déplier">▾</button>
+                <button class="wf-json-btn maximize-btn" type="button" onclick="toggleEditorMaximize('f-template', this)">{{btn_fullscreen}}</button>
+              </div>
+            </div>
+            <div id="template-content">
+              <textarea class="form-textarea" id="f-template" placeholder="{{input_name}} or {{{raw}}} or {{ws_output_schema}}"></textarea>
+              <div class="form-hint">{{hint_template}}</div>
+            </div>
           </div>
           <div class="form-section">
             <div class="form-label">{{label_outputs}}</div>

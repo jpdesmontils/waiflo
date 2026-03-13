@@ -88,7 +88,8 @@ let _workflowExecLogs = [];
 let _activeRunNodeIds = new Set();
 let _lastEditorTab = 'edit';
 let _logsPanelDrag = null;
-let _isRenamingWorkflow = false;
+let _maximizedTa = null;
+let _maximizedBtn = null;
 const WF_LOGS_PANEL_POS_KEY = 'wf_logs_panel_pos';
 let _activeRunEdgeIds = new Set();
 // FIX #6 — flag anti-réentrance pour hydrateRunStateFromServer
@@ -1093,13 +1094,8 @@ function collectStep() {
   return s;
 }
 
-function applyStepEdit() {
-  if (!currentWf) return;
-  const s=collectStep();
-  if (!s) return;
-  if (!s.ws_name) return toast('ws_name is required','err');
+function _doSaveStep(s) {
   const steps=currentWf.data.steps||[];
-
   if (currentStep) {
     const idx=steps.findIndex(x=>x.ws_name===currentStep.ws_name);
     if (idx>=0) steps[idx]=s; else steps.push(s);
@@ -1117,12 +1113,42 @@ function applyStepEdit() {
       ensureWorkflowNodeForStep(s.ws_name);
     }
   }
-
   currentWf.data.steps=steps;
   currentStep=s;
   buildGraph(currentWf.data); _refreshWfJsonPanel();
   if (guestMode) { _guestSync(); toast('Step saved (not persisted)','ok'); }
   else { saveWorkflow(); toast('Step saved','ok'); }
+}
+
+function applyStepEdit() {
+  if (!currentWf) return;
+  const s=collectStep();
+  if (!s) return;
+  if (!s.ws_name) return toast('ws_name is required','err');
+
+  // Validate that input variables are referenced in the prompt
+  if ((s.ws_type === 'prompt' || s.ws_type === 'tool') && s.ws_inputs_schema?.properties) {
+    const inputNames = Object.keys(s.ws_inputs_schema.properties);
+    if (inputNames.length > 0) {
+      const promptText = (s.ws_system_prompt || '') + ' ' + (s.ws_prompt_template || '');
+      const usedVars = inputNames.filter(name => promptText.includes(`{{${name}}}`));
+      if (usedVars.length === 0) {
+        const varList = inputNames.map(n => `<code>{{${n}}}</code>`).join(', ');
+        openModal(
+          '⚠ Variables d\'entrée non utilisées',
+          `<div class="confirm-text">Aucune variable d'entrée n'est référencée dans le prompt.</div>
+           <div class="confirm-sub" style="margin-top:8px">Les variables ${varList} ne sont pas présentes dans le System Prompt ni dans le Template.<br><br>Les entrées ne seront pas transmises au LLM.</div>`,
+          [
+            { label: 'Sauvegarder quand même', action: () => { closeModal(); _doSaveStep(s); }, primary: true },
+            { label: 'Annuler', action: closeModal }
+          ]
+        );
+        return;
+      }
+    }
+  }
+
+  _doSaveStep(s);
 }
 
 function deleteCurrentStep() {
@@ -1248,6 +1274,11 @@ function setRightPanelVisible(visible) {
   if (!visible) {
     document.querySelectorAll('.form-textarea.maximized').forEach(el => el.classList.remove('maximized'));
     document.querySelectorAll('.maximize-btn.active').forEach(el => el.classList.remove('active'));
+    const backdrop = document.getElementById('maximize-backdrop');
+    const closeBtn = document.getElementById('maximize-close-btn');
+    if (backdrop) backdrop.style.display = 'none';
+    if (closeBtn) closeBtn.style.display = 'none';
+    _maximizedTa = null; _maximizedBtn = null;
   }
   panel.classList.toggle('hidden', !visible);
   btn.textContent = visible ? '›' : '‹';
@@ -1412,6 +1443,72 @@ function toggleEditorMaximize(textareaId, btn) {
   if (!ta) return;
   const isOpen = ta.classList.toggle('maximized');
   if (btn) btn.classList.toggle('active', isOpen);
+  let backdrop = document.getElementById('maximize-backdrop');
+  let closeBtn = document.getElementById('maximize-close-btn');
+  if (!backdrop) {
+    backdrop = document.createElement('div');
+    backdrop.id = 'maximize-backdrop';
+    backdrop.onclick = () => { if (_maximizedTa) toggleEditorMaximize(_maximizedTa, _maximizedBtn); };
+    document.body.appendChild(backdrop);
+  }
+  if (!closeBtn) {
+    closeBtn = document.createElement('button');
+    closeBtn.id = 'maximize-close-btn';
+    closeBtn.textContent = '✕';
+    closeBtn.title = 'Fermer';
+    closeBtn.onclick = () => { if (_maximizedTa) toggleEditorMaximize(_maximizedTa, _maximizedBtn); };
+    document.body.appendChild(closeBtn);
+  }
+  if (isOpen) {
+    _maximizedTa = textareaId;
+    _maximizedBtn = btn;
+    backdrop.style.display = 'block';
+    closeBtn.style.display = 'flex';
+  } else {
+    _maximizedTa = null;
+    _maximizedBtn = null;
+    backdrop.style.display = 'none';
+    closeBtn.style.display = 'none';
+  }
+}
+
+function toggleSyspromptSection() {
+  const content = document.getElementById('sysprompt-content');
+  const btn = document.getElementById('sysprompt-fold-btn');
+  if (!content || !btn) return;
+  const collapsed = content.classList.toggle('collapsed');
+  btn.textContent = collapsed ? '▸' : '▾';
+}
+
+function toggleTemplateSection() {
+  const content = document.getElementById('template-content');
+  const btn = document.getElementById('template-fold-btn');
+  if (!content || !btn) return;
+  const collapsed = content.classList.toggle('collapsed');
+  btn.textContent = collapsed ? '▸' : '▾';
+}
+
+function startRightPanelResize(e) {
+  e.preventDefault();
+  const panel = document.getElementById('right-panel');
+  if (!panel) return;
+  const startX = e.clientX;
+  const startW = panel.offsetWidth;
+  const MIN_W = 380;
+  panel.classList.add('resizing');
+  document.documentElement.classList.add('right-panel-resizing');
+  const onMove = (ev) => {
+    const newW = Math.max(MIN_W, startW + (startX - ev.clientX));
+    document.documentElement.style.setProperty('--right-w', newW + 'px');
+  };
+  const onUp = () => {
+    panel.classList.remove('resizing');
+    document.documentElement.classList.remove('right-panel-resizing');
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+  };
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
 }
 
 function updateJsonTab() {
