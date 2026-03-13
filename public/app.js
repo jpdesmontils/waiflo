@@ -506,80 +506,62 @@ function _setWorkflowNameUI(name = '—') {
   if (jsonName && currentWf) jsonName.textContent = `${currentWf.name}.waiflo.json`;
 }
 
-function startWorkflowRename() {
-  if (!currentWf || _isRenamingWorkflow) return;
-  const label = document.getElementById('meta-name');
-  const input = document.getElementById('meta-name-input');
-  const btn = document.getElementById('meta-name-edit');
-  if (!label || !input || !btn) return;
-  _isRenamingWorkflow = true;
+function _isValidWorkflowName(name) {
+  return /^[a-zA-Z0-9_.-]+$/.test(name);
+}
 
-  input.value = currentWf.name || currentWf.data?.lang_name || '';
-  input.classList.remove('hidden');
-  label.style.display = 'none';
-  btn.style.display = 'none';
+function startWorkflowRename(name = currentWf?.name, e) {
+  if (e) e.stopPropagation();
+  if (!name) return;
 
-  const cancel = () => {
-    _isRenamingWorkflow = false;
-    input.classList.add('hidden');
-    label.style.display = '';
-    btn.style.display = '';
-    input.onkeydown = null;
-    input.onblur = null;
-  };
+  openModal('Renommer le workflow',`
+    <div class="form-section">
+      <div class="form-label">Nouveau nom du workflow</div>
+      <input class="form-input" id="rename-wf-name" placeholder="my_pipeline" value="${name}" style="width:100%">
+      <div class="form-hint" style="margin-top:6px">Lettres, chiffres, _, - et . uniquement.</div>
+    </div>`,
+    [
+      { label:'Annuler', action:closeModal },
+      { label:'Renommer', primary:true, action:async()=>{
+        const input = document.getElementById('rename-wf-name');
+        const nextName = input.value.trim();
+        if (!nextName || nextName === name) return closeModal();
+        if (!_isValidWorkflowName(nextName)) return toast('Use only letters, numbers, _, - and .','err');
 
-  const submit = async () => {
-    const nextName = input.value.trim();
-    if (!nextName || nextName === currentWf.name) return cancel();
-    if (!/^[a-z0-9_\-]+$/.test(nextName)) {
-      toast('Use only lowercase letters, numbers, _ and -','err');
-      input.focus();
-      return;
-    }
+        if (guestMode) {
+          if (guestWorkflows.some(w => w.name === nextName)) return toast('Name already exists','err');
+          const item = guestWorkflows.find(w => w.name === name);
+          if (!item) return toast('Workflow not found','err');
+          item.name = nextName;
+          if (item.data) item.data.lang_name = nextName;
+          if (currentWf?.name === name) {
+            currentWf.name = nextName;
+            if (currentWf.data) currentWf.data.lang_name = nextName;
+            _setWorkflowNameUI(nextName);
+            _refreshWfJsonPanel();
+          }
+          renderWorkflowList();
+          closeModal();
+          toast('Workflow renamed (not persisted)','ok');
+          return;
+        }
 
-    if (guestMode) {
-      if (guestWorkflows.some(w => w.name === nextName)) {
-        toast('Name already exists','err');
-        input.focus();
-        return;
-      }
-      const item = guestWorkflows.find(w => w.name === currentWf.name);
-      if (item) item.name = nextName;
-      currentWf.name = nextName;
-      if (currentWf.data) currentWf.data.lang_name = nextName;
-      _guestSync();
-      renderWorkflowList();
-      _setWorkflowNameUI(nextName);
-      toast('Workflow renamed (not persisted)','ok');
-      return cancel();
-    }
+        const res = await api(`/api/workflows/${name}/rename`, 'PATCH', { newName: nextName });
+        if (res.error) return toast(res.error, 'err');
+        if (currentWf?.name === name) {
+          currentWf.name = nextName;
+          if (currentWf.data) currentWf.data.lang_name = nextName;
+          _setWorkflowNameUI(nextName);
+          _refreshWfJsonPanel();
+        }
+        closeModal();
+        await loadWorkflowList();
+        toast('Workflow renamed','ok');
+      }}
+    ]
+  );
 
-    const res = await api(`/api/workflows/${currentWf.name}/rename`, 'PATCH', { newName: nextName });
-    if (res.error) {
-      toast(res.error, 'err');
-      input.focus();
-      return;
-    }
-
-    currentWf.name = nextName;
-    if (currentWf.data) currentWf.data.lang_name = nextName;
-    _setWorkflowNameUI(nextName);
-    _refreshWfJsonPanel();
-    await loadWorkflowList();
-    toast('Workflow renamed','ok');
-    cancel();
-  };
-
-  input.onkeydown = (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); submit(); }
-    if (e.key === 'Escape') { e.preventDefault(); cancel(); }
-  };
-  input.onblur = () => { if (_isRenamingWorkflow) submit(); };
-
-  setTimeout(() => {
-    input.focus();
-    input.select();
-  }, 0);
+  setTimeout(()=>{ const i=document.getElementById('rename-wf-name'); if(i){i.focus();i.select();} },100);
 }
 
 // ── API CLIENT ───────────────────────────────────────────────────
@@ -626,6 +608,8 @@ function renderWorkflowList() {
       </div>
       <div class="wf-item-actions">
         <button class="wf-icon-btn" title="Copy JSON" onclick="copyWfJsonByName('${wf.name}',event)">&#x2398;</button>
+        <button class="wf-icon-btn" title="Rename" onclick="startWorkflowRename('${wf.name}',event)">✎</button>
+        <button class="wf-icon-btn" title="Duplicate" onclick="duplicateWorkflow('${wf.name}',event)">⧉</button>
         <button class="wf-icon-btn" title="Delete" onclick="deleteWorkflow('${wf.name}',event)">&#x2715;</button>
       </div>`;
     item.addEventListener('click', ()=>selectWf(wf.name));
@@ -833,9 +817,13 @@ function newWorkflow() {
   setTimeout(()=>document.getElementById('new-wf-name')?.focus(),100);
 }
 
-function duplicateWorkflow() {
-  if (!currentWf) return;
-  const suggestedName = currentWf.name.replace(/_copy(_\d+)?$/, '') + '_copy';
+function duplicateWorkflow(sourceName = currentWf?.name, e) {
+  if (e) e.stopPropagation();
+  if (!sourceName) return;
+  const source = sourceName === currentWf?.name ? currentWf : (guestMode ? guestWorkflows.find(w => w.name === sourceName) : null);
+  if (!source && guestMode) return toast('Workflow not found','err');
+
+  const suggestedName = sourceName.replace(/_copy(_\d+)?$/, '') + '_copy';
   openModal('Dupliquer le workflow',`
     <div class="form-section">
       <div class="form-label">Nom du nouveau workflow</div>
@@ -847,8 +835,16 @@ function duplicateWorkflow() {
       { label:'Dupliquer', primary:true, action:async()=>{
         const name = document.getElementById('dup-wf-name').value.trim();
         if (!name) return;
-        if (!/^[a-z0-9_\-]+$/.test(name)) return toast('Use only lowercase letters, numbers, _ and -','err');
-        const data = JSON.parse(JSON.stringify(currentWf.data));
+        if (!_isValidWorkflowName(name)) return toast('Use only letters, numbers, _, - and .','err');
+        let sourceData = currentWf?.name === sourceName ? currentWf.data : source?.data;
+        if (!sourceData && !guestMode) {
+          const fetched = await api(`/api/workflows/${sourceName}`);
+          if (fetched.error) return toast(fetched.error,'err');
+          sourceData = fetched;
+        }
+        if (!sourceData) return toast('Workflow not found','err');
+        const data = JSON.parse(JSON.stringify(sourceData));
+        data.lang_name = name;
         if (guestMode) {
           if (guestWorkflows.find(w=>w.name===name)) return toast('Name already exists','err');
           guestWorkflows.push({ name, data, updatedAt:new Date().toISOString() });
