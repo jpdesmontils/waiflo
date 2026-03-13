@@ -73,12 +73,12 @@ let _fitView       = null;
 let _graphVersion  = 0;
 // fullscreen source: 'workflow' | 'step'
 let _jfsSource     = null;
-let _providersConfig  = {};   // loaded from /json_schemas/providers.json
-let _providerKeyStatus = {};  // loaded from /api/auth/me { anthropic: true, ... }
-let _mcpServers = [];        // loaded/saved from settings MCP registry
-let _lastStepRuns = {};       // keyed by workflow node id, stores latest parsed output
-let _stepRunUiState = {};     // keyed by workflow node id, stores log/meta/status/output ui state
-let _currentNodeId = null;    // currently edited node id (wf node id or step name)
+let _providersConfig  = {};
+let _providerKeyStatus = {};
+let _mcpServers = [];
+let _lastStepRuns = {};
+let _stepRunUiState = {};
+let _currentNodeId = null;
 let _runController = null;
 let _isExecuting = false;
 let _runStepDefaultLabel = '▶ Run Step Only';
@@ -89,6 +89,8 @@ let _activeRunNodeIds = new Set();
 let _lastEditorTab = 'edit';
 let _logsPanelDrag = null;
 let _activeRunEdgeIds = new Set();
+// FIX #6 — flag anti-réentrance pour hydrateRunStateFromServer
+let _hydratingNodes = new Set();
 
 // ══════════════════════════════════════════════════════════════════
 //  REACT FLOW — CUSTOM NODE
@@ -234,7 +236,7 @@ function buildGraph(data) {
     document.getElementById('meta-wf').textContent    = wf.wf_name||'—';
     document.getElementById('meta-wf-pill').style.display = '';
   } else {
-    steps.forEach((s,i)=>{
+    steps.forEach((s)=>{
       rawNodes.push({ id:s.ws_name, type:'step', position:{x:0,y:0}, data:{ step:s, nodeId:s.ws_name } });
     });
     document.getElementById('meta-steps').textContent = steps.length;
@@ -242,16 +244,24 @@ function buildGraph(data) {
   }
   const layoutedNodes = computeLayout(rawNodes, rawEdges, rankDir);
 
-  // Préserver les positions des nœuds existants (drag utilisateur) et placer les nouveaux sous le dernier
+  // FIX #4 — initialiser maxY à -Infinity pour gérer les positions négatives
   const curPos = {};
   if (_getNodes) _getNodes().forEach(n => { curPos[n.id] = n.position; });
-  let maxY = 0;
+  let maxY = -Infinity;
   let refX = layoutedNodes[0]?.position?.x ?? 0;
-  layoutedNodes.forEach(n => { if (curPos[n.id]) { maxY = Math.max(maxY, curPos[n.id].y); refX = curPos[n.id].x; } });
+  layoutedNodes.forEach(n => {
+    if (curPos[n.id]) {
+      maxY = Math.max(maxY, curPos[n.id].y + NODE_H);
+      refX = curPos[n.id].x;
+    }
+  });
+  if (maxY === -Infinity) maxY = 0; // fallback si aucun nœud existant
+
   const finalNodes = layoutedNodes.map(n => {
     const base = curPos[n.id] ? { ...n, position: curPos[n.id] } : (() => {
-      maxY += NODE_H + 60;
-      return { ...n, position: { x: refX, y: maxY } };
+      const pos = { x: refX, y: maxY + 60 };
+      maxY = pos.y + NODE_H;
+      return { ...n, position: pos };
     })();
     return {
       ...base,
@@ -277,7 +287,6 @@ function buildGraph(data) {
 function fitGraph() { _fitView?.({ padding:0.12, duration:400 }); }
 function setLayout(dir) { rankDir=dir; if(currentWf) buildGraph(currentWf.data); }
 
-
 function ensureWorkflowGraph() {
   if (!currentWf) return null;
   const data = currentWf.data;
@@ -299,7 +308,6 @@ function ensureWorkflowGraph() {
   if (!Array.isArray(wf.wf_nodes)) wf.wf_nodes = [];
   return wf;
 }
-
 
 function ensureWorkflowNodeForStep(stepName) {
   const wf = ensureWorkflowGraph();
@@ -341,13 +349,18 @@ function hideEdgeDeletePrompt() {
   renderEdgeDeletePrompt();
 }
 
+// FIX #8 — clamp le prompt dans le viewport
 function renderEdgeDeletePrompt() {
   const el = document.getElementById('edge-delete-prompt');
   if (!el) return;
   if (!_edgeDeletePrompt) { el.classList.add('hidden'); return; }
   el.classList.remove('hidden');
-  el.style.left = `${_edgeDeletePrompt.x}px`;
-  el.style.top = `${_edgeDeletePrompt.y}px`;
+  const margin = 8;
+  const btnW = 40, btnH = 36;
+  const x = Math.min(_edgeDeletePrompt.x, window.innerWidth  - btnW - margin);
+  const y = Math.min(_edgeDeletePrompt.y, window.innerHeight - btnH - margin);
+  el.style.left = `${Math.max(margin, x)}px`;
+  el.style.top  = `${Math.max(margin, y)}px`;
 }
 
 function confirmEdgeDelete() {
@@ -414,7 +427,6 @@ function enterGuestMode(withDemo = true) {
   }
   workflows = [];
   loadWorkflowList();
-  // Auto-open the demo
   if (withDemo) {
     setTimeout(()=>{ selectWf('demo_pipeline'); }, 200);
   }
@@ -510,7 +522,6 @@ function openWfJsonPanel(name) {
   ta.value = JSON.stringify(data,null,2);
   ta.classList.remove('err');
   document.getElementById('wf-json-err').textContent='';
-  // open + expand list-inner
   document.getElementById('left-inner').classList.add('json-open');
 }
 
@@ -576,12 +587,12 @@ function openJsonFullscreen(source) {
     ta.value = JSON.stringify(currentWf.data,null,2);
     applyBtn.style.display = '';
   } else {
-    // step json — read from the pre element
+    // FIX #3 — vérifier null explicitement avant d'utiliser le résultat
     const s = currentStep || collectStep();
-    if (!s) return;
+    if (!s) { toast('Aucun step à afficher','err'); return; }
     name.textContent = (s.ws_name||'step')+' — JSON view';
     ta.value = JSON.stringify(s,null,2);
-    applyBtn.style.display = 'none'; // step JSON is read-only in fullscreen
+    applyBtn.style.display = 'none';
   }
   ta.classList.remove('err');
   errEl.textContent = '';
@@ -632,6 +643,7 @@ async function openWorkflow(name) {
   currentWf={name,data};
   _lastStepRuns = {};
   _stepRunUiState = {};
+  _hydratingNodes = new Set();
   _runController = null;
   _isExecuting = false;
   setExecutionUiState(false);
@@ -764,6 +776,8 @@ function openStepEditor(nodeId, tab=null) {
   }
   if (!step) return;
   currentStep=step;
+  // FIX #1 — affecter _currentNodeId AVANT populateEditor
+  // pour que updateRunTab/getStepRunState reçoivent le bon nodeId
   _currentNodeId = resolvedNodeId || step.ws_name;
   populateEditor(currentStep);
   setRightPanelVisible(true);
@@ -772,6 +786,7 @@ function openStepEditor(nodeId, tab=null) {
 
 function openNewStepEditor() {
   currentStep=null;
+  _currentNodeId = null;
   populateEditor({ ws_name:'',ws_type:'prompt', ws_llm:{ provider:'anthropic',model:'claude-sonnet-4-20250514',temperature:0 }, ws_inputs_schema:{ type:'object',required:[],properties:{} }, ws_output_schema:{ type:'object',required:[],properties:{} } });
   setRightPanelVisible(true);
   switchEditorTab('edit');
@@ -799,7 +814,7 @@ function populateEditor(s) {
   document.getElementById('f-type').value      = s.ws_type||'prompt';
   document.getElementById('f-provider').value  = s.ws_llm?.provider||'anthropic';
   document.getElementById('f-temp').value      = s.ws_llm?.temperature??0;
-  onProviderChange(s.ws_llm?.model||''); // peupler le select modèle avec la valeur du step
+  onProviderChange(s.ws_llm?.model||'');
   document.getElementById('f-sysprompt').value = s.ws_system_prompt||'';
   document.getElementById('f-template').value  = s.ws_prompt_template||'';
   document.getElementById('f-method').value    = s.ws_api?.method||'GET';
@@ -817,7 +832,6 @@ function populateEditor(s) {
   });
   populateToolServerSelect(s.ws_tool?.mcp_server_label || '');
   onToolMcpServerChange(s.ws_tool?.tool_name || '');
-
 
   const apiAdv = document.getElementById('api-advanced-content');
   const apiAdvBtn = document.getElementById('api-advanced-toggle');
@@ -856,7 +870,6 @@ function onTypeChange() {
   }
 }
 
-// ── Model default per provider (fallback si providers.json non chargé) ──
 const PROVIDER_MODEL_HINTS = {
   anthropic:  'claude-sonnet-4-20250514',
   openai:     'gpt-4o',
@@ -873,7 +886,6 @@ function onProviderChange(currentModel) {
   sel.innerHTML = models.map(m =>
     `<option value="${m}"${m===target?' selected':''}>${m}</option>`
   ).join('');
-  // Si le modèle cible n'est pas dans le catalogue, l'insérer en tête
   if (target && !models.includes(target)) {
     sel.insertAdjacentHTML('afterbegin', `<option value="${target}" selected>${target}</option>`);
   }
@@ -932,18 +944,16 @@ function collectStep() {
     const query = parseJsonEditorField('f-api-query', 'API query params');
     const body = parseJsonEditorField('f-api-body', 'API body');
     if ([headers, query, body].includes(null)) return null;
-
-    const api = { method:document.getElementById('f-method').value, url:document.getElementById('f-url').value.trim() };
-    if (headers !== undefined) api.headers = headers;
-    if (query !== undefined) api.query = query;
-    if (body !== undefined) api.body = body;
-    s.ws_api = api;
+    const apiObj = { method:document.getElementById('f-method').value, url:document.getElementById('f-url').value.trim() };
+    if (headers !== undefined) apiObj.headers = headers;
+    if (query !== undefined) apiObj.query = query;
+    if (body !== undefined) apiObj.body = body;
+    s.ws_api = apiObj;
   }
   if (type==='webpage') {
     const headers = parseJsonEditorField('f-api-headers', 'Webpage headers');
     const browserOptions = parseJsonEditorField('f-webpage-browser-options', 'Webpage browser options');
     if ([headers, browserOptions].includes(null)) return null;
-
     const mode = document.getElementById('f-webpage-mode').value || 'http';
     const webpage = { url:document.getElementById('f-url').value.trim(), mode };
     if (headers !== undefined) webpage.headers = headers;
@@ -969,8 +979,6 @@ function applyStepEdit() {
   if (currentStep) {
     const idx=steps.findIndex(x=>x.ws_name===currentStep.ws_name);
     if (idx>=0) steps[idx]=s; else steps.push(s);
-
-    // Keep workflow graph references in sync if the step name changed.
     if (currentStep.ws_name !== s.ws_name) {
       (currentWf.data.workflows||[]).forEach(wf=>{
         (wf.wf_nodes||[]).forEach(n=>{
@@ -981,9 +989,6 @@ function applyStepEdit() {
   } else {
     if (steps.find(x=>x.ws_name===s.ws_name)) return toast('A step with this name already exists','err');
     steps.push(s);
-
-    // If a workflow graph already exists (e.g. because of connections),
-    // ensure the new step is also added as a node so it appears in the UI.
     if ((currentWf.data.workflows||[]).some(w => Array.isArray(w.wf_nodes))) {
       ensureWorkflowNodeForStep(s.ws_name);
     }
@@ -1015,8 +1020,6 @@ function closeEditor() {
   setRightPanelVisible(false);
   currentStep=null;
   _currentNodeId = null;
-  document.querySelectorAll('.form-textarea.maximized').forEach(el => el.classList.remove('maximized'));
-  document.querySelectorAll('.maximize-btn.active').forEach(el => el.classList.remove('active'));
 }
 
 function setExecutionUiState(running) {
@@ -1055,6 +1058,7 @@ function appendWorkflowExecLog(line) {
   if (pre) { pre.textContent = _workflowExecLogs.join('\n'); pre.scrollTop = pre.scrollHeight; }
 }
 
+// FIX #11 — fonctions exposées dans window (étaient manquantes)
 async function copyWorkflowExecLogs() {
   const txt = _workflowExecLogs.join('\n');
   if (!txt) { toast('No logs to copy', 'err'); return; }
@@ -1112,11 +1116,15 @@ function toggleWorkflowExecLogs() {
   updateFloatingAddStepPosition();
 }
 
-
+// FIX #10 — nettoyer les textareas maximisées quand le panneau est masqué
 function setRightPanelVisible(visible) {
   const panel = document.getElementById('right-panel');
   const btn = document.getElementById('btn-toggle-right');
   if (!panel || !btn) return;
+  if (!visible) {
+    document.querySelectorAll('.form-textarea.maximized').forEach(el => el.classList.remove('maximized'));
+    document.querySelectorAll('.maximize-btn.active').forEach(el => el.classList.remove('active'));
+  }
   panel.classList.toggle('hidden', !visible);
   btn.textContent = visible ? '›' : '‹';
   btn.title = visible ? 'Hide editor' : 'Show editor';
@@ -1208,7 +1216,6 @@ function toggleApiAdvancedSection() {
   btn.textContent = `${btn.textContent.replace(/[▾▸]/g, '').trim()} ${collapsed ? '▸' : '▾'}`;
 }
 
-
 function toggleToolAdvancedSection() {
   const content = document.getElementById('tool-advanced-content');
   const btn = document.getElementById('tool-advanced-toggle');
@@ -1270,35 +1277,27 @@ function buildInheritedInputs(step, nodeId) {
   if (!currentWf || !nodeId) return {};
   const wf = (currentWf.data.workflows || []).find(w => w.wf_nodes?.length);
   if (!wf) return {};
-
   const node = findWorkflowNode(wf, nodeId);
   if (!node) return {};
-
   const inherited = {};
   for (const depId of (node.depends_on || [])) {
     const depNode = findWorkflowNode(wf, depId);
     if (!depNode) continue;
     const depOutput = _lastStepRuns[depNode.step_id] || _lastStepRuns[depNode.ws_ref];
     if (!depOutput || typeof depOutput !== 'object') continue;
-
     Object.assign(inherited, depOutput);
     inherited[depNode.ws_ref] = depOutput;
     inherited[`${depNode.ws_ref}_output`] = depOutput;
   }
-
   return inherited;
 }
-
-
 
 function getAvailableConnectedInputs(step, nodeId) {
   if (!currentWf || !nodeId) return [];
   const wf = (currentWf.data.workflows || []).find(w => w.wf_nodes?.length);
   if (!wf) return [];
-
   const node = findWorkflowNode(wf, nodeId);
   if (!node) return [];
-
   const names = new Set();
   for (const depId of (node.depends_on || [])) {
     const depNode = findWorkflowNode(wf, depId);
@@ -1309,23 +1308,35 @@ function getAvailableConnectedInputs(step, nodeId) {
     names.add(depNode.ws_ref);
     names.add(`${depNode.ws_ref}_output`);
   }
-
   return Array.from(names).sort();
 }
 
 function updateRunTab(s) {
-  const area=document.getElementById('run-inputs-area'); area.innerHTML='';
+  const area = document.getElementById('run-inputs-area');
+  area.innerHTML = '';
   const availableEl = document.getElementById('edit-available-inputs');
-  const inProps=s?.ws_inputs_schema?.properties||{}, inReq=s?.ws_inputs_schema?.required||[];
-  Object.keys(inProps).forEach(k=>{
-    const div=document.createElement('div');
-    div.innerHTML=`<div class="run-input-label">${k} <span class="field-type">${inProps[k].type||''}</span>${inReq.includes(k)?'<span class="run-input-req">req</span>':''}</div><textarea class="form-textarea" id="run-in-${k}" placeholder="Value for ${k}…"></textarea>`;
+  const inProps = s?.ws_inputs_schema?.properties || {};
+  const inReq   = s?.ws_inputs_schema?.required   || [];
+
+  // Rendu des inputs + pré-remplissage depuis les output vars du step précédent
+  const inheritedInputs = buildInheritedInputs(s, _currentNodeId);
+
+  Object.keys(inProps).forEach(k => {
+    const div = document.createElement('div');
+    div.innerHTML = `<div class="run-input-label">${k} <span class="field-type">${inProps[k].type||''}</span>${inReq.includes(k)?'<span class="run-input-req">req</span>':''}</div><textarea class="form-textarea" id="run-in-${k}" placeholder="Value for ${k}…"></textarea>`;
     area.appendChild(div);
+
+    // Pré-remplir depuis les outputs connectés des steps en amont
+    if (inheritedInputs[k] !== undefined) {
+      const ta = div.querySelector(`#run-in-${k}`);
+      if (ta) ta.value = typeof inheritedInputs[k] === 'string' ? inheritedInputs[k] : JSON.stringify(inheritedInputs[k], null, 2);
+    }
   });
 
+  // Écraser / compléter avec les dernières valeurs saisies par l'utilisateur
   const state = getStepRunState(s, _currentNodeId);
   if (state?.lastInputs) {
-    Object.entries(state.lastInputs).forEach(([k,v]) => {
+    Object.entries(state.lastInputs).forEach(([k, v]) => {
       const el = document.getElementById(`run-in-${k}`);
       if (!el) return;
       el.value = typeof v === 'string' ? v : JSON.stringify(v, null, 2);
@@ -1343,22 +1354,41 @@ function updateRunTab(s) {
   hydrateRunStateFromServer(s, _currentNodeId);
 }
 
+// FIX #6 — anti-réentrance + suppression de l'appel récursif updateRunTab
 async function hydrateRunStateFromServer(step, nodeId) {
-  if (!token || !currentWf || getStepRunState(step, nodeId)) return;
-  const wf = encodeURIComponent(currentWf.name);
-  const ws = encodeURIComponent(step.ws_name);
-  const res = await api(`/api/exec/history/latest?workflow=${wf}&step=${ws}`);
-  if (res?.record) {
-    saveStepRunState(step, nodeId, {
-      status: res.record.status || 'idle',
-      output: typeof res.record.output === 'string' ? res.record.output : JSON.stringify(res.record.output || '', null, 2),
-      logOutput: `${res.record.prompt ? `PROMPT:\n${res.record.prompt}\n\n` : ''}${res.record.logOutput || ''}`,
-      logMeta: res.record.logMeta || '',
-      logError: res.record.status === 'error',
-      lastInputs: res.record.inputs || {}
-    });
-    renderRunState(step, nodeId);
-    updateRunTab(step);
+  const key = nodeId || step?.ws_name;
+  if (!token || !currentWf || !key) return;
+  if (getStepRunState(step, nodeId)) return;   // état déjà connu
+  if (_hydratingNodes.has(key)) return;         // hydratation déjà en cours
+  _hydratingNodes.add(key);
+
+  try {
+    const wf = encodeURIComponent(currentWf.name);
+    const ws = encodeURIComponent(step.ws_name);
+    const res = await api(`/api/exec/history/latest?workflow=${wf}&step=${ws}`);
+    if (res?.record) {
+      saveStepRunState(step, nodeId, {
+        status: res.record.status || 'idle',
+        output: typeof res.record.output === 'string' ? res.record.output : JSON.stringify(res.record.output || '', null, 2),
+        logOutput: `${res.record.prompt ? `PROMPT:\n${res.record.prompt}\n\n` : ''}${res.record.logOutput || ''}`,
+        logMeta: res.record.logMeta || '',
+        logError: res.record.status === 'error',
+        lastInputs: res.record.inputs || {}
+      });
+      // N'actualiser l'UI que si le step affiché est toujours le même
+      if (_currentNodeId === key) {
+        renderRunState(step, nodeId);
+        // Restaurer les valeurs de lastInputs dans les textareas
+        const lastInputs = res.record.inputs || {};
+        Object.entries(lastInputs).forEach(([k, v]) => {
+          const el = document.getElementById(`run-in-${k}`);
+          if (!el) return;
+          el.value = typeof v === 'string' ? v : JSON.stringify(v, null, 2);
+        });
+      }
+    }
+  } finally {
+    _hydratingNodes.delete(key);
   }
 }
 
@@ -1546,7 +1576,7 @@ async function executeStep(stepDef, runMode='step_only') {
     }
     const resultText = JSON.stringify(res.result,null,2);
     outEl.textContent=resultText;
-    varsEl.textContent=resultText;
+    renderOutputVars(varsEl, res.result);
     rememberStepResult(s, _currentNodeId, res.result);
     metaEl.innerHTML=`✓ ${(s.ws_type||'api').toLowerCase()} · ${elapsed}ms · ${ts()}`;
     statusEl.textContent='done'; statusEl.className='run-status done';
@@ -1584,14 +1614,14 @@ async function executeStep(stepDef, runMode='step_only') {
           if (obj.parsed) {
             const parsedText = JSON.stringify(obj.parsed, null, 2);
             outEl.textContent = parsedText;
-            varsEl.textContent = parsedText;
+            renderOutputVars(varsEl, obj.parsed);
             rememberStepResult(s, _currentNodeId, obj.parsed);
             metaEl.innerHTML  = `✓ parsed json · ${elapsed}ms · ${ts()}`;
             statusEl.textContent='done'; statusEl.className='run-status done';
             saveStepRunState(s, _currentNodeId, { status:'done', output:parsedText, logOutput:parsedText, logMeta:metaEl.innerHTML, logError:false });
           } else {
             outEl.textContent = full;
-            varsEl.textContent = full;
+            renderOutputVars(varsEl, full);
             metaEl.innerHTML = `<span style="color:var(--amber)">⚠ json parse failed — raw output</span> · ${elapsed}ms · ${ts()}`;
             statusEl.textContent='done_raw'; statusEl.className='run-status done';
             saveStepRunState(s, _currentNodeId, { status:'done_raw', output:full, logOutput:full, logMeta:metaEl.innerHTML, logError:false });
@@ -1627,15 +1657,20 @@ async function runStepOnly() {
   finally { _runController = null; setExecutionUiState(false); clearRunningGraphState(); }
 }
 
+// FIX #2 — sauvegarder/restaurer currentStep et _currentNodeId pour ne pas corrompre l'état éditeur
 async function runWorkflowFromHere() {
   if (_isExecuting) return stopExecution();
   if (!currentStep || !_currentNodeId) return;
+
+  const savedStep   = currentStep;
+  const savedNodeId = _currentNodeId;
+
   setExecutionUiState(true);
   try {
     clearWorkflowExecLogs();
     clearRunningGraphState();
-    appendWorkflowExecLog(`${wfTs()} ## Workflow ## Start from ${_currentNodeId}`);
-    const order = getDownstreamExecutionOrder(_currentNodeId);
+    appendWorkflowExecLog(`${wfTs()} ## Workflow ## Start from ${savedNodeId}`);
+    const order = getDownstreamExecutionOrder(savedNodeId);
     const wf = (currentWf?.data?.workflows || []).find(w => w.wf_nodes?.length);
     for (const nodeId of order) {
       if (!_isExecuting) break;
@@ -1643,6 +1678,7 @@ async function runWorkflowFromHere() {
       if (!node) continue;
       const step = (currentWf.data.steps || []).find(st => st.ws_name === node.ws_ref);
       if (!step) continue;
+      // Utiliser des variables locales pour l'itération
       currentStep = step;
       _currentNodeId = nodeId;
       appendWorkflowExecLog(`${wfTs()} ## ${step.ws_name} ## Start`);
@@ -1659,6 +1695,10 @@ async function runWorkflowFromHere() {
     _runController = null;
     setExecutionUiState(false);
     clearRunningGraphState();
+    // Restaurer l'état de l'éditeur au step initial
+    currentStep   = savedStep;
+    _currentNodeId = savedNodeId;
+    if (currentStep) renderRunState(currentStep, _currentNodeId);
   }
 }
 
@@ -1937,6 +1977,7 @@ function syntaxHighlight(json) {
 }
 
 // ── WINDOW EXPORTS ───────────────────────────────────────────────
+// FIX #11 — copyWorkflowExecLogs et clearWorkflowExecLogs ajoutées
 Object.assign(window,{
   doLogout, openSettings, saveWorkflow, downloadWorkflow, newWorkflow, importWorkflow,
   toggleLeft, toggleTheme, fitGraph, setLayout,
@@ -1944,8 +1985,9 @@ Object.assign(window,{
   applyStepEdit, deleteCurrentStep, closeEditor, switchEditorTab,
   addInputField, addOutputField, onTypeChange,
   toggleTechSection, toggleApiAdvancedSection, toggleToolAdvancedSection, toggleEditorMaximize,
-  runStepOnly, runWorkflowFromHere, closeModal, showSignupCTA,
+  runStepOnly, runWorkflowFromHere, stopExecution, closeModal, showSignupCTA,
   confirmEdgeDelete, toggleWorkflowExecLogs, toggleRightPanel,
+  copyWorkflowExecLogs, clearWorkflowExecLogs,
   deleteWorkflow, copyWfJson, applyWfJson, closeWfJson, onWfJsonInput, copyWfJsonByName,
   openJsonFullscreen, closeJsonFullscreen, jfsCopy, jfsApply, jfsValidate,
   saveApiKey, deleteApiKey, changePassword, switchSettingsTab, addMcpServerRow, removeMcpServerRow, validateMcpServer, saveMcpServers,
@@ -1966,13 +2008,11 @@ document.getElementById('modal-overlay').addEventListener('click',e=>{ if(e.targ
 window.addEventListener('load', async () => {
   document.getElementById('f-webpage-mode')?.addEventListener('change', () => onTypeChange());
 
-  // Theme
   if (localStorage.getItem('wf_theme')==='light') {
     document.documentElement.classList.add('light');
     document.getElementById('btn-theme').textContent='☾';
   }
 
-  // Load providers config (model catalogue)
   try {
     const cfg = await fetch('/json_schemas/providers.json').then(r=>r.json());
     _providersConfig = cfg;
@@ -1981,18 +2021,14 @@ window.addEventListener('load', async () => {
   initWorkflowLogsPanel();
   setRightPanelVisible(false);
 
-  // Mount React Flow
   const root = createRoot(document.getElementById('rf-container'));
   root.render(h(AppGraph,null));
 
-  // Session check
   if (token) {
     const me=await api('/api/auth/me');
     if (!me.error) { enterAuthUser(me); return; }
-    // token invalid
     localStorage.removeItem('wf_token');
     token=null;
   }
-  // No valid session → demo mode
   enterGuestMode(true);
 });

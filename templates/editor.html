@@ -273,10 +273,12 @@
       </div>
     </div>
   </div>
+
   <div id="wf-exec-logs">
     <button id="wf-exec-logs-header" onclick="toggleWorkflowExecLogs()">
       <span>Workflow execution logs</span>
       <span id="wf-exec-logs-actions">
+        <!-- FIX #11 — copyWorkflowExecLogs et clearWorkflowExecLogs sont désormais exposées dans window -->
         <button type="button" class="wf-log-action" onclick="event.stopPropagation(); copyWorkflowExecLogs()">Copy</button>
         <button type="button" class="wf-log-action" onclick="event.stopPropagation(); clearWorkflowExecLogs()">Clear</button>
         <span id="wf-exec-logs-toggle">▸</span>
