@@ -1,5 +1,6 @@
 import { decrypt } from './crypto.js';
 import { createProvider, PROVIDER_META } from './providers/index.js';
+import { getSharedToolSchema, readSharedMcpRegistry, urlMatchesRegistry } from './mcpShared.js';
 
 /**
  * Resolve the API key for a given provider from user record or env fallback.
@@ -423,21 +424,93 @@ function resolveToolConfig(step) {
  */
 function renderMcpHeaderValue(value, apiKey) {
   return String(value ?? '')
-    .replaceAll('${api_key}', apiKey)
-    .replaceAll('{{api_key}}', apiKey)
+    .replaceAll('${api_key}', String(apiKey || ''))
+    .replaceAll('{{api_key}}', String(apiKey || ''))
     .trim();
 }
 
-function buildMcpRequestHeaders(server, apiKey) {
-  const configured = (server?.headers && typeof server.headers === 'object') ? server.headers : {};
-  const headers = { 'Content-Type': 'application/json' };
+function buildToolArguments(inputs, toolSchema) {
+  const safeInputs = (inputs && typeof inputs === 'object') ? inputs : {};
 
+  if (safeInputs.arguments && typeof safeInputs.arguments === 'object' && !Array.isArray(safeInputs.arguments)) {
+    return safeInputs.arguments;
+  }
+
+  const schema = toolSchema?.inputSchema;
+  if (!schema || typeof schema !== 'object' || Array.isArray(schema)) {
+    return safeInputs;
+  }
+
+  const props = (schema.properties && typeof schema.properties === 'object') ? schema.properties : {};
+  const declaredKeys = Object.keys(props);
+  if (!declaredKeys.length) return safeInputs;
+
+  const picked = {};
+  for (const key of declaredKeys) {
+    if (Object.prototype.hasOwnProperty.call(safeInputs, key)) {
+      picked[key] = safeInputs[key];
+    }
+  }
+
+  const result = Object.keys(picked).length ? picked : safeInputs;
+  const required = Array.isArray(schema.required) ? schema.required : [];
+  const missing = required.filter((k) => result[k] == null);
+  if (missing.length) {
+    throw new Error(`Missing required MCP tool arguments for "${toolSchema?.tool_name || 'unknown'}": ${missing.join(', ')}`);
+  }
+
+  return result;
+}
+
+function extractMcpRpcResultFromSse(rawText) {
+  const lines = String(rawText || '').split('\n');
+  for (const line of lines) {
+    if (!line.startsWith('data:')) continue;
+    try {
+      const body = JSON.parse(line.slice(5).trim());
+      if (body?.error) throw new Error(body.error?.message || 'MCP error');
+      if (body?.result != null) return body.result;
+    } catch {
+      // Continue until a valid JSON-RPC payload is found.
+    }
+  }
+  throw new Error('SSE stream: no MCP result found');
+}
+
+async function parseMcpResponse(response) {
+  const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+
+  if (contentType.includes('text/event-stream')) {
+    const raw = await response.text();
+    return extractMcpRpcResultFromSse(raw);
+  }
+
+  const body = await response.json();
+  if (body?.error) throw new Error(body.error?.message || 'MCP error');
+  return body?.result ?? body;
+}
+
+async function buildMcpRequestHeaders(server, apiKey) {
+  const configured = (server?.headers && typeof server.headers === 'object') ? server.headers : {};
+  const headers = {
+    'Content-Type': 'application/json',
+    Accept: 'application/json, text/event-stream'
+  };
+
+  const registry = await readSharedMcpRegistry();
+  const providers = Array.isArray(registry?.providers) ? registry.providers : [];
+  const provider = providers.find((row) => urlMatchesRegistry(server?.server_url, row));
+  const providerHeaders = (provider?.headers && typeof provider.headers === 'object') ? provider.headers : {};
+
+  for (const [key, value] of Object.entries(providerHeaders)) {
+    headers[key] = renderMcpHeaderValue(value, apiKey);
+  }
   for (const [key, value] of Object.entries(configured)) {
     headers[key] = renderMcpHeaderValue(value, apiKey);
   }
 
   const hasAuthorization = Object.keys(headers).some((k) => k.toLowerCase() === 'authorization');
-  if (!hasAuthorization) {
+  if (!hasAuthorization && apiKey) {
     headers.Authorization = `Bearer ${apiKey}`;
   }
 
@@ -456,7 +529,10 @@ export async function runToolStep(step, inputs, user) {
   if (!server.apiKeyEnc) throw new Error(`MCP server "${mcpServerLabel}" has no API key configured`);
 
   const apiKey = await decrypt(server.apiKeyEnc);
-  const headers = buildMcpRequestHeaders(server, apiKey);
+  const toolSchema = await getSharedToolSchema(endpoint, toolName);
+  const toolArgs = buildToolArguments(inputs, toolSchema);
+  const headers = await buildMcpRequestHeaders(server, apiKey);
+
   const controller = new AbortController();
   const timeoutMs = Number(server.timeoutMs || 30000);
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -471,7 +547,7 @@ export async function runToolStep(step, inputs, user) {
         method: 'tools/call',
         params: {
           name: toolName,
-          arguments: inputs || {}
+          arguments: toolArgs
         }
       }),
       signal: controller.signal
@@ -481,12 +557,7 @@ export async function runToolStep(step, inputs, user) {
       throw new Error(`MCP HTTP ${response.status} ${response.statusText}`);
     }
 
-    const body = await response.json();
-    if (body?.error) {
-      throw new Error(body.error?.message || `MCP tool call failed: ${toolName}`);
-    }
-
-    return body?.result ?? body;
+    return await parseMcpResponse(response);
   } finally {
     clearTimeout(timer);
   }

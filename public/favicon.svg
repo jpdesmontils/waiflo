@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Waiflo icon">
+  <defs>
+    <linearGradient id="wf-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#5b4bff"/>
+      <stop offset="100%" stop-color="#13c9d6"/>
+    </linearGradient>
+    <linearGradient id="wf-mark" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#d8e4ff"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="28" fill="url(#wf-bg)"/>
+  <path d="M64 20 101 42v44L64 108 27 86V42z" fill="none" stroke="rgba(255,255,255,0.55)" stroke-width="6"/>
+  <path d="m40 45 11 0 13 33 13-33 11 0-19 48h-10z" fill="url(#wf-mark)"/>
+</svg>
