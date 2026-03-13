@@ -81,6 +81,12 @@ function buildPrompt(template, inputs) {
  */
 export async function runPromptStep(step, inputs, user, req, res) {
 
+  // Backward compatibility: some callers still pass (step, inputs, user, res).
+  if (!res && req && typeof req.setHeader === 'function') {
+    res = req;
+    req = { query: { stream: '1' } };
+  }
+
   const llm      = step.ws_llm || {};
   const provider = (llm.provider || 'anthropic').toLowerCase();
   const meta     = PROVIDER_META[provider] || PROVIDER_META.anthropic;
@@ -90,7 +96,9 @@ export async function runPromptStep(step, inputs, user, req, res) {
   const maxTok = llm.max_tokens || 2048;
   const system = step.ws_system_prompt || '';
 
-  const stream = req.query.stream === '1' || req.query.stream === 'true';
+  const queryStream = req?.query?.stream;
+  // Default to SSE for prompt execution unless explicitly disabled.
+  const stream = !(queryStream === '0' || queryStream === 'false');
 
   let apiKey = await resolveApiKey(user, provider);
   const llmProvider = createProvider(provider, apiKey);
