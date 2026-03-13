@@ -17,7 +17,11 @@
 <header id="topbar">
   <div class="logo">waiflo <span class="logo-badge">{{logo_badge}}</span></div>
   <div class="wf-meta hidden" id="wf-meta">
-    <span id="meta-name">—</span>
+    <div class="wf-name-wrap">
+      <span id="meta-name">—</span>
+      <input id="meta-name-input" class="meta-name-input hidden" type="text" maxlength="80" />
+      <button id="meta-name-edit" class="meta-name-edit" onclick="startWorkflowRename()" title="Renommer le workflow">✎</button>
+    </div>
     <span class="meta-pill"><span id="meta-steps">0</span> {{meta_steps}}</span>
     <span class="meta-pill" id="meta-wf-pill" style="display:none">wf: <span id="meta-wf">—</span></span>
   </div>
