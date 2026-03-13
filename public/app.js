@@ -156,12 +156,12 @@ const StepNode = memo(function StepNode({ data, selected }) {
 
 const nodeTypes = { step: StepNode };
 
-function FlowInner({ nodes, edges, onNodesChange, onEdgesChange, onConnect, onEdgeClick, onPaneClick, version }) {
+function FlowInner({ nodes, edges, onNodesChange, onEdgesChange, onConnect, onEdgeClick, onPaneClick, onNodeDragStop, version }) {
   const { fitView } = useReactFlow();
   _fitView = fitView;
   useEffect(() => { setTimeout(()=>fitView({ padding:0.12, duration:400 }),60); }, [version]);
   return h(ReactFlow,{
-    nodes, edges, onNodesChange, onEdgesChange, onConnect, onEdgeClick, onPaneClick, nodeTypes,
+    nodes, edges, onNodesChange, onEdgesChange, onConnect, onEdgeClick, onPaneClick, onNodeDragStop, nodeTypes,
     defaultEdgeOptions:{ type:'smoothstep', markerEnd:{ type:MarkerType.ArrowClosed, color:'#2a3f60' }, style:{ stroke:'#2a3f60', strokeWidth:1.5 } },
     fitView:true, fitViewOptions:{ padding:0.12 },
     minZoom:0.08, maxZoom:2,
@@ -185,6 +185,16 @@ function AppGraph() {
     persistWorkflowNodePositions(changes);
   };
 
+  const onNodeDragStop = (_evt, node) => {
+    if (!node?.id || !node?.position) return;
+    persistWorkflowNodePositions([{
+      type: 'position',
+      id: node.id,
+      position: node.position,
+      dragging: false
+    }]);
+  };
+
   const onConnect = (params) => {
     setEdges((eds) => addEdge({
       ...params,
@@ -205,7 +215,7 @@ function AppGraph() {
   _setGraphData = (gd) => { setNodes(gd.nodes); setEdges(gd.edges); setVersion(gd.version); };
   _getNodes     = () => nodes;
   return h(ReactFlowProvider,null,
-    h(FlowInner,{ nodes, edges, onNodesChange, onEdgesChange, onConnect, onEdgeClick, onPaneClick, version })
+    h(FlowInner,{ nodes, edges, onNodesChange, onEdgesChange, onConnect, onEdgeClick, onPaneClick, onNodeDragStop, version })
   );
 }
 
