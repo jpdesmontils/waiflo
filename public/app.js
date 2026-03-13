@@ -88,8 +88,6 @@ let _workflowExecLogs = [];
 let _activeRunNodeIds = new Set();
 let _lastEditorTab = 'edit';
 let _logsPanelDrag = null;
-let _maximizedTa = null;
-let _maximizedBtn = null;
 const WF_LOGS_PANEL_POS_KEY = 'wf_logs_panel_pos';
 let _activeRunEdgeIds = new Set();
 // FIX #6 — flag anti-réentrance pour hydrateRunStateFromServer
@@ -730,6 +728,7 @@ function closeJsonFullscreen() {
 }
 
 function jfsValidate() {
+  if (typeof _jfsSource === 'string' && _jfsSource.startsWith('textarea:')) return;
   const ta=document.getElementById('json-fullscreen-textarea');
   const errEl=document.getElementById('json-fullscreen-err');
   try { JSON.parse(ta.value); ta.classList.remove('err'); errEl.textContent=''; }
@@ -743,10 +742,17 @@ async function jfsCopy() {
 }
 
 function jfsApply() {
+  const fsTa = document.getElementById('json-fullscreen-textarea');
+  if (typeof _jfsSource === 'string' && _jfsSource.startsWith('textarea:')) {
+    const targetId = _jfsSource.slice('textarea:'.length);
+    const target = document.getElementById(targetId);
+    if (target) target.value = fsTa.value;
+    closeJsonFullscreen();
+    return;
+  }
   if (_jfsSource!=='workflow'||!currentWf) return;
-  const ta=document.getElementById('json-fullscreen-textarea');
   let parsed;
-  try { parsed=JSON.parse(ta.value); }
+  try { parsed=JSON.parse(fsTa.value); }
   catch(e) { document.getElementById('json-fullscreen-err').textContent='✕ '+e.message; return; }
   currentWf.data=parsed; buildGraph(parsed); _refreshWfJsonPanel();
   if (guestMode) { _guestSync(); toast('Applied (not persisted)','ok'); } else saveWorkflow();
@@ -825,6 +831,37 @@ function newWorkflow() {
     ]
   );
   setTimeout(()=>document.getElementById('new-wf-name')?.focus(),100);
+}
+
+function duplicateWorkflow() {
+  if (!currentWf) return;
+  const suggestedName = currentWf.name.replace(/_copy(_\d+)?$/, '') + '_copy';
+  openModal('Dupliquer le workflow',`
+    <div class="form-section">
+      <div class="form-label">Nom du nouveau workflow</div>
+      <input class="form-input" id="dup-wf-name" placeholder="my_pipeline_copy" value="${suggestedName}" style="width:100%">
+      <div class="form-hint" style="margin-top:6px">Minuscules, chiffres, _ et - uniquement.</div>
+    </div>`,
+    [
+      { label:'Annuler', action:closeModal },
+      { label:'Dupliquer', primary:true, action:async()=>{
+        const name = document.getElementById('dup-wf-name').value.trim();
+        if (!name) return;
+        if (!/^[a-z0-9_\-]+$/.test(name)) return toast('Use only lowercase letters, numbers, _ and -','err');
+        const data = JSON.parse(JSON.stringify(currentWf.data));
+        if (guestMode) {
+          if (guestWorkflows.find(w=>w.name===name)) return toast('Name already exists','err');
+          guestWorkflows.push({ name, data, updatedAt:new Date().toISOString() });
+          closeModal(); await loadWorkflowList(); selectWf(name); toast('Workflow dupliqué (non persisté)','ok');
+        } else {
+          const res = await api(`/api/workflows/${name}`,'POST',data);
+          if (res.error) return toast(res.error,'err');
+          closeModal(); await loadWorkflowList(); selectWf(name); toast('Workflow dupliqué','ok');
+        }
+      }}
+    ]
+  );
+  setTimeout(()=>{ const i=document.getElementById('dup-wf-name'); if(i){i.focus();i.select();} },100);
 }
 
 function importWorkflow() {
@@ -1272,13 +1309,7 @@ function setRightPanelVisible(visible) {
   const btn = document.getElementById('btn-toggle-right');
   if (!panel || !btn) return;
   if (!visible) {
-    document.querySelectorAll('.form-textarea.maximized').forEach(el => el.classList.remove('maximized'));
-    document.querySelectorAll('.maximize-btn.active').forEach(el => el.classList.remove('active'));
-    const backdrop = document.getElementById('maximize-backdrop');
-    const closeBtn = document.getElementById('maximize-close-btn');
-    if (backdrop) backdrop.style.display = 'none';
-    if (closeBtn) closeBtn.style.display = 'none';
-    _maximizedTa = null; _maximizedBtn = null;
+    if (typeof _jfsSource === 'string' && _jfsSource.startsWith('textarea:')) closeJsonFullscreen();
   }
   panel.classList.toggle('hidden', !visible);
   btn.textContent = visible ? '›' : '‹';
@@ -1438,38 +1469,28 @@ function onToolMcpServerChange(selectedTool = '') {
   }).join('');
 }
 
-function toggleEditorMaximize(textareaId, btn) {
+const _textareaFullscreenLabels = {
+  'f-sysprompt': 'System Prompt',
+  'f-template':  'Prompt Template',
+};
+
+function toggleEditorMaximize(textareaId) {
   const ta = document.getElementById(textareaId);
   if (!ta) return;
-  const isOpen = ta.classList.toggle('maximized');
-  if (btn) btn.classList.toggle('active', isOpen);
-  let backdrop = document.getElementById('maximize-backdrop');
-  let closeBtn = document.getElementById('maximize-close-btn');
-  if (!backdrop) {
-    backdrop = document.createElement('div');
-    backdrop.id = 'maximize-backdrop';
-    backdrop.onclick = () => { if (_maximizedTa) toggleEditorMaximize(_maximizedTa, _maximizedBtn); };
-    document.body.appendChild(backdrop);
-  }
-  if (!closeBtn) {
-    closeBtn = document.createElement('button');
-    closeBtn.id = 'maximize-close-btn';
-    closeBtn.textContent = '✕';
-    closeBtn.title = 'Fermer';
-    closeBtn.onclick = () => { if (_maximizedTa) toggleEditorMaximize(_maximizedTa, _maximizedBtn); };
-    document.body.appendChild(closeBtn);
-  }
-  if (isOpen) {
-    _maximizedTa = textareaId;
-    _maximizedBtn = btn;
-    backdrop.style.display = 'block';
-    closeBtn.style.display = 'flex';
-  } else {
-    _maximizedTa = null;
-    _maximizedBtn = null;
-    backdrop.style.display = 'none';
-    closeBtn.style.display = 'none';
-  }
+  const label = _textareaFullscreenLabels[textareaId] || textareaId;
+  _jfsSource = 'textarea:' + textareaId;
+  const overlay = document.getElementById('json-fullscreen');
+  const fsTa    = document.getElementById('json-fullscreen-textarea');
+  const nameEl  = document.getElementById('json-fullscreen-name');
+  const applyBtn= document.getElementById('jfs-apply-btn');
+  const errEl   = document.getElementById('json-fullscreen-err');
+  nameEl.textContent = label;
+  fsTa.value = ta.value;
+  fsTa.classList.remove('err');
+  errEl.textContent = '';
+  applyBtn.style.display = '';
+  overlay.classList.remove('hidden');
+  setTimeout(() => fsTa.focus(), 50);
 }
 
 function toggleSyspromptSection() {
@@ -2231,11 +2252,12 @@ function syntaxHighlight(json) {
 // FIX #11 — copyWorkflowExecLogs et clearWorkflowExecLogs ajoutées
 Object.assign(window,{
   doLogout, openSettings, saveWorkflow, downloadWorkflow, newWorkflow, importWorkflow,
-  toggleLeft, toggleTheme, fitGraph, setLayout,
+  toggleLeft, toggleTheme, fitGraph, setLayout, duplicateWorkflow,
   openNewStepEditor, openStepEditor,
   applyStepEdit, deleteCurrentStep, closeEditor, switchEditorTab,
   addInputField, addOutputField, onTypeChange,
   toggleTechSection, toggleApiAdvancedSection, toggleToolAdvancedSection, toggleEditorMaximize,
+  toggleSyspromptSection, toggleTemplateSection, startRightPanelResize,
   runStepOnly, runWorkflowFromHere, stopExecution, closeModal, showSignupCTA,
   confirmEdgeDelete, toggleWorkflowExecLogs, toggleRightPanel,
   copyWorkflowExecLogs, clearWorkflowExecLogs,
