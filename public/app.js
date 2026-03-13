@@ -1291,12 +1291,7 @@ function clearRunningGraphState() {
 }
 
 function toggleWorkflowExecLogs() {
-  const body = document.getElementById('wf-exec-logs-body');
-  const icon = document.getElementById('wf-exec-logs-toggle');
-  if (!body || !icon) return;
-  const closed = body.classList.toggle('hidden');
-  icon.textContent = closed ? '▸' : '▾';
-  updateFloatingAddStepPosition();
+  // Conservé pour compatibilité : les logs restent désormais toujours visibles.
 }
 
 // FIX #10 — nettoyer les textareas maximisées quand le panneau est masqué
@@ -1325,17 +1320,10 @@ function toggleRightPanel() {
 
 function updateFloatingAddStepPosition() {
   const btn = document.getElementById('btn-add-step');
-  const logs = document.getElementById('wf-exec-logs');
-  if (!btn || !logs) return;
-  const rect = logs.getBoundingClientRect();
-  const btnHeight = btn.offsetHeight || 34;
-  const margin = 10;
-  const top = Math.max(12, rect.top - btnHeight - margin);
-  const maxLeft = Math.max(12, window.innerWidth - btn.offsetWidth - 12);
-  const left = Math.min(maxLeft, Math.max(12, rect.left));
-  btn.style.top = `${top}px`;
-  btn.style.left = `${left}px`;
-  btn.style.bottom = 'auto';
+  if (!btn) return;
+  btn.style.left = '50%';
+  btn.style.bottom = '12px';
+  btn.style.top = 'auto';
 }
 
 function initWorkflowLogsPanel() {

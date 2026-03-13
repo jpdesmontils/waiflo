@@ -276,15 +276,14 @@
     </div>
   </div>
   <div id="wf-exec-logs">
-    <button id="wf-exec-logs-header" onclick="toggleWorkflowExecLogs()">
+    <button id="wf-exec-logs-header" type="button">
       <span>Workflow execution logs</span>
       <span id="wf-exec-logs-actions">
         <button type="button" class="wf-log-action" onclick="event.stopPropagation(); copyWorkflowExecLogs()">Copy</button>
         <button type="button" class="wf-log-action" onclick="event.stopPropagation(); clearWorkflowExecLogs()">Clear</button>
-        <span id="wf-exec-logs-toggle">▸</span>
       </span>
     </button>
-    <div id="wf-exec-logs-body" class="hidden">
+    <div id="wf-exec-logs-body">
       <pre id="wf-exec-logs-content"></pre>
     </div>
   </div>
