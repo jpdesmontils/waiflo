@@ -9,6 +9,23 @@ import { readUserGraphPositions, writeUserGraphPositions, extractWorkflowPositio
 
 const router = express.Router();
 
+async function writeWorkflowAtomic(filePath, content) {
+  const tmpPath = `${filePath}.tmp`;
+  await fs.writeFile(tmpPath, content, 'utf8');
+  await fs.rename(tmpPath, filePath);
+}
+
+function parseWorkflowBody(rawBody) {
+  if (typeof rawBody === 'object') return rawBody;
+  try {
+    return JSON.parse(rawBody || '{}');
+  } catch {
+    const err = new Error('Invalid workflow JSON body');
+    err.code = 'EINVALIDJSON';
+    throw err;
+  }
+}
+
 // All routes require auth
 router.use(authMiddleware);
 
@@ -62,6 +79,7 @@ router.post('/:name', async (req, res) => {
   try {
     await ensureUserDir(req.user.userId);
     const fp = wfPath(req.user.userId, req.params.name);
+    const next = parseWorkflowBody(req.body);
     // Refuse overwrite on POST
     try {
       await fs.access(fp);
@@ -69,16 +87,17 @@ router.post('/:name', async (req, res) => {
     } catch (err) {
       if (err.code !== 'ENOENT') throw err; // Only ignore "file not found"
     }
-    const body = typeof req.body === 'object' ? JSON.stringify(req.body, null, 2) : req.body;
-    await fs.writeFile(fp, body, 'utf8');
-
-    const next = typeof req.body === 'object' ? req.body : JSON.parse(req.body || '{}');
+    const body = JSON.stringify(next, null, 2);
+    await writeWorkflowAtomic(fp, body);
     const allPositions = await readUserGraphPositions(req.user.userId);
     allPositions[req.params.name] = extractWorkflowPositions(next);
     await writeUserGraphPositions(req.user.userId, allPositions);
 
     res.status(201).json({ ok: true, name: req.params.name });
   } catch (err) {
+    if (err.code === 'EINVALIDJSON') {
+      return res.status(400).json({ error: err.message });
+    }
     console.error('create error:', err);
     res.status(500).json({ error: err.message || 'Failed to create workflow' });
   }
@@ -89,9 +108,9 @@ router.put('/:name', async (req, res) => {
   try {
     await ensureUserDir(req.user.userId);
     const fp   = wfPath(req.user.userId, req.params.name);
-    const body = typeof req.body === 'object' ? JSON.stringify(req.body, null, 2) : req.body;
-    await fs.writeFile(fp, body, 'utf8');
-    const next = typeof req.body === 'object' ? req.body : JSON.parse(req.body || '{}');
+    const next = parseWorkflowBody(req.body);
+    const body = JSON.stringify(next, null, 2);
+    await writeWorkflowAtomic(fp, body);
     const stepNames = (next.steps || []).map(s => s.ws_name).filter(Boolean);
     await pruneWorkflowRunData(req.user.userId, req.params.name, stepNames);
 
@@ -101,6 +120,9 @@ router.put('/:name', async (req, res) => {
 
     res.json({ ok: true, name: req.params.name, savedAt: new Date().toISOString() });
   } catch (err) {
+    if (err.code === 'EINVALIDJSON') {
+      return res.status(400).json({ error: err.message });
+    }
     console.error('save error:', err);
     res.status(500).json({ error: err.message || 'Failed to save workflow' });
   }
