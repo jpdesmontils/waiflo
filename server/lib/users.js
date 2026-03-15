@@ -3,6 +3,7 @@ import path from 'path';
 
 const DATA_DIR = process.env.DATA_DIR || './waiflo-data';
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
+let usersWriteQueue = Promise.resolve();
 
 async function ensureUsersFile() {
   await fs.mkdir(DATA_DIR, { recursive: true });
@@ -22,7 +23,15 @@ export async function readUsers() {
 
 export async function writeUsers(users) {
   await ensureUsersFile();
-  await fs.writeFile(USERS_FILE, JSON.stringify(users, null, 2), 'utf8');
+  const tmp = `${USERS_FILE}.tmp`;
+  await fs.writeFile(tmp, JSON.stringify(users, null, 2), 'utf8');
+  await fs.rename(tmp, USERS_FILE);
+}
+
+async function withUsersWriteLock(task) {
+  const run = usersWriteQueue.then(task);
+  usersWriteQueue = run.catch(() => {});
+  return run;
 }
 
 export async function getUser(userId) {
@@ -31,10 +40,12 @@ export async function getUser(userId) {
 }
 
 export async function saveUser(userId, data) {
-  const users = await readUsers();
-  users[userId] = { ...(users[userId] || {}), ...data };
-  await writeUsers(users);
-  return users[userId];
+  return withUsersWriteLock(async () => {
+    const users = await readUsers();
+    users[userId] = { ...(users[userId] || {}), ...data };
+    await writeUsers(users);
+    return users[userId];
+  });
 }
 
 export async function userExists(email) {
