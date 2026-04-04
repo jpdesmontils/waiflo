@@ -1,0 +1,746 @@
+openapi: 3.1.0
+info:
+  title: Waiflo API
+  version: 1.0.0
+  description: |
+    OpenAPI schema for Waiflo backend endpoints.
+servers:
+  - url: /
+security:
+  - bearerAuth: []
+tags:
+  - name: Health
+  - name: Auth
+  - name: Workflows
+  - name: Execute
+  - name: Design
+paths:
+  /api/health:
+    get:
+      tags: [Health]
+      summary: Healthcheck
+      security: []
+      responses:
+        '200':
+          description: API is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    const: true
+  /api/auth/register:
+    post:
+      tags: [Auth]
+      summary: Register a user
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, minLength: 8 }
+      responses:
+        '200':
+          description: Registered
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthTokenResponse' }
+  /api/auth/login:
+    post:
+      tags: [Auth]
+      summary: Login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string }
+      responses:
+        '200':
+          description: Authenticated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthTokenResponse' }
+  /api/auth/logout:
+    post:
+      tags: [Auth]
+      summary: Logout
+      security: []
+      responses:
+        '200':
+          description: Logged out
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+  /api/auth/me:
+    get:
+      tags: [Auth]
+      summary: Current user profile and key statuses
+      responses:
+        '200':
+          description: User details
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  userId: { type: string }
+                  email: { type: string }
+                  plan: { type: string }
+                  hasApiKey: { type: boolean }
+                  providerKeys:
+                    type: object
+                    additionalProperties: { type: boolean }
+                  createdAt: { type: string, format: date-time }
+                  mcpServers:
+                    type: array
+                    items: { $ref: '#/components/schemas/McpServerPublic' }
+                  mcpAvailableTools:
+                    type: array
+                    items: { $ref: '#/components/schemas/McpAvailableServerTools' }
+  /api/auth/apikey:
+    put:
+      tags: [Auth]
+      summary: Save provider API key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [apiKey]
+              properties:
+                provider:
+                  type: string
+                  default: anthropic
+                  enum: [anthropic, openai, perplexity, mistral]
+                apiKey:
+                  type: string
+                  minLength: 8
+      responses:
+        '200':
+          description: Key saved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  provider: { type: string }
+                  message: { type: string }
+    delete:
+      tags: [Auth]
+      summary: Delete one provider key or all keys
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                provider:
+                  type: string
+                  enum: [anthropic, openai, perplexity, mistral]
+      responses:
+        '200':
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  provider: { type: string }
+  /api/auth/password:
+    put:
+      tags: [Auth]
+      summary: Change account password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [currentPassword, newPassword]
+              properties:
+                currentPassword: { type: string }
+                newPassword: { type: string, minLength: 8 }
+      responses:
+        '200':
+          description: Password changed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+  /api/auth/mcp-validate:
+    post:
+      tags: [Auth]
+      summary: Validate an MCP server and discover tools
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [server_label, server_url, api_key]
+              properties:
+                server_label: { type: string }
+                server_url: { type: string, format: uri }
+                api_key: { type: string }
+                timeoutMs: { type: integer, default: 30000 }
+      responses:
+        '200':
+          description: MCP server validated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  tools:
+                    type: array
+                    items: { type: object, additionalProperties: true }
+                  count: { type: integer }
+  /api/auth/mcp-servers:
+    put:
+      tags: [Auth]
+      summary: Save MCP server list
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mcp_servers]
+              properties:
+                mcp_servers:
+                  type: array
+                  items:
+                    type: object
+                    required: [server_label, server_url]
+                    properties:
+                      server_label: { type: string }
+                      server_url: { type: string, format: uri }
+                      api_key: { type: string }
+                      timeoutMs: { type: integer, default: 30000 }
+                      tools:
+                        type: array
+                        items: { type: object, additionalProperties: true }
+      responses:
+        '200':
+          description: MCP servers saved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  mcpServers:
+                    type: array
+                    items: { $ref: '#/components/schemas/McpServerPublic' }
+  /api/workflows:
+    get:
+      tags: [Workflows]
+      summary: List workflows
+      responses:
+        '200':
+          description: Workflow files
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    name: { type: string }
+                    filename: { type: string }
+                    size: { type: integer }
+                    updatedAt: { type: string, format: date-time }
+  /api/workflows/{name}:
+    parameters:
+      - in: path
+        name: name
+        required: true
+        schema: { type: string }
+    get:
+      tags: [Workflows]
+      summary: Get one workflow
+      responses:
+        '200':
+          description: Workflow content
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WaifloWorkflowFile' }
+    post:
+      tags: [Workflows]
+      summary: Create workflow file (fails if existing)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WaifloWorkflowFile' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  name: { type: string }
+    put:
+      tags: [Workflows]
+      summary: Save workflow file
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WaifloWorkflowFile' }
+      responses:
+        '200':
+          description: Saved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  name: { type: string }
+                  savedAt: { type: string, format: date-time }
+    delete:
+      tags: [Workflows]
+      summary: Delete workflow
+      responses:
+        '200':
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+  /api/workflows/{name}/rename:
+    patch:
+      tags: [Workflows]
+      summary: Rename workflow
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [newName]
+              properties:
+                newName: { type: string }
+      responses:
+        '200':
+          description: Renamed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  name: { type: string }
+  /api/workflows/{name}/export:
+    get:
+      tags: [Workflows]
+      summary: Download raw workflow JSON
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: JSON attachment
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WaifloWorkflowFile' }
+  /api/workflow/design:
+    post:
+      tags: [Design]
+      summary: Create workflow by name and optional data
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [workflow_name]
+              properties:
+                workflow_name: { type: string }
+                data: { $ref: '#/components/schemas/WaifloWorkflowFile' }
+      responses:
+        '201':
+          description: Created
+    patch:
+      tags: [Design]
+      summary: Deep-merge patch at workflow root
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [workflow_name, patch]
+              properties:
+                workflow_name: { type: string }
+                patch: { type: object, additionalProperties: true }
+      responses:
+        '200':
+          description: Patched
+  /api/workflow-step/design:
+    post:
+      tags: [Design]
+      summary: Add or replace one step by ws_name
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [workflow_name, step]
+              properties:
+                workflow_name: { type: string }
+                position: { type: integer, minimum: 0 }
+                step: { $ref: '#/components/schemas/WorkflowStep' }
+      responses:
+        '200':
+          description: Step replaced
+        '201':
+          description: Step added
+    patch:
+      tags: [Design]
+      summary: Deep-merge patch in one step
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [workflow_name, ws_name, patch]
+              properties:
+                workflow_name: { type: string }
+                ws_name: { type: string }
+                patch: { type: object, additionalProperties: true }
+      responses:
+        '200':
+          description: Step patched
+    delete:
+      tags: [Design]
+      summary: Delete a step
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [workflow_name, ws_name]
+              properties:
+                workflow_name: { type: string }
+                ws_name: { type: string }
+      responses:
+        '200':
+          description: Step deleted
+  /api/exec/step:
+    post:
+      tags: [Execute]
+      summary: Execute one step definition
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [step]
+              properties:
+                step: { $ref: '#/components/schemas/WorkflowStep' }
+                inputs: { type: object, additionalProperties: true }
+                context:
+                  type: object
+                  properties:
+                    workflowName: { type: string }
+                    nodeId: { type: string }
+                    runMode: { type: string }
+      responses:
+        '200':
+          description: JSON result for api/webpage/tool step
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  result: { type: object, additionalProperties: true }
+        '401':
+          description: Missing provider API key for guest prompt execution
+        '422':
+          description: Input validation errors
+        '502':
+          description: Upstream execution error
+  /api/exec/workflows/{workflowName}/step:
+    post:
+      tags: [Execute]
+      summary: Execute one workflow node by reference
+      parameters:
+        - in: path
+          name: workflowName
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ws_ref, step_id]
+              properties:
+                ws_ref: { type: string }
+                step_id: { type: string }
+                inputs: { type: object, additionalProperties: true }
+      responses:
+        '200': { description: Executed }
+  /api/exec/workflows/{workflowName}/run:
+    post:
+      tags: [Execute]
+      summary: Start orchestrated workflow run
+      parameters:
+        - in: path
+          name: workflowName
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [from_step_id]
+              properties:
+                from_step_id: { type: string }
+                inputs: { type: object, additionalProperties: true }
+      responses:
+        '202':
+          description: Run started
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  run_id: { type: string }
+                  status: { type: string }
+  /api/exec/runs/{runId}/stream:
+    get:
+      tags: [Execute]
+      summary: Subscribe to run events (SSE)
+      parameters:
+        - in: path
+          name: runId
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: text/event-stream with run events
+          content:
+            text/event-stream:
+              schema:
+                type: string
+  /api/exec/runs/{runId}/stop:
+    post:
+      tags: [Execute]
+      summary: Request run cancellation
+      parameters:
+        - in: path
+          name: runId
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Stop requested
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  run_id: { type: string }
+                  status: { type: string, const: stopping }
+  /api/exec/history/latest:
+    get:
+      tags: [Execute]
+      summary: Latest run record for workflow + step
+      parameters:
+        - in: query
+          name: workflow
+          required: true
+          schema: { type: string }
+        - in: query
+          name: step
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Latest record
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  record:
+                    oneOf:
+                      - type: 'null'
+                      - type: object
+                        additionalProperties: true
+  /api/exec/validate:
+    post:
+      tags: [Execute]
+      summary: Parse JSON from a text payload
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text: { type: string }
+      responses:
+        '200':
+          description: Valid JSON parsed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  parsed: { type: object, additionalProperties: true }
+        '422':
+          description: Not valid JSON
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    AuthTokenResponse:
+      type: object
+      properties:
+        token: { type: string }
+        userId: { type: string }
+        email: { type: string, format: email }
+        plan: { type: string }
+    McpServerPublic:
+      type: object
+      properties:
+        server_label: { type: string }
+        server_url: { type: string, format: uri }
+        has_api_key: { type: boolean }
+        transport: { type: string }
+        timeoutMs: { type: integer }
+        tools:
+          type: array
+          items: { type: object, additionalProperties: true }
+        last_status: { type: string }
+        last_error: { type: string }
+    McpAvailableServerTools:
+      type: object
+      properties:
+        server_label: { type: string }
+        server_url: { type: string, format: uri }
+        tools:
+          type: array
+          items:
+            type: object
+            properties:
+              tool_name: { type: string }
+              description: { type: string }
+              inputSchema: { type: object, additionalProperties: true, nullable: true }
+              outputSchema: { type: object, additionalProperties: true, nullable: true }
+              provider_id: { type: string }
+    WorkflowStep:
+      type: object
+      required: [ws_name]
+      properties:
+        ws_name: { type: string }
+        ws_type:
+          type: string
+          enum: [prompt, api, webpage, transform, script, tool]
+        ws_llm:
+          type: object
+          additionalProperties: true
+        ws_system_prompt: { type: string }
+        ws_prompt_template: { type: string }
+        ws_inputs_schema: { type: object, additionalProperties: true }
+        ws_output_schema: { type: object, additionalProperties: true }
+        ws_api:
+          type: object
+          properties:
+            method: { type: string }
+            url: { type: string }
+            headers: { type: object, additionalProperties: true }
+            body:
+              oneOf:
+                - type: object
+                  additionalProperties: true
+                - type: string
+        ws_tools:
+          type: array
+          items: { type: string }
+      additionalProperties: true
+    WorkflowNode:
+      type: object
+      required: [step_id]
+      properties:
+        step_id: { type: string }
+        ws_ref: { type: string }
+        depends_on:
+          type: array
+          items: { type: string }
+      additionalProperties: true
+    WaifloWorkflowFile:
+      type: object
+      required: [lang_name, steps]
+      properties:
+        lang_name: { type: string }
+        steps:
+          type: array
+          items: { $ref: '#/components/schemas/WorkflowStep' }
+        workflows:
+          type: array
+          items:
+            type: object
+            properties:
+              wf_name: { type: string }
+              wf_nodes:
+                type: array
+                items: { $ref: '#/components/schemas/WorkflowNode' }
+            additionalProperties: true
+      additionalProperties: true

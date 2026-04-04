@@ -7,6 +7,7 @@
   "sidebar_steps":           "Steps",
   "sidebar_workflows":       "Workflows",
   "sidebar_api":             "API",
+  "sidebar_openapi":         "OpenAPI YAML",
   "sidebar_exec":            "Execute",
   "sidebar_auth":            "Auth",
   "sidebar_design":          "Design",
@@ -73,6 +74,9 @@
   "field_depends_on": "Array of step_id values that must complete before this node runs.",
 
   "exec_h2":   "Execute API",
+  "openapi_h2": "OpenAPI schema",
+  "openapi_desc": "Download the full Waiflo API OpenAPI YAML schema and import it into Postman, Insomnia, or your internal tooling.",
+  "openapi_download_label": "Download waiflo_api.openapi.yaml",
   "exec_desc": "The exec API runs a single step with provided inputs. No account required for guest use if ANTHROPIC_API_KEY is set in the server environment. Authenticated users bring their own encrypted API key.",
 
   "exec_step_desc":     "Execute a step definition with inputs. For prompt steps returns SSE stream. For api steps returns JSON.",

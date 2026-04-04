@@ -31,6 +31,8 @@
 .docs-endpoint-header { display:flex; align-items:center; gap:12px; margin-bottom:12px; }
 .docs-endpoint-path { font-family:'JetBrains Mono',monospace; font-size:13px; color:var(--hi); }
 .docs-endpoint-desc { font-size:13px; color:var(--text); line-height:1.7; font-weight:300; margin-bottom:10px; }
+.docs-download-link { display:inline-block; font-family:'JetBrains Mono',monospace; font-size:11px; color:var(--amber); text-decoration:none; border:1px solid rgba(245,158,11,.25); background:rgba(245,158,11,.08); padding:8px 12px; border-radius:6px; }
+.docs-download-link:hover { border-color:rgba(245,158,11,.45); background:rgba(245,158,11,.12); }
 .docs-type-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:16px; margin:20px 0; }
 .docs-type-card { background:var(--bg2); border:1px solid var(--border); border-radius:10px; padding:22px; }
 .docs-type-name { font-family:'JetBrains Mono',monospace; font-size:13px; font-weight:600; color:var(--hi); display:flex; align-items:center; gap:8px; margin-bottom:10px; }
