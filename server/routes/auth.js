@@ -119,21 +119,15 @@ async function discoverMcpTools({ server_url, api_key, timeoutMs = 30_000 } = {}
 }
 
 async function sanitizeMcpServersForClient(rawServers = []) {
-  return Promise.all((rawServers || []).map(async (srv) => {
-    let apiKey = '';
-    if (srv.apiKeyEnc) {
-      try { apiKey = await decrypt(srv.apiKeyEnc); } catch { apiKey = ''; }
-    }
-    return {
-      server_label: srv.server_label || '',
-      server_url: srv.server_url || '',
-      api_key: apiKey,
-      transport: srv.transport || 'https',
-      timeoutMs: srv.timeoutMs || 30000,
-      tools: Array.isArray(srv.tools) ? srv.tools : [],
-      last_status: srv.last_status || 'unknown',
-      last_error: srv.last_error || ''
-    };
+  return (rawServers || []).map((srv) => ({
+    server_label: srv.server_label || '',
+    server_url: srv.server_url || '',
+    has_api_key: Boolean(srv.apiKeyEnc),
+    transport: srv.transport || 'https',
+    timeoutMs: srv.timeoutMs || 30000,
+    tools: Array.isArray(srv.tools) ? srv.tools : [],
+    last_status: srv.last_status || 'unknown',
+    last_error: srv.last_error || ''
   }));
 }
 
@@ -365,16 +359,37 @@ router.put('/mcp-servers', authMiddleware, async (req, res) => {
     const { mcp_servers } = req.body || {};
     if (!Array.isArray(mcp_servers)) return res.status(400).json({ error: 'mcp_servers must be an array' });
 
+    const users = await readUsers();
+    const currentUser = users[req.user.userId] || {};
+    const existingServers = Array.isArray(currentUser.mcpServers) ? currentUser.mcpServers : [];
+    const existingByKey = new Map(
+      existingServers.map((srv) => [`${String(srv.server_label || '').trim()}::${String(srv.server_url || '').trim()}`, srv])
+    );
+
     const normalized = [];
     for (const row of mcp_servers) {
       const server_label = String(row?.server_label || '').trim();
       const server_url = String(row?.server_url || '').trim();
       const api_key = String(row?.api_key || '').trim();
-      if (!server_label || !server_url || !api_key) {
-        return res.status(400).json({ error: 'Each MCP server requires server_label, server_url and api_key' });
+      const keyRef = `${server_label}::${server_url}`;
+      const existing = existingByKey.get(keyRef);
+      const hasSavedKey = Boolean(existing?.apiKeyEnc);
+
+      if (!server_label || !server_url) {
+        return res.status(400).json({ error: 'Each MCP server requires server_label and server_url' });
+      }
+      if (!api_key && !hasSavedKey) {
+        return res.status(400).json({ error: `Missing api_key for MCP server "${server_label}"` });
       }
 
-      const tools = Array.isArray(row?.tools) ? row.tools : await discoverMcpTools({ server_url, api_key, timeoutMs: Number(row?.timeoutMs) || 30000 });
+      const effectiveApiKey = api_key || await decrypt(existing.apiKeyEnc);
+      const encryptedApiKey = api_key
+        ? await encrypt(api_key)
+        : existing.apiKeyEnc;
+
+      const tools = Array.isArray(row?.tools)
+        ? row.tools
+        : await discoverMcpTools({ server_url, api_key: effectiveApiKey, timeoutMs: Number(row?.timeoutMs) || 30000 });
       await saveDiscoveredToolSchemas({ serverUrl: server_url, serverLabel: server_label, tools });
       normalized.push({
         server_label,
@@ -383,7 +398,7 @@ router.put('/mcp-servers', authMiddleware, async (req, res) => {
         headers: { Authorization: 'Bearer ${api_key}' },
         timeoutMs: Number(row?.timeoutMs) || 30000,
         retry: { retries: 1, backoffMs: 300 },
-        apiKeyEnc: await encrypt(api_key),
+        apiKeyEnc: encryptedApiKey,
         tools,
         last_status: 'ok',
         last_error: '',

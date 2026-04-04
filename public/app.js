@@ -451,21 +451,40 @@ function renderWorkflowList() {
     el.innerHTML='<div style="padding:16px 14px;font-family:JetBrains Mono,monospace;font-size:10px;color:var(--dim)">No workflows yet</div>';
     return;
   }
-  workflows.forEach(wf=>{
+  workflows.forEach(wf => {
     const item = document.createElement('div');
-    item.className='wf-item'+(currentWf?.name===wf.name?' active':'');
+    item.className = 'wf-item' + (currentWf?.name === wf.name ? ' active' : '');
     const d = new Date(wf.updatedAt);
-    item.innerHTML=`
-      <span class="wf-item-icon">&#x2B21;</span>
-      <div class="wf-item-info">
-        <div class="wf-item-name">${wf.name}</div>
-        <div class="wf-item-date">${d.toLocaleDateString()} ${d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</div>
-      </div>
-      <div class="wf-item-actions">
-        <button class="wf-icon-btn" title="Copy JSON" onclick="copyWfJsonByName('${wf.name}',event)">&#x2398;</button>
-        <button class="wf-icon-btn" title="Delete" onclick="deleteWorkflow('${wf.name}',event)">&#x2715;</button>
-      </div>`;
-    item.addEventListener('click', ()=>selectWf(wf.name));
+    const icon = document.createElement('span');
+    icon.className = 'wf-item-icon';
+    icon.innerHTML = '&#x2B21;';
+
+    const info = document.createElement('div');
+    info.className = 'wf-item-info';
+    const name = document.createElement('div');
+    name.className = 'wf-item-name';
+    name.textContent = wf.name;
+    const date = document.createElement('div');
+    date.className = 'wf-item-date';
+    date.textContent = `${d.toLocaleDateString()} ${d.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' })}`;
+    info.append(name, date);
+
+    const actions = document.createElement('div');
+    actions.className = 'wf-item-actions';
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'wf-icon-btn';
+    copyBtn.title = 'Copy JSON';
+    copyBtn.innerHTML = '&#x2398;';
+    copyBtn.addEventListener('click', (event) => copyWfJsonByName(wf.name, event));
+    const delBtn = document.createElement('button');
+    delBtn.className = 'wf-icon-btn';
+    delBtn.title = 'Delete';
+    delBtn.innerHTML = '&#x2715;';
+    delBtn.addEventListener('click', (event) => deleteWorkflow(wf.name, event));
+    actions.append(copyBtn, delBtn);
+
+    item.append(icon, info, actions);
+    item.addEventListener('click', () => selectWf(wf.name));
     el.appendChild(item);
   });
 }
@@ -1732,7 +1751,7 @@ function openSettings() {
     <div class="settings-pane" id="s-pane-mcp">
       <div class="settings-section">
         <div class="settings-title">Registre des MCP servers</div>
-        <div class="settings-desc">Champs requis: server_label, api_key, server_url. Les tools sont découverts après validation.</div>
+        <div class="settings-desc">Champs requis: server_label, server_url. api_key requis seulement à la création/remplacement. Les tools sont découverts après validation.</div>
         <div id="s-mcp-list"></div>
         <div class="settings-row">
           <button class="settings-btn" onclick="addMcpServerRow()">+ Ajouter serveur</button>
@@ -1765,35 +1784,89 @@ function renderMcpServerRows() {
     list.innerHTML = '<div class="settings-desc">Aucun serveur MCP configuré.</div>';
     return;
   }
-  list.innerHTML = _mcpServers.map((srv, i) => `
-    <div class="settings-mcp-item">
-      <div class="settings-row"><input class="settings-input" id="mcp-label-${i}" placeholder="server_label" value="${srv.server_label || ''}"></div>
-      <div class="settings-row"><input class="settings-input" id="mcp-url-${i}" placeholder="https://host.example.com/mcp" value="${srv.server_url || ''}"></div>
-      <div class="settings-row"><input class="settings-input" id="mcp-key-${i}" type="password" placeholder="server-key-val" value="${srv.api_key || ''}"></div>
-      <div class="settings-row" style="justify-content:space-between;align-items:center;">
-        <span class="${srv.last_status==='ok'?'settings-conn-ok':'settings-conn-ko'}">${srv.last_status==='ok'?'● Connecté':'● Non connecté'}</span>
-        <div style="display:flex;gap:8px">
-          <button class="settings-btn" onclick="validateMcpServer(${i})">Valider la connexion</button>
-          <button class="settings-btn danger" onclick="removeMcpServerRow(${i})">Supprimer</button>
-        </div>
-      </div>
-      ${srv.last_error ? `<div class="settings-err">${srv.last_error}</div>` : ''}
-      <div class="settings-desc">Tools: ${(srv.tools || []).map(t => typeof t === 'string' ? t : t.name).filter(Boolean).join(', ') || '—'}</div>
-    </div>
-  `).join('');
+  list.innerHTML = '';
+
+  _mcpServers.forEach((srv, i) => {
+    const item = document.createElement('div');
+    item.className = 'settings-mcp-item';
+
+    const mkInputRow = (id, placeholder, value = '', type = 'text') => {
+      const row = document.createElement('div');
+      row.className = 'settings-row';
+      const input = document.createElement('input');
+      input.className = 'settings-input';
+      input.id = id;
+      input.placeholder = placeholder;
+      input.value = value;
+      input.type = type;
+      row.appendChild(input);
+      return row;
+    };
+
+    item.appendChild(mkInputRow(`mcp-label-${i}`, 'server_label', srv.server_label || ''));
+    item.appendChild(mkInputRow(`mcp-url-${i}`, 'https://host.example.com/mcp', srv.server_url || ''));
+    item.appendChild(mkInputRow(`mcp-key-${i}`, 'server-key-val (laisser vide pour conserver)', '', 'password'));
+
+    const statusRow = document.createElement('div');
+    statusRow.className = 'settings-row';
+    statusRow.style.justifyContent = 'space-between';
+    statusRow.style.alignItems = 'center';
+
+    const status = document.createElement('span');
+    const connected = srv.last_status === 'ok';
+    status.className = connected ? 'settings-conn-ok' : 'settings-conn-ko';
+    status.textContent = connected ? '● Connecté' : '● Non connecté';
+
+    const actions = document.createElement('div');
+    actions.style.display = 'flex';
+    actions.style.gap = '8px';
+    const validateBtn = document.createElement('button');
+    validateBtn.className = 'settings-btn';
+    validateBtn.textContent = 'Valider la connexion';
+    validateBtn.addEventListener('click', () => validateMcpServer(i));
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'settings-btn danger';
+    removeBtn.textContent = 'Supprimer';
+    removeBtn.addEventListener('click', () => removeMcpServerRow(i));
+    actions.append(validateBtn, removeBtn);
+
+    statusRow.append(status, actions);
+    item.appendChild(statusRow);
+
+    if (srv.last_error) {
+      const err = document.createElement('div');
+      err.className = 'settings-err';
+      err.textContent = srv.last_error;
+      item.appendChild(err);
+    }
+
+    const keyInfo = document.createElement('div');
+    keyInfo.className = 'settings-desc';
+    keyInfo.textContent = srv.has_api_key ? 'API key: enregistrée' : 'API key: absente';
+    item.appendChild(keyInfo);
+
+    const toolsInfo = document.createElement('div');
+    toolsInfo.className = 'settings-desc';
+    toolsInfo.textContent = `Tools: ${(srv.tools || []).map(t => typeof t === 'string' ? t : t.name).filter(Boolean).join(', ') || '—'}`;
+    item.appendChild(toolsInfo);
+
+    list.appendChild(item);
+  });
 }
 
 function readMcpServerRow(index) {
+  const current = _mcpServers[index] || {};
   return {
-    ...(_mcpServers[index] || {}),
+    ...current,
     server_label: document.getElementById(`mcp-label-${index}`)?.value?.trim() || '',
     server_url: document.getElementById(`mcp-url-${index}`)?.value?.trim() || '',
-    api_key: document.getElementById(`mcp-key-${index}`)?.value?.trim() || ''
+    api_key: document.getElementById(`mcp-key-${index}`)?.value?.trim() || '',
+    has_api_key: Boolean(current.has_api_key)
   };
 }
 
 function addMcpServerRow() {
-  _mcpServers.push({ server_label:'', server_url:'', api_key:'', tools:[], last_status:'unknown', last_error:'' });
+  _mcpServers.push({ server_label:'', server_url:'', api_key:'', has_api_key:false, tools:[], last_status:'unknown', last_error:'' });
   renderMcpServerRows();
 }
 
@@ -1811,10 +1884,10 @@ async function validateMcpServer(index) {
   }
   const res = await api('/api/auth/mcp-validate', 'POST', row);
   if (res.error) {
-    _mcpServers[index] = { ...row, tools: [], last_status:'error', last_error: res.error };
+    _mcpServers[index] = { ...row, tools: [], has_api_key: row.has_api_key, last_status:'error', last_error: res.error };
     msg.className='settings-err'; msg.textContent=`${row.server_label}: ${res.error}`;
   } else {
-    _mcpServers[index] = { ...row, tools: res.tools || [], last_status:'ok', last_error:'' };
+    _mcpServers[index] = { ...row, api_key:'', has_api_key: true, tools: res.tools || [], last_status:'ok', last_error:'' };
     msg.className='settings-ok'; msg.textContent=`${row.server_label}: connexion établie (${res.count || 0} tools)`;
   }
   renderMcpServerRows();
@@ -1921,7 +1994,9 @@ function openModal(title,bodyHtml,actions=[]) {
 }
 
 function openConfirm(title,sub,onConfirm) {
-  openModal(title,`<div class="confirm-text">${title}</div><div class="confirm-sub">${sub}</div>`,[
+  const safeTitle = escapeHtml(title);
+  const safeSub = escapeHtml(sub);
+  openModal(title,`<div class="confirm-text">${safeTitle}</div><div class="confirm-sub">${safeSub}</div>`,[
     { label:'Cancel', action:closeModal },
     { label:'Delete', action:onConfirm }
   ]);
