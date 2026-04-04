@@ -10,56 +10,13 @@ import {
   ReactFlowProvider, useReactFlow
 } from '@xyflow/react';
 import dagre from 'dagre';
-
-// ── CONSTANTS ────────────────────────────────────────────────────
-const FIELD_TYPES = ['string','number','integer','boolean','object','array','image_url'];
-const NODE_W = 280, NODE_H = 164;
-const TYPE_COLORS = {
-  prompt:'#f59e0b', api:'#2dd4bf', webpage:'#22d3ee', transform:'#60a5fa', tool:'#a78bfa', script:'#fb923c'
-};
-
-// ── DEMO WORKFLOW ────────────────────────────────────────────────
-const DEMO_WORKFLOW = {
-  lang_name: "demo_pipeline",
-  steps: [
-    {
-      ws_name: "extract_entities",
-      ws_type: "prompt",
-      ws_llm: { provider: "anthropic", model: "claude-sonnet-4-20250514", temperature: 0 },
-      ws_system_prompt: "You are an information extraction expert. Extract named entities from text with precision.",
-      ws_prompt_template: "Extract all named entities from the following text:\n\n{{text}}\n\nGroup them by type (person, org, location, etc).",
-      ws_inputs_schema: { type:"object", required:["text"], properties:{ text:{ type:"string" } } },
-      ws_output_schema: { type:"object", required:["entities"], properties:{ entities:{ type:"array" }, summary:{ type:"string" } } }
-    },
-    {
-      ws_name: "enrich_data",
-      ws_type: "api",
-      ws_api: { method: "GET", url: "https://api.example.com/enrich/{{entity_id}}" },
-      ws_inputs_schema: { type:"object", required:["entity_id"], properties:{ entity_id:{ type:"string" } } },
-      ws_output_schema: { type:"object", required:[], properties:{ enriched:{ type:"object" }, confidence:{ type:"number" } } }
-    },
-    {
-      ws_name: "generate_report",
-      ws_type: "prompt",
-      ws_llm: { provider: "anthropic", model: "claude-sonnet-4-20250514", temperature: 0.3 },
-      ws_system_prompt: "You are a professional report writer. Generate clear, structured, actionable reports.",
-      ws_prompt_template: "Write a report based on:\n- Entities: {{entities}}\n- Enriched data: {{enriched}}\n\nOutput format: {{ws_output_schema}}",
-      ws_inputs_schema: { type:"object", required:["entities","enriched"], properties:{ entities:{ type:"array" }, enriched:{ type:"object" } } },
-      ws_output_schema: { type:"object", required:["report"], properties:{ report:{ type:"string" }, confidence:{ type:"number" }, recommendations:{ type:"array" } } }
-    }
-  ],
-  workflows: [{
-    wf_name: "demo_pipeline",
-    wf_nodes: [
-      { step_id:"node_extract",  ws_ref:"extract_entities", depends_on:[] },
-      { step_id:"node_enrich",   ws_ref:"enrich_data",      depends_on:["node_extract"] },
-      { step_id:"node_report",   ws_ref:"generate_report",  depends_on:["node_enrich"] }
-    ]
-  }]
-};
+import {
+  FIELD_TYPES, NODE_W, NODE_H, TYPE_COLORS,
+  DEMO_WORKFLOW, PROVIDER_MODEL_HINTS, PROVIDER_KEY_PLACEHOLDERS
+} from './js/constants.js';
+import { wfTs, escapeHtml, syntaxHighlight } from './js/utils.js';
 
 // ── STATE ────────────────────────────────────────────────────────
-let token          = localStorage.getItem('wf_token') || null;
 let currentUser    = null;
 let guestMode      = false;
 let guestWorkflows = [];
@@ -92,6 +49,7 @@ const WF_LOGS_PANEL_POS_KEY = 'wf_logs_panel_pos';
 let _activeRunEdgeIds = new Set();
 // FIX #6 — flag anti-réentrance pour hydrateRunStateFromServer
 let _hydratingNodes = new Set();
+let _workflowRunId = null;
 
 // ══════════════════════════════════════════════════════════════════
 //  REACT FLOW — CUSTOM NODE
@@ -458,14 +416,14 @@ function syncWorkflowDependencies(sourceId, targetId) {
 
 // ── AUTH / SESSION ────────────────────────────────────────────────
 function doLogout() {
-  token=null; currentUser=null; currentWf=null;
+  fetch('/api/auth/logout', { method:'POST', credentials:'include' }).catch(() => {});
+  currentUser=null; currentWf=null;
   guestMode=false; guestWorkflows=[]; workflows=[];
-  localStorage.removeItem('wf_token');
   window.location.href = '/login';
 }
 
 function enterGuestMode(withDemo = true) {
-  guestMode = true; token=null; currentUser=null;
+  guestMode = true; currentUser=null;
   document.getElementById('guest-banner').classList.remove('hidden');
   document.getElementById('guest-badge').style.display = '';
   document.getElementById('user-badge').textContent = '';
@@ -577,8 +535,8 @@ function startWorkflowRename(name = currentWf?.name, e) {
 // ── API CLIENT ───────────────────────────────────────────────────
 async function api(path, method='GET', body=null, auth=true) {
   const headers = { 'Content-Type':'application/json' };
-  if (auth && token) headers['Authorization'] = `Bearer ${token}`;
   const opts = { method, headers };
+  if (auth) opts.credentials = 'include';
   if (body) opts.body = JSON.stringify(body);
   try {
     const res  = await fetch(path,opts);
@@ -606,9 +564,9 @@ function renderWorkflowList() {
     el.innerHTML='<div style="padding:16px 14px;font-family:JetBrains Mono,monospace;font-size:10px;color:var(--dim)">No workflows yet</div>';
     return;
   }
-  workflows.forEach(wf=>{
+  workflows.forEach(wf => {
     const item = document.createElement('div');
-    item.className='wf-item'+(currentWf?.name===wf.name?' active':'');
+    item.className = 'wf-item' + (currentWf?.name === wf.name ? ' active' : '');
     const d = new Date(wf.updatedAt);
     item.innerHTML=`
       <span class="wf-item-icon">&#x2B21;</span>
@@ -1038,13 +996,6 @@ function onTypeChange() {
   }
 }
 
-const PROVIDER_MODEL_HINTS = {
-  anthropic:  'claude-sonnet-4-20250514',
-  openai:     'gpt-4o',
-  perplexity: 'sonar-pro',
-  mistral:    'mistral-large-latest',
-};
-
 function onProviderChange(currentModel) {
   const p = document.getElementById('f-provider')?.value || 'anthropic';
   const sel = document.getElementById('f-model');
@@ -1232,17 +1183,6 @@ function setExecutionUiState(running) {
     stepBtn.textContent = _runStepDefaultLabel;
     flowBtn.textContent = _runFlowDefaultLabel;
   }
-}
-
-function truncLog(v) {
-  const txt = typeof v === 'string' ? v : JSON.stringify(v);
-  return txt.length > 256 ? `${txt.slice(0,256)}…` : txt;
-}
-
-function wfTs() {
-  const d = new Date();
-  const p = n => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
 
 function appendWorkflowExecLog(line) {
@@ -1623,7 +1563,7 @@ function updateRunTab(s) {
 // FIX #6 — anti-réentrance + suppression de l'appel récursif updateRunTab
 async function hydrateRunStateFromServer(step, nodeId) {
   const key = nodeId || step?.ws_name;
-  if (!token || !currentWf || !key) return;
+  if (!currentUser || !currentWf || !key) return;
   if (getStepRunState(step, nodeId)) return;   // état déjà connu
   if (_hydratingNodes.has(key)) return;         // hydratation déjà en cours
   _hydratingNodes.add(key);
@@ -1660,57 +1600,17 @@ async function hydrateRunStateFromServer(step, nodeId) {
 
 function stopExecution() {
   if (_runController) _runController.abort();
+  if (_workflowRunId && currentUser) {
+    fetch(`/api/exec/runs/${encodeURIComponent(_workflowRunId)}/stop`, {
+      method: 'POST',
+      credentials: 'include'
+    }).catch(() => {});
+  }
 }
 
 function findWorkflowNode(wf, ref) {
   if (!wf || !ref) return null;
   return (wf.wf_nodes || []).find(n => n.step_id === ref || n.ws_ref === ref) || null;
-}
-
-function getDownstreamExecutionOrder(startNodeId) {
-  const wf = (currentWf?.data?.workflows || []).find(w => w.wf_nodes?.length);
-  if (!wf) return [];
-  const nodes = wf.wf_nodes || [];
-  const byId = new Map(nodes.map(n => [n.step_id, n]));
-  const children = new Map(nodes.map(n => [n.step_id, []]));
-  nodes.forEach(n => (n.depends_on || []).forEach(dep => {
-    const depNode = findWorkflowNode(wf, dep);
-    if (depNode && children.has(depNode.step_id)) children.get(depNode.step_id).push(n.step_id);
-  }));
-
-  const startNode = findWorkflowNode(wf, startNodeId);
-  if (!startNode) return [];
-
-  const included = new Set();
-  const stack = [startNode.step_id];
-  while (stack.length) {
-    const id = stack.pop();
-    if (!id || included.has(id)) continue;
-    included.add(id);
-    (children.get(id) || []).forEach(c => stack.push(c));
-  }
-
-  const indeg = new Map();
-  included.forEach(id => indeg.set(id, 0));
-  included.forEach(id => {
-    const node = byId.get(id);
-    (node?.depends_on || []).forEach(dep => {
-      const depNode = findWorkflowNode(wf, dep);
-      if (depNode && included.has(depNode.step_id)) indeg.set(id, (indeg.get(id) || 0) + 1);
-    });
-  });
-  const q = [...included].filter(id => indeg.get(id) === 0);
-  const order = [];
-  while (q.length) {
-    const id = q.shift();
-    order.push(id);
-    (children.get(id) || []).forEach(c => {
-      if (!included.has(c)) return;
-      indeg.set(c, indeg.get(c) - 1);
-      if (indeg.get(c) === 0) q.push(c);
-    });
-  }
-  return order;
 }
 
 function getStepRunState(step, nodeId) {
@@ -1757,13 +1657,6 @@ function renderRunState(step, nodeId) {
   logOutEl.textContent = state.logOutput || '// Full prompt + execution log will appear here…';
   logOutEl.className = `run-output${state.logError ? ' error' : ''}`;
   logMetaEl.innerHTML = state.logMeta || '';
-}
-
-function escapeHtml(v) {
-  return String(v)
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;');
 }
 
 function renderOutputVars(container, rawOutput) {
@@ -1817,13 +1710,19 @@ async function executeStep(stepDef, runMode='step_only') {
   const tsStart = Date.now();
   const ts = () => new Date().toISOString().slice(11,23);
   setRunningGraphState(_currentNodeId || s.ws_name, runMode === 'workflow_from_here');
+  const canUseRefExec = Boolean(currentUser && currentWf?.name && _currentNodeId);
+  const execUrl = canUseRefExec
+    ? `/api/exec/workflows/${encodeURIComponent(currentWf.name)}/step`
+    : '/api/exec/step';
+  const execBody = canUseRefExec
+    ? { ws_ref: s.ws_name, step_id: _currentNodeId, inputs: finalInputs }
+    : { step:s, inputs: finalInputs, context:{ workflowName: currentWf?.name, nodeId:_currentNodeId, runMode } };
 
   if (['api','webpage'].includes((s.ws_type||'').toLowerCase())) {
     const headers = { 'Content-Type':'application/json' };
-    if (token) headers['Authorization'] = `Bearer ${token}`;
     let res;
     try {
-      const r = await fetch('/api/exec/step', { method:'POST', headers, signal:_runController.signal, body:JSON.stringify({ step:s, inputs: finalInputs, context:{ workflowName: currentWf?.name, nodeId:_currentNodeId, runMode } }) });
+      const r = await fetch(execUrl, { method:'POST', headers, credentials:'include', signal:_runController.signal, body:JSON.stringify(execBody) });
       res = await r.json();
     } catch(e) {
       const msg = e.name === 'AbortError' ? 'Execution stopped by user' : e.message;
@@ -1852,8 +1751,7 @@ async function executeStep(stepDef, runMode='step_only') {
 
   try {
     const headers = { 'Content-Type':'application/json' };
-    if (token) headers['Authorization'] = `Bearer ${token}`;
-    const resp = await fetch('/api/exec/step', { method:'POST', headers, signal:_runController.signal, body:JSON.stringify({ step:s, inputs: finalInputs, context:{ workflowName: currentWf?.name, nodeId:_currentNodeId, runMode } }) });
+    const resp = await fetch(execUrl, { method:'POST', headers, credentials:'include', signal:_runController.signal, body:JSON.stringify(execBody) });
     if (!resp.ok) {
       const errBody = await resp.json().catch(()=>({ error:`HTTP ${resp.status}` }));
       throw new Error(errBody.error || `HTTP ${resp.status}`);
@@ -1927,37 +1825,116 @@ async function runStepOnly() {
 async function runWorkflowFromHere() {
   if (_isExecuting) return stopExecution();
   if (!currentStep || !_currentNodeId) return;
+  if (!currentUser || !currentWf?.name) {
+    toast('Sign in required for backend workflow orchestration', 'err');
+    return;
+  }
 
   const savedStep   = currentStep;
   const savedNodeId = _currentNodeId;
+  const inProps = savedStep.ws_inputs_schema?.properties || {};
+  const triggerInputs = {};
+  for (const k of Object.keys(inProps)) {
+    const el=document.getElementById(`run-in-${k}`); if(!el) continue;
+    if (!el.value.trim()) continue;
+    let val=el.value; try{ val=JSON.parse(val); }catch{}
+    triggerInputs[k]=val;
+  }
 
   setExecutionUiState(true);
   try {
     clearWorkflowExecLogs();
     clearRunningGraphState();
-    appendWorkflowExecLog(`${wfTs()} ## Workflow ## Start from ${savedNodeId}`);
-    const order = getDownstreamExecutionOrder(savedNodeId);
+    appendWorkflowExecLog(`${wfTs()} ## Workflow ## Start from ${savedNodeId} (backend orchestrator)`);
+    const launchResp = await fetch(`/api/exec/workflows/${encodeURIComponent(currentWf.name)}/run`, {
+      method: 'POST',
+      headers: { 'Content-Type':'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ from_step_id: savedNodeId, inputs: triggerInputs })
+    });
+    const launch = await launchResp.json().catch(() => ({}));
+    if (!launchResp.ok || !launch?.run_id) throw new Error(launch.error || `HTTP ${launchResp.status}`);
+
+    _workflowRunId = launch.run_id;
+    _runController = new AbortController();
+
+    const streamResp = await fetch(`/api/exec/runs/${encodeURIComponent(_workflowRunId)}/stream`, {
+      credentials: 'include',
+      signal: _runController.signal
+    });
+    if (!streamResp.ok) throw new Error(`HTTP ${streamResp.status} while opening run stream`);
+
     const wf = (currentWf?.data?.workflows || []).find(w => w.wf_nodes?.length);
-    for (const nodeId of order) {
-      if (!_isExecuting) break;
-      const node = findWorkflowNode(wf, nodeId);
-      if (!node) continue;
-      const step = (currentWf.data.steps || []).find(st => st.ws_name === node.ws_ref);
-      if (!step) continue;
-      // Utiliser des variables locales pour l'itération
-      currentStep = step;
-      _currentNodeId = nodeId;
-      appendWorkflowExecLog(`${wfTs()} ## ${step.ws_name} ## Start`);
-      const inVars = buildInheritedInputs(step, nodeId);
-      const inTxt = Object.entries(inVars).map(([k,v]) => `${k}=${truncLog(v)}`).join(', ');
-      appendWorkflowExecLog(`${wfTs()} ## ${step.ws_name} ## inputs : ${inTxt || 'none'}`);
-      const ok = await executeStep(step, 'workflow_from_here');
-      const st = getStepRunState(step, nodeId) || {};
-      appendWorkflowExecLog(`${wfTs()} ## ${step.ws_name} ## End, status ${st.status || (ok?'OK':'ERR')}, output=${truncLog(st.output || '')}`);
-      if (!ok) break;
+    const reader = streamResp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let finished = false;
+
+    while (!finished) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream:true });
+      const frames = buffer.split('\n\n');
+      buffer = frames.pop();
+
+      for (const frame of frames) {
+        const lines = frame.split('\n');
+        const event = lines.find(l=>l.startsWith('event: '))?.slice(7) || 'message';
+        const raw = lines.find(l=>l.startsWith('data: '))?.slice(6);
+        if (!raw) continue;
+        const data = JSON.parse(raw);
+
+        if (event === 'step_started') {
+          const node = findWorkflowNode(wf, data.step_id);
+          const step = (currentWf.data.steps || []).find(st => st.ws_name === data.ws_ref);
+          if (!node || !step) continue;
+          currentStep = step;
+          _currentNodeId = node.step_id;
+          setRunningGraphState(node.step_id, true);
+          saveStepRunState(step, node.step_id, {
+            status:'running',
+            output:'',
+            lastInputs:data.inputs || {},
+            logOutput:'',
+            logMeta:'backend orchestrated running',
+            logError:false
+          });
+          appendWorkflowExecLog(`${wfTs()} ## ${step.ws_name} ## Start`);
+          continue;
+        }
+
+        if (event === 'step_finished') {
+          const node = findWorkflowNode(wf, data.step_id);
+          const step = (currentWf.data.steps || []).find(st => st.ws_name === data.ws_ref);
+          if (!node || !step) continue;
+          const isError = data.status !== 'done';
+          const outputText = isError ? (data.error || '') : JSON.stringify(data.output ?? '', null, 2);
+          if (!isError) rememberStepResult(step, node.step_id, data.output);
+          saveStepRunState(step, node.step_id, {
+            status: isError ? 'error' : 'done',
+            output: outputText,
+            logOutput: outputText,
+            logMeta: isError ? 'backend orchestrated error' : 'backend orchestrated done',
+            logError: isError
+          });
+          appendWorkflowExecLog(`${wfTs()} ## ${step.ws_name} ## End, status ${data.status}`);
+          if (_currentNodeId === node.step_id) renderRunState(step, node.step_id);
+          continue;
+        }
+
+        if (event === 'workflow_finished') {
+          appendWorkflowExecLog(`${wfTs()} ## Workflow ## End (${data.status || 'done'})`);
+          finished = true;
+          break;
+        }
+      }
     }
-    appendWorkflowExecLog(`${wfTs()} ## Workflow ## End`);
+  } catch (err) {
+    const msg = err?.name === 'AbortError' ? 'Execution stopped by user' : (err?.message || 'Workflow execution failed');
+    appendWorkflowExecLog(`${wfTs()} ## Workflow ## Error: ${msg}`);
+    toast(msg, 'err');
   } finally {
+    _workflowRunId = null;
     _runController = null;
     setExecutionUiState(false);
     clearRunningGraphState();
@@ -1969,13 +1946,6 @@ async function runWorkflowFromHere() {
 }
 
 // ── SETTINGS ─────────────────────────────────────────────────────
-const PROVIDER_KEY_PLACEHOLDERS = {
-  anthropic:  'sk-ant-api03-…',
-  openai:     'sk-…',
-  perplexity: 'pplx-…',
-  mistral:    'your-mistral-key',
-};
-
 function openSettings() {
   if (guestMode) { showSignupCTA(); return; }
   openModal('Settings',`
@@ -2026,7 +1996,7 @@ function openSettings() {
     <div class="settings-pane" id="s-pane-mcp">
       <div class="settings-section">
         <div class="settings-title">Registre des MCP servers</div>
-        <div class="settings-desc">Champs requis: server_label, api_key, server_url. Les tools sont découverts après validation.</div>
+        <div class="settings-desc">Champs requis: server_label, server_url. api_key requis seulement à la création/remplacement. Les tools sont découverts après validation.</div>
         <div id="s-mcp-list"></div>
         <div class="settings-row">
           <button class="settings-btn" onclick="addMcpServerRow()">+ Ajouter serveur</button>
@@ -2059,35 +2029,89 @@ function renderMcpServerRows() {
     list.innerHTML = '<div class="settings-desc">Aucun serveur MCP configuré.</div>';
     return;
   }
-  list.innerHTML = _mcpServers.map((srv, i) => `
-    <div class="settings-mcp-item">
-      <div class="settings-row"><input class="settings-input" id="mcp-label-${i}" placeholder="server_label" value="${srv.server_label || ''}"></div>
-      <div class="settings-row"><input class="settings-input" id="mcp-url-${i}" placeholder="https://host.example.com/mcp" value="${srv.server_url || ''}"></div>
-      <div class="settings-row"><input class="settings-input" id="mcp-key-${i}" type="password" placeholder="server-key-val" value="${srv.api_key || ''}"></div>
-      <div class="settings-row" style="justify-content:space-between;align-items:center;">
-        <span class="${srv.last_status==='ok'?'settings-conn-ok':'settings-conn-ko'}">${srv.last_status==='ok'?'● Connecté':'● Non connecté'}</span>
-        <div style="display:flex;gap:8px">
-          <button class="settings-btn" onclick="validateMcpServer(${i})">Valider la connexion</button>
-          <button class="settings-btn danger" onclick="removeMcpServerRow(${i})">Supprimer</button>
-        </div>
-      </div>
-      ${srv.last_error ? `<div class="settings-err">${srv.last_error}</div>` : ''}
-      <div class="settings-desc">Tools: ${(srv.tools || []).map(t => typeof t === 'string' ? t : t.name).filter(Boolean).join(', ') || '—'}</div>
-    </div>
-  `).join('');
+  list.innerHTML = '';
+
+  _mcpServers.forEach((srv, i) => {
+    const item = document.createElement('div');
+    item.className = 'settings-mcp-item';
+
+    const mkInputRow = (id, placeholder, value = '', type = 'text') => {
+      const row = document.createElement('div');
+      row.className = 'settings-row';
+      const input = document.createElement('input');
+      input.className = 'settings-input';
+      input.id = id;
+      input.placeholder = placeholder;
+      input.value = value;
+      input.type = type;
+      row.appendChild(input);
+      return row;
+    };
+
+    item.appendChild(mkInputRow(`mcp-label-${i}`, 'server_label', srv.server_label || ''));
+    item.appendChild(mkInputRow(`mcp-url-${i}`, 'https://host.example.com/mcp', srv.server_url || ''));
+    item.appendChild(mkInputRow(`mcp-key-${i}`, 'server-key-val (laisser vide pour conserver)', '', 'password'));
+
+    const statusRow = document.createElement('div');
+    statusRow.className = 'settings-row';
+    statusRow.style.justifyContent = 'space-between';
+    statusRow.style.alignItems = 'center';
+
+    const status = document.createElement('span');
+    const connected = srv.last_status === 'ok';
+    status.className = connected ? 'settings-conn-ok' : 'settings-conn-ko';
+    status.textContent = connected ? '● Connecté' : '● Non connecté';
+
+    const actions = document.createElement('div');
+    actions.style.display = 'flex';
+    actions.style.gap = '8px';
+    const validateBtn = document.createElement('button');
+    validateBtn.className = 'settings-btn';
+    validateBtn.textContent = 'Valider la connexion';
+    validateBtn.addEventListener('click', () => validateMcpServer(i));
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'settings-btn danger';
+    removeBtn.textContent = 'Supprimer';
+    removeBtn.addEventListener('click', () => removeMcpServerRow(i));
+    actions.append(validateBtn, removeBtn);
+
+    statusRow.append(status, actions);
+    item.appendChild(statusRow);
+
+    if (srv.last_error) {
+      const err = document.createElement('div');
+      err.className = 'settings-err';
+      err.textContent = srv.last_error;
+      item.appendChild(err);
+    }
+
+    const keyInfo = document.createElement('div');
+    keyInfo.className = 'settings-desc';
+    keyInfo.textContent = srv.has_api_key ? 'API key: enregistrée' : 'API key: absente';
+    item.appendChild(keyInfo);
+
+    const toolsInfo = document.createElement('div');
+    toolsInfo.className = 'settings-desc';
+    toolsInfo.textContent = `Tools: ${(srv.tools || []).map(t => typeof t === 'string' ? t : t.name).filter(Boolean).join(', ') || '—'}`;
+    item.appendChild(toolsInfo);
+
+    list.appendChild(item);
+  });
 }
 
 function readMcpServerRow(index) {
+  const current = _mcpServers[index] || {};
   return {
-    ...(_mcpServers[index] || {}),
+    ...current,
     server_label: document.getElementById(`mcp-label-${index}`)?.value?.trim() || '',
     server_url: document.getElementById(`mcp-url-${index}`)?.value?.trim() || '',
-    api_key: document.getElementById(`mcp-key-${index}`)?.value?.trim() || ''
+    api_key: document.getElementById(`mcp-key-${index}`)?.value?.trim() || '',
+    has_api_key: Boolean(current.has_api_key)
   };
 }
 
 function addMcpServerRow() {
-  _mcpServers.push({ server_label:'', server_url:'', api_key:'', tools:[], last_status:'unknown', last_error:'' });
+  _mcpServers.push({ server_label:'', server_url:'', api_key:'', has_api_key:false, tools:[], last_status:'unknown', last_error:'' });
   renderMcpServerRows();
 }
 
@@ -2105,10 +2129,10 @@ async function validateMcpServer(index) {
   }
   const res = await api('/api/auth/mcp-validate', 'POST', row);
   if (res.error) {
-    _mcpServers[index] = { ...row, tools: [], last_status:'error', last_error: res.error };
+    _mcpServers[index] = { ...row, tools: [], has_api_key: row.has_api_key, last_status:'error', last_error: res.error };
     msg.className='settings-err'; msg.textContent=`${row.server_label}: ${res.error}`;
   } else {
-    _mcpServers[index] = { ...row, tools: res.tools || [], last_status:'ok', last_error:'' };
+    _mcpServers[index] = { ...row, api_key:'', has_api_key: true, tools: res.tools || [], last_status:'ok', last_error:'' };
     msg.className='settings-ok'; msg.textContent=`${row.server_label}: connexion établie (${res.count || 0} tools)`;
   }
   renderMcpServerRows();
@@ -2215,7 +2239,9 @@ function openModal(title,bodyHtml,actions=[]) {
 }
 
 function openConfirm(title,sub,onConfirm) {
-  openModal(title,`<div class="confirm-text">${title}</div><div class="confirm-sub">${sub}</div>`,[
+  const safeTitle = escapeHtml(title);
+  const safeSub = escapeHtml(sub);
+  openModal(title,`<div class="confirm-text">${safeTitle}</div><div class="confirm-sub">${safeSub}</div>`,[
     { label:'Cancel', action:closeModal },
     { label:'Delete', action:onConfirm }
   ]);
@@ -2230,16 +2256,6 @@ function toast(msg,type='ok') {
   const el=document.getElementById('toast');
   el.textContent=msg; el.className=`show ${type}`;
   clearTimeout(_toastTimer); _toastTimer=setTimeout(()=>(el.className=''),2500);
-}
-
-// ── UTILS ────────────────────────────────────────────────────────
-function syntaxHighlight(json) {
-  return json.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-    .replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g,m=>{
-      if(/^"/.test(m)) return/:$/.test(m)?`<span class="jk">${m}</span>`:`<span class="js">${m}</span>`;
-      if(/true|false|null/.test(m)) return `<span class="jb">${m}</span>`;
-      return `<span class="jn">${m}</span>`;
-    });
 }
 
 // ── WINDOW EXPORTS ───────────────────────────────────────────────
@@ -2292,11 +2308,7 @@ window.addEventListener('load', async () => {
   const root = createRoot(document.getElementById('rf-container'));
   root.render(h(AppGraph,null));
 
-  if (token) {
-    const me=await api('/api/auth/me');
-    if (!me.error) { enterAuthUser(me); return; }
-    localStorage.removeItem('wf_token');
-    token=null;
-  }
+  const me=await api('/api/auth/me');
+  if (!me.error) { enterAuthUser(me); return; }
   enterGuestMode(true);
 });
