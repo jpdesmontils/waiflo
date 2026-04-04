@@ -1,20 +1,43 @@
 {
-  "meta_title":       "Waiflo — Livrez vos fonctionnalités IA plus vite, sans perdre le contrôle",
-  "meta_description": "Waiflo est un standard JSON ouvert et versionnable pour les workflows IA multi-étapes. Éditeur visuel, API REST, self-hostable. Zéro vendor lock-in.",
+  "meta_title":       "Waiflo — Production-grade AI pipelines. Single server. No excuses.",
+  "meta_description": "Waiflo exécute des workflows IA en parallèle, applique des limites de concurrence par utilisateur et met tout en file d'attente — sur un seul serveur, zéro dépendance externe. Open-source, self-hostable, MIT.",
 
   "hero_eyebrow":      "Open-source · Self-hostable · Licence MIT",
-  "hero_h1_line1":     "Vos pipelines IA méritent",
-  "hero_h1_line2":     "la même rigueur",
-  "hero_h1_line3":     "que votre",
-  "hero_h1_accent":    "code.",
-  "hero_sub":          "Waiflo est un standard JSON versionnable pour les workflows IA multi-étapes — avec un éditeur visuel, une API REST et zéro vendor lock-in. Livrez des fonctionnalités IA plus vite sans perdre le contrôle.",
+  "hero_h1_line1":     "Concevez,",
+  "hero_h1_line2":     "Exploitez,",
+  "hero_h1_line3":     "vos workflows",
+  "hero_h1_accent":    "IA, en JSON",
+  "hero_sub":          "Waiflo exécute des workflows en parallèle, applique des limites de concurrence par utilisateur et met tout en file d'attente — sur un seul serveur, zéro dépendance externe. Livrez des fonctionnalités IA sans la dette ops.",
   "hero_cta_editor":   "⬡ Ouvrir l'éditeur — sans inscription",
   "hero_cta_github":   "★ GitHub",
   "hero_cta_quickstart": "⚡ Démarrage rapide",
-  "trust_1": "Workflows JSON compatibles Git",
-  "trust_2": "Self-hosted, votre infra",
-  "trust_3": "API-first, s'intègre partout",
-  "trust_4": "Compatible avec tout fournisseur LLM",
+  "trust_1": "Exécution parallèle des workflows",
+  "trust_2": "Serveur unique, zéro dépendance",
+  "trust_3": "Queue management par fichiers",
+  "trust_4": "Limites de concurrence par utilisateur",
+
+  "no_infra_kicker": "Ce dont vous n'avez pas besoin",
+  "no_infra_h2":     "Pas de Redis.",
+  "no_infra_h2_span":"Pas de Kubernetes. Pas d'excuses.",
+  "no_infra_sub":    "La plupart des runtimes de workflows vous imposent une taxe infra avant d'écrire la première ligne de code métier. Waiflo non.",
+  "no_infra_items": [
+    {
+      "name": "Redis",
+      "desc": "Pas de broker de messages. La file FIFO vit sur le filesystem — inspectable, backupable, compréhensible."
+    },
+    {
+      "name": "RabbitMQ / Celery",
+      "desc": "Pas de worker distribué. Le runtime résout la concurrence nativement, en un seul processus."
+    },
+    {
+      "name": "Kubernetes",
+      "desc": "Un seul serveur suffit en production. <code>docker compose up</code>, c'est tout."
+    },
+    {
+      "name": "Base de données externe",
+      "desc": "Les workflows sont des fichiers JSON. Pas de Postgres requis pour démarrer ni pour scaler."
+    }
+  ],
 
   "pain_label": "Ça vous parle ?",
   "pain_cards": [
@@ -69,6 +92,48 @@
     }
   ],
 
+  "runtime_kicker": "Le runtime Waiflo",
+  "runtime_h2":     "Conçu pour la production.",
+  "runtime_h2_span":"Déployable en 3 minutes.",
+  "runtime_sub":    "High concurrency, single server, zéro infrastructure externe. Chaque fonctionnalité a été pensée pour rester opérationnelle sur votre infra sans vous forcer à en construire une.",
+  "runtime_features": [
+    {
+      "icon":  "⚡",
+      "title": "Exécution parallèle des workflows",
+      "desc":  "Plusieurs workflows s'exécutent simultanément sans se bloquer. Isolés, tracés, contrôlés."
+    },
+    {
+      "icon":  "⚡",
+      "title": "Parallélisme intra-workflow",
+      "desc":  "Les étapes sans dépendance s'exécutent en parallèle au sein du même workflow. Le DAG résout l'ordre automatiquement."
+    },
+    {
+      "icon":  "📁",
+      "title": "File FIFO filesystem",
+      "desc":  "Pas de Redis. La file vit sur votre filesystem. Git-inspectable, backupable, compréhensible à l'œil nu."
+    },
+    {
+      "icon":  "🔒",
+      "title": "Limites centralisées",
+      "desc":  "Un seul point de contrôle pour la concurrence globale. Pas de race condition, pas de sur-sollicitation du serveur."
+    },
+    {
+      "icon":  "👤",
+      "title": "Limites par utilisateur",
+      "desc":  "Chaque plan tarifaire a ses propres slots de concurrence. Votre free tier ne mange pas le compute de vos clients Pro."
+    },
+    {
+      "icon":  "🧹",
+      "title": "Nettoyage automatique",
+      "desc":  "Les jobs terminés, expirés ou en erreur sont purgés automatiquement. La file se gère elle-même."
+    },
+    {
+      "icon":  "🔌",
+      "title": "Architecture de file extensible",
+      "desc":  "Vous outgrowez le filesystem ? Swappez la queue. Redis, SQS, BullMQ — le contrat reste le même, vos workflows ne changent pas."
+    }
+  ],
+
   "diff_kicker":    "Pourquoi Waiflo",
   "diff_h2":        "Arrêtez de choisir entre",
   "diff_h2_span":   "vitesse et contrôle.",
@@ -79,7 +144,7 @@
     { "icon": "—", "icon_class": "cross", "text": "Réécrit de zéro à chaque projet" },
     { "icon": "—", "icon_class": "cross", "text": "Aucune réutilisabilité entre équipes" },
     { "icon": "—", "icon_class": "cross", "text": "Logique de prompts enfouie dans le code" },
-    { "icon": "—", "icon_class": "cross", "text": "Aucun dev ne comprend les pipelines" }
+    { "icon": "—", "icon_class": "cross", "text": "Concurrence à gérer manuellement" }
   ],
   "diff_col2_label": "LangChain / Dify / Flowise",
   "diff_col2_rows": [
@@ -87,15 +152,15 @@
     { "icon": "—", "icon_class": "cross", "text": "Enfermé dans les abstractions du vendeur" },
     { "icon": "—", "icon_class": "cross", "text": "Workflows non versionnables avec Git" },
     { "icon": "—", "icon_class": "cross", "text": "Self-hosting difficile ou impossible" },
-    { "icon": "—", "icon_class": "cross", "text": "L'intégration API est une réflexion après coup" }
+    { "icon": "—", "icon_class": "cross", "text": "Redis / broker obligatoire pour scaler" }
   ],
   "diff_col3_label": "Waiflo",
   "diff_col3_rows": [
     { "text": "JSON pur — faites <code>git diff</code> sur vos pipelines" },
     { "text": "Self-hostable, zéro vendor lock-in" },
     { "text": "API-first — s'intègre dans n'importe quelle stack" },
-    { "text": "Éditeur visuel inclus, sans compte requis" },
-    { "text": "Compatible avec tout fournisseur LLM" }
+    { "text": "Parallélisme natif, file FIFO filesystem" },
+    { "text": "Limites de concurrence par utilisateur / plan" }
   ],
 
   "design_kicker":  "Design API",

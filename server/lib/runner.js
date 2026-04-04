@@ -32,6 +32,21 @@ async function resolveApiKey(user, provider) {
   );
 }
 
+function resolveToolConfig(step) {
+  const wsTool = step?.ws_tool || {};
+  const mcpServerLabel = String(
+    wsTool.mcp_server_label || wsTool.server_label || wsTool.server || ''
+  ).trim();
+
+  const toolName = String(
+    wsTool.tool_name || wsTool.name || step?.ws_tools?.[0] || ''
+  ).trim();
+
+  if (!mcpServerLabel) throw new Error('tool step requires ws_tool.mcp_server_label');
+  if (!toolName) throw new Error('tool step requires ws_tool.tool_name or ws_tools[0]');
+
+  return { mcpServerLabel, toolName };
+}
 
 function collectImageUrls(step, inputs) {
   const props = step?.ws_inputs_schema?.properties || {};
@@ -81,6 +96,12 @@ function buildPrompt(template, inputs) {
  */
 export async function runPromptStep(step, inputs, user, req, res) {
 
+  // Backward compatibility: some callers still pass (step, inputs, user, res).
+  if (!res && req && typeof req.setHeader === 'function') {
+    res = req;
+    req = { query: { stream: '1' } };
+  }
+
   const llm      = step.ws_llm || {};
   const provider = (llm.provider || 'anthropic').toLowerCase();
   const meta     = PROVIDER_META[provider] || PROVIDER_META.anthropic;
@@ -90,7 +111,9 @@ export async function runPromptStep(step, inputs, user, req, res) {
   const maxTok = llm.max_tokens || 2048;
   const system = step.ws_system_prompt || '';
 
-  const stream = req.query.stream === '1' || req.query.stream === 'true';
+  const queryStream = req?.query?.stream;
+  // Default to SSE for prompt execution unless explicitly disabled.
+  const stream = !(queryStream === '0' || queryStream === 'false');
 
   let apiKey = await resolveApiKey(user, provider);
   const llmProvider = createProvider(provider, apiKey);
@@ -192,7 +215,6 @@ export async function runPromptStep(step, inputs, user, req, res) {
     };
   }
 }
-
 
 function renderTemplateString(template, vars) {
   let out = String(template ?? '');
@@ -346,22 +368,6 @@ export async function runWebpageStep(step, inputs) {
     return runWebpageBrowserStep(webpageConfig, inputs || {});
   }
   return runWebpageHttpStep(webpageConfig, inputs || {});
-}
-
-function resolveToolConfig(step) {
-  const wsTool = step?.ws_tool || {};
-  const mcpServerLabel = String(
-    wsTool.mcp_server_label || wsTool.server_label || wsTool.server || ''
-  ).trim();
-
-  const toolName = String(
-    wsTool.tool_name || wsTool.name || step?.ws_tools?.[0] || ''
-  ).trim();
-
-  if (!mcpServerLabel) throw new Error('tool step requires ws_tool.mcp_server_label');
-  if (!toolName) throw new Error('tool step requires ws_tool.tool_name or ws_tools[0]');
-
-  return { mcpServerLabel, toolName };
 }
 
 /**

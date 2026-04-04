@@ -5,6 +5,7 @@ import { authMiddleware } from './auth.js';
 import { workflowDir, ensureUserDir } from '../lib/users.js';
 import { safeName, wfPath } from '../lib/utils.js';
 import { deleteWorkflowRunData, pruneWorkflowRunData } from '../lib/runStore.js';
+import { readUserGraphPositions, writeUserGraphPositions, extractWorkflowPositions, applyWorkflowPositions } from '../lib/graphPositions.js';
 
 const router = express.Router();
 
@@ -43,7 +44,10 @@ router.get('/:name', async (req, res) => {
     const fp  = wfPath(req.user.userId, req.params.name);
     const raw = await fs.readFile(fp, 'utf8');
     try {
-      res.json(JSON.parse(raw));
+      const data = JSON.parse(raw);
+      const allPositions = await readUserGraphPositions(req.user.userId);
+      const workflowPositions = allPositions[req.params.name] || {};
+      res.json(applyWorkflowPositions(data, workflowPositions));
     } catch {
       res.status(400).json({ error: 'Workflow file is corrupted (invalid JSON)' });
     }
@@ -67,6 +71,12 @@ router.post('/:name', async (req, res) => {
     }
     const body = typeof req.body === 'object' ? JSON.stringify(req.body, null, 2) : req.body;
     await fs.writeFile(fp, body, 'utf8');
+
+    const next = typeof req.body === 'object' ? req.body : JSON.parse(req.body || '{}');
+    const allPositions = await readUserGraphPositions(req.user.userId);
+    allPositions[req.params.name] = extractWorkflowPositions(next);
+    await writeUserGraphPositions(req.user.userId, allPositions);
+
     res.status(201).json({ ok: true, name: req.params.name });
   } catch (err) {
     console.error('create error:', err);
@@ -84,6 +94,11 @@ router.put('/:name', async (req, res) => {
     const next = typeof req.body === 'object' ? req.body : JSON.parse(req.body || '{}');
     const stepNames = (next.steps || []).map(s => s.ws_name).filter(Boolean);
     await pruneWorkflowRunData(req.user.userId, req.params.name, stepNames);
+
+    const allPositions = await readUserGraphPositions(req.user.userId);
+    allPositions[req.params.name] = extractWorkflowPositions(next);
+    await writeUserGraphPositions(req.user.userId, allPositions);
+
     res.json({ ok: true, name: req.params.name, savedAt: new Date().toISOString() });
   } catch (err) {
     console.error('save error:', err);
@@ -100,6 +115,14 @@ router.patch('/:name/rename', async (req, res) => {
     const newPath = wfPath(req.user.userId, newName);
     await fs.rename(oldPath, newPath);
     await deleteWorkflowRunData(req.user.userId, req.params.name);
+
+    const allPositions = await readUserGraphPositions(req.user.userId);
+    if (Object.prototype.hasOwnProperty.call(allPositions, req.params.name)) {
+      allPositions[newName] = allPositions[req.params.name];
+      delete allPositions[req.params.name];
+      await writeUserGraphPositions(req.user.userId, allPositions);
+    }
+
     res.json({ ok: true, name: newName });
   } catch (err) {
     if (err.code === 'ENOENT') return res.status(404).json({ error: 'Workflow not found' });
@@ -113,6 +136,13 @@ router.delete('/:name', async (req, res) => {
     const fp = wfPath(req.user.userId, req.params.name);
     await fs.unlink(fp);
     await deleteWorkflowRunData(req.user.userId, req.params.name);
+
+    const allPositions = await readUserGraphPositions(req.user.userId);
+    if (Object.prototype.hasOwnProperty.call(allPositions, req.params.name)) {
+      delete allPositions[req.params.name];
+      await writeUserGraphPositions(req.user.userId, allPositions);
+    }
+
     res.json({ ok: true });
   } catch (err) {
     if (err.code === 'ENOENT') return res.status(404).json({ error: 'Workflow not found' });

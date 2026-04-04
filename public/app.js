@@ -6,7 +6,7 @@ import { createRoot } from 'react-dom/client';
 import {
   ReactFlow, Background, Controls, MiniMap,
   Handle, Position, MarkerType,
-  useNodesState, useEdgesState, addEdge,
+  useNodesState, useEdgesState, addEdge, applyNodeChanges,
   ReactFlowProvider, useReactFlow
 } from '@xyflow/react';
 import dagre from 'dagre';
@@ -45,6 +45,7 @@ let _workflowExecLogs = [];
 let _activeRunNodeIds = new Set();
 let _lastEditorTab = 'edit';
 let _logsPanelDrag = null;
+const WF_LOGS_PANEL_POS_KEY = 'wf_logs_panel_pos';
 let _activeRunEdgeIds = new Set();
 // FIX #6 — flag anti-réentrance pour hydrateRunStateFromServer
 let _hydratingNodes = new Set();
@@ -113,12 +114,12 @@ const StepNode = memo(function StepNode({ data, selected }) {
 
 const nodeTypes = { step: StepNode };
 
-function FlowInner({ nodes, edges, onNodesChange, onEdgesChange, onConnect, onEdgeClick, onPaneClick, version }) {
+function FlowInner({ nodes, edges, onNodesChange, onEdgesChange, onConnect, onEdgeClick, onPaneClick, onNodeDragStop, version }) {
   const { fitView } = useReactFlow();
   _fitView = fitView;
   useEffect(() => { setTimeout(()=>fitView({ padding:0.12, duration:400 }),60); }, [version]);
   return h(ReactFlow,{
-    nodes, edges, onNodesChange, onEdgesChange, onConnect, onEdgeClick, onPaneClick, nodeTypes,
+    nodes, edges, onNodesChange, onEdgesChange, onConnect, onEdgeClick, onPaneClick, onNodeDragStop, nodeTypes,
     defaultEdgeOptions:{ type:'smoothstep', markerEnd:{ type:MarkerType.ArrowClosed, color:'#2a3f60' }, style:{ stroke:'#2a3f60', strokeWidth:1.5 } },
     fitView:true, fitViewOptions:{ padding:0.12 },
     minZoom:0.08, maxZoom:2,
@@ -133,9 +134,24 @@ function FlowInner({ nodes, edges, onNodesChange, onEdgesChange, onConnect, onEd
 }
 
 function AppGraph() {
-  const [nodes, setNodes, onNodesChange] = useNodesState([]);
+  const [nodes, setNodes] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [version, setVersion] = useState(0);
+
+  const onNodesChange = (changes) => {
+    setNodes((nds) => applyNodeChanges(changes, nds));
+    persistWorkflowNodePositions(changes);
+  };
+
+  const onNodeDragStop = (_evt, node) => {
+    if (!node?.id || !node?.position) return;
+    persistWorkflowNodePositions([{
+      type: 'position',
+      id: node.id,
+      position: node.position,
+      dragging: false
+    }]);
+  };
 
   const onConnect = (params) => {
     setEdges((eds) => addEdge({
@@ -157,7 +173,7 @@ function AppGraph() {
   _setGraphData = (gd) => { setNodes(gd.nodes); setEdges(gd.edges); setVersion(gd.version); };
   _getNodes     = () => nodes;
   return h(ReactFlowProvider,null,
-    h(FlowInner,{ nodes, edges, onNodesChange, onEdgesChange, onConnect, onEdgeClick, onPaneClick, version })
+    h(FlowInner,{ nodes, edges, onNodesChange, onEdgesChange, onConnect, onEdgeClick, onPaneClick, onNodeDragStop, version })
   );
 }
 
@@ -183,7 +199,10 @@ function buildGraph(data) {
   if (wf) {
     wf.wf_nodes.forEach(node=>{
       const s = stepsMap[node.ws_ref]||{ ws_name:node.ws_ref, ws_type:'prompt' };
-      rawNodes.push({ id:node.step_id, type:'step', position:{x:0,y:0}, data:{ step:s, nodeId:node.step_id } });
+      const nodePos = node.position && Number.isFinite(node.position.x) && Number.isFinite(node.position.y)
+        ? { x: node.position.x, y: node.position.y }
+        : { x: 0, y: 0 };
+      rawNodes.push({ id:node.step_id, type:'step', position:nodePos, data:{ step:s, nodeId:node.step_id } });
       (node.depends_on||[]).forEach(dep=>{
         const depNode = findWorkflowNode(wf, dep);
         if (!depNode) return;
@@ -200,7 +219,11 @@ function buildGraph(data) {
     document.getElementById('meta-steps').textContent = steps.length;
     document.getElementById('meta-wf-pill').style.display = 'none';
   }
-  const layoutedNodes = computeLayout(rawNodes, rawEdges, rankDir);
+  const hasPersistedPositions = wf && rawNodes.some(n => {
+    const node = (wf.wf_nodes || []).find(wfn => wfn.step_id === n.id);
+    return Number.isFinite(node?.position?.x) && Number.isFinite(node?.position?.y);
+  });
+  const layoutedNodes = hasPersistedPositions ? rawNodes : computeLayout(rawNodes, rawEdges, rankDir);
 
   // FIX #4 — initialiser maxY à -Infinity pour gérer les positions négatives
   const curPos = {};
@@ -235,7 +258,7 @@ function buildGraph(data) {
     animated: _activeRunEdgeIds.has(e.id)
   }));
 
-  document.getElementById('meta-name').textContent = data.lang_name||currentWf?.name||'—';
+  _setWorkflowNameUI(currentWf?.name || data.lang_name || '—');
   document.getElementById('wf-meta').classList.remove('hidden');
   document.getElementById('empty-state').classList.add('hidden');
   _graphVersion++;
@@ -257,7 +280,8 @@ function ensureWorkflowGraph() {
       wf_nodes: (data.steps || []).map((step, idx) => ({
         step_id: step.ws_name || `step_${idx+1}`,
         ws_ref: step.ws_name,
-        depends_on: []
+        depends_on: [],
+        position: { x: 0, y: 0 }
       }))
     };
     data.workflows.push(wf);
@@ -281,9 +305,34 @@ function ensureWorkflowNodeForStep(stepName) {
     stepId = `${base}_${i++}`;
   }
 
-  node = { step_id: stepId, ws_ref: stepName, depends_on: [] };
+  node = { step_id: stepId, ws_ref: stepName, depends_on: [], position: { x: 0, y: 0 } };
   wf.wf_nodes.push(node);
   return node;
+}
+
+function persistWorkflowNodePositions(changes = []) {
+  if (!currentWf || !Array.isArray(changes) || !changes.length) return;
+  const wf = ensureWorkflowGraph();
+  if (!wf) return;
+
+  let updated = false;
+  for (const change of changes) {
+    if (change?.type !== 'position' || !change?.position || change?.dragging) continue;
+    const node = (wf.wf_nodes || []).find(n => n.step_id === change.id);
+    if (!node) continue;
+
+    const x = Math.round(change.position.x);
+    const y = Math.round(change.position.y);
+    if (node.position?.x === x && node.position?.y === y) continue;
+
+    node.position = { x, y };
+    updated = true;
+  }
+
+  if (!updated) return;
+  _refreshWfJsonPanel();
+  if (guestMode) _guestSync();
+  else saveWorkflow(true);
 }
 
 function removeWorkflowDependency(sourceId, targetId) {
@@ -341,7 +390,7 @@ function syncWorkflowDependencies(sourceId, targetId) {
   if (!sourceNode) {
     const sourceStep = (currentWf.data.steps || []).find(s => s.ws_name === sourceId);
     if (sourceStep) {
-      sourceNode = { step_id: sourceId, ws_ref: sourceStep.ws_name, depends_on: [] };
+      sourceNode = { step_id: sourceId, ws_ref: sourceStep.ws_name, depends_on: [], position: { x: 0, y: 0 } };
       wf.wf_nodes.push(sourceNode);
     }
   }
@@ -349,7 +398,7 @@ function syncWorkflowDependencies(sourceId, targetId) {
   if (!targetNode) {
     const targetStep = (currentWf.data.steps || []).find(s => s.ws_name === targetId);
     if (targetStep) {
-      targetNode = { step_id: targetId, ws_ref: targetStep.ws_name, depends_on: [] };
+      targetNode = { step_id: targetId, ws_ref: targetStep.ws_name, depends_on: [], position: { x: 0, y: 0 } };
       wf.wf_nodes.push(targetNode);
     }
   }
@@ -418,6 +467,71 @@ function showSignupCTA() {
   );
 }
 
+function _setWorkflowNameUI(name = '—') {
+  const label = document.getElementById('meta-name');
+  if (label) label.textContent = name;
+  const jsonName = document.getElementById('wf-json-panel-name');
+  if (jsonName && currentWf) jsonName.textContent = `${currentWf.name}.waiflo.json`;
+}
+
+function _isValidWorkflowName(name) {
+  return /^[a-zA-Z0-9_.-]+$/.test(name);
+}
+
+function startWorkflowRename(name = currentWf?.name, e) {
+  if (e) e.stopPropagation();
+  if (!name) return;
+
+  openModal('Renommer le workflow',`
+    <div class="form-section">
+      <div class="form-label">Nouveau nom du workflow</div>
+      <input class="form-input" id="rename-wf-name" placeholder="my_pipeline" value="${name}" style="width:100%">
+      <div class="form-hint" style="margin-top:6px">Lettres, chiffres, _, - et . uniquement.</div>
+    </div>`,
+    [
+      { label:'Annuler', action:closeModal },
+      { label:'Renommer', primary:true, action:async()=>{
+        const input = document.getElementById('rename-wf-name');
+        const nextName = input.value.trim();
+        if (!nextName || nextName === name) return closeModal();
+        if (!_isValidWorkflowName(nextName)) return toast('Use only letters, numbers, _, - and .','err');
+
+        if (guestMode) {
+          if (guestWorkflows.some(w => w.name === nextName)) return toast('Name already exists','err');
+          const item = guestWorkflows.find(w => w.name === name);
+          if (!item) return toast('Workflow not found','err');
+          item.name = nextName;
+          if (item.data) item.data.lang_name = nextName;
+          if (currentWf?.name === name) {
+            currentWf.name = nextName;
+            if (currentWf.data) currentWf.data.lang_name = nextName;
+            _setWorkflowNameUI(nextName);
+            _refreshWfJsonPanel();
+          }
+          renderWorkflowList();
+          closeModal();
+          toast('Workflow renamed (not persisted)','ok');
+          return;
+        }
+
+        const res = await api(`/api/workflows/${name}/rename`, 'PATCH', { newName: nextName });
+        if (res.error) return toast(res.error, 'err');
+        if (currentWf?.name === name) {
+          currentWf.name = nextName;
+          if (currentWf.data) currentWf.data.lang_name = nextName;
+          _setWorkflowNameUI(nextName);
+          _refreshWfJsonPanel();
+        }
+        closeModal();
+        await loadWorkflowList();
+        toast('Workflow renamed','ok');
+      }}
+    ]
+  );
+
+  setTimeout(()=>{ const i=document.getElementById('rename-wf-name'); if(i){i.focus();i.select();} },100);
+}
+
 // ── API CLIENT ───────────────────────────────────────────────────
 async function api(path, method='GET', body=null, auth=true) {
   const headers = { 'Content-Type':'application/json' };
@@ -454,36 +568,19 @@ function renderWorkflowList() {
     const item = document.createElement('div');
     item.className = 'wf-item' + (currentWf?.name === wf.name ? ' active' : '');
     const d = new Date(wf.updatedAt);
-    const icon = document.createElement('span');
-    icon.className = 'wf-item-icon';
-    icon.innerHTML = '&#x2B21;';
-
-    const info = document.createElement('div');
-    info.className = 'wf-item-info';
-    const name = document.createElement('div');
-    name.className = 'wf-item-name';
-    name.textContent = wf.name;
-    const date = document.createElement('div');
-    date.className = 'wf-item-date';
-    date.textContent = `${d.toLocaleDateString()} ${d.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' })}`;
-    info.append(name, date);
-
-    const actions = document.createElement('div');
-    actions.className = 'wf-item-actions';
-    const copyBtn = document.createElement('button');
-    copyBtn.className = 'wf-icon-btn';
-    copyBtn.title = 'Copy JSON';
-    copyBtn.innerHTML = '&#x2398;';
-    copyBtn.addEventListener('click', (event) => copyWfJsonByName(wf.name, event));
-    const delBtn = document.createElement('button');
-    delBtn.className = 'wf-icon-btn';
-    delBtn.title = 'Delete';
-    delBtn.innerHTML = '&#x2715;';
-    delBtn.addEventListener('click', (event) => deleteWorkflow(wf.name, event));
-    actions.append(copyBtn, delBtn);
-
-    item.append(icon, info, actions);
-    item.addEventListener('click', () => selectWf(wf.name));
+    item.innerHTML=`
+      <span class="wf-item-icon">&#x2B21;</span>
+      <div class="wf-item-info">
+        <div class="wf-item-name">${wf.name}</div>
+        <div class="wf-item-date">${d.toLocaleDateString()} ${d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</div>
+      </div>
+      <div class="wf-item-actions">
+        <button class="wf-icon-btn" title="Copy JSON" onclick="copyWfJsonByName('${wf.name}',event)">&#x2398;</button>
+        <button class="wf-icon-btn" title="Rename" onclick="startWorkflowRename('${wf.name}',event)">✎</button>
+        <button class="wf-icon-btn" title="Duplicate" onclick="duplicateWorkflow('${wf.name}',event)">⧉</button>
+        <button class="wf-icon-btn" title="Delete" onclick="deleteWorkflow('${wf.name}',event)">&#x2715;</button>
+      </div>`;
+    item.addEventListener('click', ()=>selectWf(wf.name));
     el.appendChild(item);
   });
 }
@@ -583,6 +680,7 @@ function closeJsonFullscreen() {
 }
 
 function jfsValidate() {
+  if (typeof _jfsSource === 'string' && _jfsSource.startsWith('textarea:')) return;
   const ta=document.getElementById('json-fullscreen-textarea');
   const errEl=document.getElementById('json-fullscreen-err');
   try { JSON.parse(ta.value); ta.classList.remove('err'); errEl.textContent=''; }
@@ -596,10 +694,17 @@ async function jfsCopy() {
 }
 
 function jfsApply() {
+  const fsTa = document.getElementById('json-fullscreen-textarea');
+  if (typeof _jfsSource === 'string' && _jfsSource.startsWith('textarea:')) {
+    const targetId = _jfsSource.slice('textarea:'.length);
+    const target = document.getElementById(targetId);
+    if (target) target.value = fsTa.value;
+    closeJsonFullscreen();
+    return;
+  }
   if (_jfsSource!=='workflow'||!currentWf) return;
-  const ta=document.getElementById('json-fullscreen-textarea');
   let parsed;
-  try { parsed=JSON.parse(ta.value); }
+  try { parsed=JSON.parse(fsTa.value); }
   catch(e) { document.getElementById('json-fullscreen-err').textContent='✕ '+e.message; return; }
   currentWf.data=parsed; buildGraph(parsed); _refreshWfJsonPanel();
   if (guestMode) { _guestSync(); toast('Applied (not persisted)','ok'); } else saveWorkflow();
@@ -630,12 +735,13 @@ async function openWorkflow(name) {
   document.getElementById('btn-add-step').style.display='';
 }
 
-async function saveWorkflow() {
+async function saveWorkflow(silent = false) {
   if (!currentWf) return;
   if (guestMode) { showSignupCTA(); return; }
   const res=await api(`/api/workflows/${currentWf.name}`,'PUT',currentWf.data);
   if (res.error) return toast(res.error,'err');
-  toast('Saved','ok'); loadWorkflowList();
+  if (!silent) toast('Saved','ok');
+  loadWorkflowList();
 }
 
 function _guestSync() {
@@ -677,6 +783,49 @@ function newWorkflow() {
     ]
   );
   setTimeout(()=>document.getElementById('new-wf-name')?.focus(),100);
+}
+
+function duplicateWorkflow(sourceName = currentWf?.name, e) {
+  if (e) e.stopPropagation();
+  if (!sourceName) return;
+  const source = sourceName === currentWf?.name ? currentWf : (guestMode ? guestWorkflows.find(w => w.name === sourceName) : null);
+  if (!source && guestMode) return toast('Workflow not found','err');
+
+  const suggestedName = sourceName.replace(/_copy(_\d+)?$/, '') + '_copy';
+  openModal('Dupliquer le workflow',`
+    <div class="form-section">
+      <div class="form-label">Nom du nouveau workflow</div>
+      <input class="form-input" id="dup-wf-name" placeholder="my_pipeline_copy" value="${suggestedName}" style="width:100%">
+      <div class="form-hint" style="margin-top:6px">Minuscules, chiffres, _ et - uniquement.</div>
+    </div>`,
+    [
+      { label:'Annuler', action:closeModal },
+      { label:'Dupliquer', primary:true, action:async()=>{
+        const name = document.getElementById('dup-wf-name').value.trim();
+        if (!name) return;
+        if (!_isValidWorkflowName(name)) return toast('Use only letters, numbers, _, - and .','err');
+        let sourceData = currentWf?.name === sourceName ? currentWf.data : source?.data;
+        if (!sourceData && !guestMode) {
+          const fetched = await api(`/api/workflows/${sourceName}`);
+          if (fetched.error) return toast(fetched.error,'err');
+          sourceData = fetched;
+        }
+        if (!sourceData) return toast('Workflow not found','err');
+        const data = JSON.parse(JSON.stringify(sourceData));
+        data.lang_name = name;
+        if (guestMode) {
+          if (guestWorkflows.find(w=>w.name===name)) return toast('Name already exists','err');
+          guestWorkflows.push({ name, data, updatedAt:new Date().toISOString() });
+          closeModal(); await loadWorkflowList(); selectWf(name); toast('Workflow dupliqué (non persisté)','ok');
+        } else {
+          const res = await api(`/api/workflows/${name}`,'POST',data);
+          if (res.error) return toast(res.error,'err');
+          closeModal(); await loadWorkflowList(); selectWf(name); toast('Workflow dupliqué','ok');
+        }
+      }}
+    ]
+  );
+  setTimeout(()=>{ const i=document.getElementById('dup-wf-name'); if(i){i.focus();i.select();} },100);
 }
 
 function importWorkflow() {
@@ -939,13 +1088,8 @@ function collectStep() {
   return s;
 }
 
-function applyStepEdit() {
-  if (!currentWf) return;
-  const s=collectStep();
-  if (!s) return;
-  if (!s.ws_name) return toast('ws_name is required','err');
+function _doSaveStep(s) {
   const steps=currentWf.data.steps||[];
-
   if (currentStep) {
     const idx=steps.findIndex(x=>x.ws_name===currentStep.ws_name);
     if (idx>=0) steps[idx]=s; else steps.push(s);
@@ -963,12 +1107,42 @@ function applyStepEdit() {
       ensureWorkflowNodeForStep(s.ws_name);
     }
   }
-
   currentWf.data.steps=steps;
   currentStep=s;
   buildGraph(currentWf.data); _refreshWfJsonPanel();
   if (guestMode) { _guestSync(); toast('Step saved (not persisted)','ok'); }
   else { saveWorkflow(); toast('Step saved','ok'); }
+}
+
+function applyStepEdit() {
+  if (!currentWf) return;
+  const s=collectStep();
+  if (!s) return;
+  if (!s.ws_name) return toast('ws_name is required','err');
+
+  // Validate that input variables are referenced in the prompt
+  if ((s.ws_type === 'prompt' || s.ws_type === 'tool') && s.ws_inputs_schema?.properties) {
+    const inputNames = Object.keys(s.ws_inputs_schema.properties);
+    if (inputNames.length > 0) {
+      const promptText = (s.ws_system_prompt || '') + ' ' + (s.ws_prompt_template || '');
+      const usedVars = inputNames.filter(name => promptText.includes(`{{${name}}}`));
+      if (usedVars.length === 0) {
+        const varList = inputNames.map(n => `<code>{{${n}}}</code>`).join(', ');
+        openModal(
+          '⚠ Variables d\'entrée non utilisées',
+          `<div class="confirm-text">Aucune variable d'entrée n'est référencée dans le prompt.</div>
+           <div class="confirm-sub" style="margin-top:8px">Les variables ${varList} ne sont pas présentes dans le System Prompt ni dans le Template.<br><br>Les entrées ne seront pas transmises au LLM.</div>`,
+          [
+            { label: 'Sauvegarder quand même', action: () => { closeModal(); _doSaveStep(s); }, primary: true },
+            { label: 'Annuler', action: closeModal }
+          ]
+        );
+        return;
+      }
+    }
+  }
+
+  _doSaveStep(s);
 }
 
 function deleteCurrentStep() {
@@ -1067,12 +1241,7 @@ function clearRunningGraphState() {
 }
 
 function toggleWorkflowExecLogs() {
-  const body = document.getElementById('wf-exec-logs-body');
-  const icon = document.getElementById('wf-exec-logs-toggle');
-  if (!body || !icon) return;
-  const closed = body.classList.toggle('hidden');
-  icon.textContent = closed ? '▸' : '▾';
-  updateFloatingAddStepPosition();
+  // Conservé pour compatibilité : les logs restent désormais toujours visibles.
 }
 
 // FIX #10 — nettoyer les textareas maximisées quand le panneau est masqué
@@ -1081,8 +1250,7 @@ function setRightPanelVisible(visible) {
   const btn = document.getElementById('btn-toggle-right');
   if (!panel || !btn) return;
   if (!visible) {
-    document.querySelectorAll('.form-textarea.maximized').forEach(el => el.classList.remove('maximized'));
-    document.querySelectorAll('.maximize-btn.active').forEach(el => el.classList.remove('active'));
+    if (typeof _jfsSource === 'string' && _jfsSource.startsWith('textarea:')) closeJsonFullscreen();
   }
   panel.classList.toggle('hidden', !visible);
   btn.textContent = visible ? '›' : '‹';
@@ -1102,17 +1270,26 @@ function toggleRightPanel() {
 
 function updateFloatingAddStepPosition() {
   const btn = document.getElementById('btn-add-step');
-  const logs = document.getElementById('wf-exec-logs');
-  if (!btn || !logs) return;
-  const rect = logs.getBoundingClientRect();
-  const bottom = Math.max(16, Math.ceil(window.innerHeight - rect.top + 8));
-  btn.style.bottom = `${bottom}px`;
+  if (!btn) return;
+  btn.style.left = '50%';
+  btn.style.bottom = '12px';
+  btn.style.top = 'auto';
 }
 
 function initWorkflowLogsPanel() {
   const panel = document.getElementById('wf-exec-logs');
   const header = document.getElementById('wf-exec-logs-header');
   if (!panel || !header) return;
+
+  const persistPanelFrame = () => {
+    const rect = panel.getBoundingClientRect();
+    localStorage.setItem(WF_LOGS_PANEL_POS_KEY, JSON.stringify({
+      left: Math.round(rect.left),
+      top: Math.round(rect.top),
+      width: Math.round(rect.width),
+      height: Math.round(rect.height)
+    }));
+  };
 
   const onMove = (ev) => {
     if (!_logsPanelDrag) return;
@@ -1126,11 +1303,13 @@ function initWorkflowLogsPanel() {
     panel.style.top = `${top}px`;
     panel.style.right = 'auto';
     panel.style.bottom = 'auto';
+    persistPanelFrame();
     updateFloatingAddStepPosition();
   };
 
   const onUp = () => {
     _logsPanelDrag = null;
+    persistPanelFrame();
     document.removeEventListener('mousemove', onMove);
     document.removeEventListener('mouseup', onUp);
   };
@@ -1143,8 +1322,20 @@ function initWorkflowLogsPanel() {
     document.addEventListener('mouseup', onUp);
   });
 
+  try {
+    const saved = JSON.parse(localStorage.getItem(WF_LOGS_PANEL_POS_KEY) || 'null');
+    if (saved && Number.isFinite(saved.left) && Number.isFinite(saved.top)) {
+      panel.style.left = `${Math.max(0, saved.left)}px`;
+      panel.style.top = `${Math.max(0, saved.top)}px`;
+      panel.style.right = 'auto';
+      panel.style.bottom = 'auto';
+      if (Number.isFinite(saved.width)) panel.style.width = `${Math.max(360, saved.width)}px`;
+      if (Number.isFinite(saved.height)) panel.style.height = `${Math.max(120, saved.height)}px`;
+    }
+  } catch (_) {}
+
   if (window.ResizeObserver) {
-    const ro = new ResizeObserver(() => updateFloatingAddStepPosition());
+    const ro = new ResizeObserver(() => { persistPanelFrame(); updateFloatingAddStepPosition(); });
     ro.observe(panel);
   }
   window.addEventListener('resize', updateFloatingAddStepPosition);
@@ -1212,11 +1403,67 @@ function onToolMcpServerChange(selectedTool = '') {
   }).join('');
 }
 
-function toggleEditorMaximize(textareaId, btn) {
+const _textareaFullscreenLabels = {
+  'f-sysprompt': 'System Prompt',
+  'f-template':  'Prompt Template',
+};
+
+function toggleEditorMaximize(textareaId) {
   const ta = document.getElementById(textareaId);
   if (!ta) return;
-  const isOpen = ta.classList.toggle('maximized');
-  if (btn) btn.classList.toggle('active', isOpen);
+  const label = _textareaFullscreenLabels[textareaId] || textareaId;
+  _jfsSource = 'textarea:' + textareaId;
+  const overlay = document.getElementById('json-fullscreen');
+  const fsTa    = document.getElementById('json-fullscreen-textarea');
+  const nameEl  = document.getElementById('json-fullscreen-name');
+  const applyBtn= document.getElementById('jfs-apply-btn');
+  const errEl   = document.getElementById('json-fullscreen-err');
+  nameEl.textContent = label;
+  fsTa.value = ta.value;
+  fsTa.classList.remove('err');
+  errEl.textContent = '';
+  applyBtn.style.display = '';
+  overlay.classList.remove('hidden');
+  setTimeout(() => fsTa.focus(), 50);
+}
+
+function toggleSyspromptSection() {
+  const content = document.getElementById('sysprompt-content');
+  const btn = document.getElementById('sysprompt-fold-btn');
+  if (!content || !btn) return;
+  const collapsed = content.classList.toggle('collapsed');
+  btn.textContent = collapsed ? '▸' : '▾';
+}
+
+function toggleTemplateSection() {
+  const content = document.getElementById('template-content');
+  const btn = document.getElementById('template-fold-btn');
+  if (!content || !btn) return;
+  const collapsed = content.classList.toggle('collapsed');
+  btn.textContent = collapsed ? '▸' : '▾';
+}
+
+function startRightPanelResize(e) {
+  e.preventDefault();
+  const panel = document.getElementById('right-panel');
+  if (!panel) return;
+  const startX = e.clientX;
+  const startW = panel.offsetWidth;
+  const MIN_W = 380;
+  panel.classList.add('resizing');
+  document.documentElement.classList.add('right-panel-resizing');
+  const onMove = (ev) => {
+    const newW = Math.max(MIN_W, startW + (startX - ev.clientX));
+    document.documentElement.style.setProperty('--right-w', newW + 'px');
+  };
+  const onUp = () => {
+    panel.classList.remove('resizing');
+    document.documentElement.classList.remove('right-panel-resizing');
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+  };
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
 }
 
 function updateJsonTab() {
@@ -2015,18 +2262,20 @@ function toast(msg,type='ok') {
 // FIX #11 — copyWorkflowExecLogs et clearWorkflowExecLogs ajoutées
 Object.assign(window,{
   doLogout, openSettings, saveWorkflow, downloadWorkflow, newWorkflow, importWorkflow,
-  toggleLeft, toggleTheme, fitGraph, setLayout,
+  toggleLeft, toggleTheme, fitGraph, setLayout, duplicateWorkflow,
   openNewStepEditor, openStepEditor,
   applyStepEdit, deleteCurrentStep, closeEditor, switchEditorTab,
   addInputField, addOutputField, onTypeChange,
   toggleTechSection, toggleApiAdvancedSection, toggleToolAdvancedSection, toggleEditorMaximize,
+  toggleSyspromptSection, toggleTemplateSection, startRightPanelResize,
   runStepOnly, runWorkflowFromHere, stopExecution, closeModal, showSignupCTA,
   confirmEdgeDelete, toggleWorkflowExecLogs, toggleRightPanel,
   copyWorkflowExecLogs, clearWorkflowExecLogs,
   deleteWorkflow, copyWfJson, applyWfJson, closeWfJson, onWfJsonInput, copyWfJsonByName,
   openJsonFullscreen, closeJsonFullscreen, jfsCopy, jfsApply, jfsValidate,
   saveApiKey, deleteApiKey, changePassword, switchSettingsTab, addMcpServerRow, removeMcpServerRow, validateMcpServer, saveMcpServers,
-  onProviderChange, onSettingsProviderChange, onToolMcpServerChange, setLanguage
+  onProviderChange, onSettingsProviderChange, onToolMcpServerChange, setLanguage,
+  startWorkflowRename
 });
 
 // ── KEYBOARD ────────────────────────────────────────────────────

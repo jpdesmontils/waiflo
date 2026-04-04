@@ -146,3 +146,7 @@ export function urlMatchesRegistry(serverUrl, providerRow) {
     return false;
   }
 }
+export async function listAllTools() {
+  const payload = await readSharedToolSchemas();
+  return Object.values(payload.tools || {});
+}
