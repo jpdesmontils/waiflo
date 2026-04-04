@@ -147,6 +147,30 @@ function validateInputsAgainstSchema(step, inputs) {
   return errors;
 }
 
+function inferSchemaFromValue(value) {
+  if (Array.isArray(value)) {
+    if (!value.length) return { type: 'array', items: {} };
+    return { type: 'array', items: inferSchemaFromValue(value[0]) };
+  }
+  if (value == null) return { type: 'null' };
+  if (typeof value === 'object') {
+    const properties = {};
+    for (const [key, nestedValue] of Object.entries(value)) {
+      properties[key] = inferSchemaFromValue(nestedValue);
+    }
+    return { type: 'object', properties };
+  }
+  if (typeof value === 'number' && Number.isInteger(value)) return { type: 'integer' };
+  return { type: typeof value };
+}
+
+function buildSchemaMismatchContext(step, inputs) {
+  return {
+    expected_schema: step?.ws_inputs_schema || null,
+    received_schema: inferSchemaFromValue(inputs)
+  };
+}
+
 async function executeResolvedStep(req, res, { step, inputs, context }) {
   if (!step || !step.ws_name) return res.status(400).json({ error: 'step definition required' });
 
@@ -154,7 +178,8 @@ async function executeResolvedStep(req, res, { step, inputs, context }) {
   if (validationErrors.length) {
     return res.status(422).json({
       error: 'Inputs do not match ws_inputs_schema',
-      details: validationErrors
+      details: validationErrors,
+      ...buildSchemaMismatchContext(step, inputs)
     });
   }
 
@@ -387,7 +412,8 @@ async function runWorkflowOrchestration(req, run, workflowData, fromStepId, trig
         ws_ref: node.ws_ref,
         status: 'error',
         error: 'Inputs do not match ws_inputs_schema',
-        details: validationErrors
+        details: validationErrors,
+        ...buildSchemaMismatchContext(step, mergedInputs)
       });
       run.status = 'error';
       pushRunEvent(run, 'workflow_finished', { status: 'error' });

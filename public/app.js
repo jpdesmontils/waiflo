@@ -1682,6 +1682,21 @@ function renderOutputVars(container, rawOutput) {
   }).join('');
 }
 
+function buildSchemaMismatchLogText(payload, fallbackMessage = '') {
+  if (!payload || payload.error !== 'Inputs do not match ws_inputs_schema') return fallbackMessage;
+  const lines = [payload.error];
+  if (Array.isArray(payload.details) && payload.details.length) {
+    lines.push('', 'details:', ...payload.details.map((d) => `- ${d}`));
+  }
+  if (payload.expected_schema != null) {
+    lines.push('', 'expected_schema:', JSON.stringify(payload.expected_schema, null, 2));
+  }
+  if (payload.received_schema != null) {
+    lines.push('', 'received_schema:', JSON.stringify(payload.received_schema, null, 2));
+  }
+  return lines.join('\n');
+}
+
 async function executeStep(stepDef, runMode='step_only') {
   const s = stepDef || currentStep || collectStep();
   if (!s) return false;
@@ -1733,10 +1748,11 @@ async function executeStep(stepDef, runMode='step_only') {
     }
     const elapsed = Date.now()-tsStart;
     if (res.error) {
-      outEl.className='run-output error'; outEl.textContent=res.error;
+      const logMessage = buildSchemaMismatchLogText(res, res.error);
+      outEl.className='run-output error'; outEl.textContent=logMessage;
       metaEl.innerHTML=`<span style="color:var(--red)">✕ error</span> · ${elapsed}ms · ${ts()}`;
       statusEl.textContent='error'; statusEl.className='run-status error';
-      saveStepRunState(s, _currentNodeId, { status:'error', logOutput:res.error, logMeta:metaEl.innerHTML, logError:true });
+      saveStepRunState(s, _currentNodeId, { status:'error', logOutput:logMessage, logMeta:metaEl.innerHTML, logError:true });
       return false;
     }
     const resultText = JSON.stringify(res.result,null,2);
@@ -1754,7 +1770,7 @@ async function executeStep(stepDef, runMode='step_only') {
     const resp = await fetch(execUrl, { method:'POST', headers, credentials:'include', signal:_runController.signal, body:JSON.stringify(execBody) });
     if (!resp.ok) {
       const errBody = await resp.json().catch(()=>({ error:`HTTP ${resp.status}` }));
-      throw new Error(errBody.error || `HTTP ${resp.status}`);
+      throw new Error(buildSchemaMismatchLogText(errBody, errBody.error || `HTTP ${resp.status}`));
     }
     const reader=resp.body.getReader(), decoder=new TextDecoder();
     let buffer='', full='';
@@ -1908,7 +1924,9 @@ async function runWorkflowFromHere() {
           const step = (currentWf.data.steps || []).find(st => st.ws_name === data.ws_ref);
           if (!node || !step) continue;
           const isError = data.status !== 'done';
-          const outputText = isError ? (data.error || '') : JSON.stringify(data.output ?? '', null, 2);
+          const outputText = isError
+            ? buildSchemaMismatchLogText(data, data.error || '')
+            : JSON.stringify(data.output ?? '', null, 2);
           if (!isError) rememberStepResult(step, node.step_id, data.output);
           saveStepRunState(step, node.step_id, {
             status: isError ? 'error' : 'done',
