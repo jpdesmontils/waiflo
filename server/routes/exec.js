@@ -519,25 +519,10 @@ router.post('/workflows/:workflowName/step', authMiddleware, execLimiter, async 
       });
     }
 
-    if (wsType === 'prompt') {
-      // Streaming SSE
-      const promptRun = await runPromptStep(step, inputs || {}, user, req, res);
-      if (req.user?.userId) {
-        await saveStepRunRecord(req.user.userId, workflowName, step.ws_name, {
-          workflowName,
-          nodeId,
-          stepName: step.ws_name,
-          wsType,
-          runMode,
-          inputs: inputs || {},
-          status: promptRun?.error ? 'error' : (promptRun?.parsed ? 'done' : 'done_raw'),
-          logOutput: promptRun?.error || promptRun?.fullText || '',
-          output: promptRun?.parsed || promptRun?.fullText || '',
-          prompt: promptRun?.userPrompt || '',
-          logMeta: promptRun?.error ? 'prompt error' : 'prompt done',
-          createdAt: new Date().toISOString()
-        });
-      }
+    const step = (workflow.steps || []).find((entry) => entry?.ws_name === ws_ref);
+    if (!step) {
+      return res.status(404).json({ error: `Step "${ws_ref}" not found in workflow steps` });
+    }
 
     await executeResolvedStep(req, res, {
       step,
