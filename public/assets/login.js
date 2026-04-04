@@ -28,7 +28,6 @@ async function doLogin() {
   if (!email || !password) return err(window.LABELS?.err_fill_all || 'Please fill all fields');
   const res = await apiFetch('/api/auth/login', 'POST', { email, password });
   if (res.error) return err(res.error);
-  localStorage.setItem('wf_token', res.token);
   goEditor();
 }
 
@@ -39,14 +38,13 @@ async function doRegister() {
   if (password !== confirm) return err(window.LABELS?.err_no_match || 'Passwords do not match');
   const res = await apiFetch('/api/auth/register', 'POST', { email, password });
   if (res.error) return err(res.error);
-  localStorage.setItem('wf_token', res.token);
   goEditor();
 }
 
 async function apiFetch(path, method, body) {
   try {
     const res = await fetch(path, {
-      method, headers: { 'Content-Type': 'application/json' },
+      method, headers: { 'Content-Type': 'application/json' }, credentials:'include',
       body: JSON.stringify(body)
     });
     return await res.json();
@@ -61,9 +59,6 @@ document.addEventListener('keydown', e => {
 });
 
 // ── Auto-redirect if already logged in ────────────────────────────
-const t = localStorage.getItem('wf_token');
-if (t) {
-  fetch('/api/auth/me', { headers: { Authorization: `Bearer ${t}` } })
-    .then(r => r.json()).then(d => { if (!d.error) goEditor(); })
-    .catch(() => {});
-}
+fetch('/api/auth/me', { credentials:'include' })
+  .then(r => r.json()).then(d => { if (!d.error) goEditor(); })
+  .catch(() => {});

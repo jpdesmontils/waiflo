@@ -22,7 +22,10 @@ export async function readUsers() {
 
 export async function writeUsers(users) {
   await ensureUsersFile();
-  await fs.writeFile(USERS_FILE, JSON.stringify(users, null, 2), 'utf8');
+  const payload = JSON.stringify(users, null, 2);
+  const tmpFile = `${USERS_FILE}.${process.pid}.${Date.now()}.tmp`;
+  await fs.writeFile(tmpFile, payload, 'utf8');
+  await fs.rename(tmpFile, USERS_FILE);
 }
 
 export async function getUser(userId) {

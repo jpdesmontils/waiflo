@@ -13,6 +13,56 @@ const JWT_SECRET  = () => process.env.JWT_SECRET; // Required — validated at s
 const SALT_ROUNDS = 10;
 
 const SUPPORTED_PROVIDERS = Object.keys(PROVIDER_META); // ['anthropic','openai','perplexity','mistral']
+const TOKEN_COOKIE = 'wf_token';
+
+function parseCookies(cookieHeader = '') {
+  const out = {};
+  String(cookieHeader || '')
+    .split(';')
+    .map(v => v.trim())
+    .filter(Boolean)
+    .forEach((part) => {
+      const idx = part.indexOf('=');
+      if (idx <= 0) return;
+      const k = decodeURIComponent(part.slice(0, idx).trim());
+      const v = decodeURIComponent(part.slice(idx + 1).trim());
+      out[k] = v;
+    });
+  return out;
+}
+
+function extractTokenFromRequest(req) {
+  const header = req.headers.authorization || '';
+  if (header.startsWith('Bearer ')) return header.slice(7);
+  const cookies = parseCookies(req.headers.cookie || '');
+  return cookies[TOKEN_COOKIE] || null;
+}
+
+function setAuthCookie(res, token) {
+  const secure = process.env.NODE_ENV === 'production';
+  const parts = [
+    `${TOKEN_COOKIE}=${encodeURIComponent(token)}`,
+    'HttpOnly',
+    'Path=/',
+    'SameSite=Lax',
+    `Max-Age=${7 * 24 * 60 * 60}`
+  ];
+  if (secure) parts.push('Secure');
+  res.setHeader('Set-Cookie', parts.join('; '));
+}
+
+function clearAuthCookie(res) {
+  const secure = process.env.NODE_ENV === 'production';
+  const parts = [
+    `${TOKEN_COOKIE}=`,
+    'HttpOnly',
+    'Path=/',
+    'SameSite=Lax',
+    'Max-Age=0'
+  ];
+  if (secure) parts.push('Secure');
+  res.setHeader('Set-Cookie', parts.join('; '));
+}
 
 const FALLBACK_STRATEGIES = [
   (k) => ({ 'Authorization': `Bearer ${k}` }),
@@ -119,21 +169,15 @@ async function discoverMcpTools({ server_url, api_key, timeoutMs = 30_000 } = {}
 }
 
 async function sanitizeMcpServersForClient(rawServers = []) {
-  return Promise.all((rawServers || []).map(async (srv) => {
-    let apiKey = '';
-    if (srv.apiKeyEnc) {
-      try { apiKey = await decrypt(srv.apiKeyEnc); } catch { apiKey = ''; }
-    }
-    return {
-      server_label: srv.server_label || '',
-      server_url: srv.server_url || '',
-      api_key: apiKey,
-      transport: srv.transport || 'https',
-      timeoutMs: srv.timeoutMs || 30000,
-      tools: Array.isArray(srv.tools) ? srv.tools : [],
-      last_status: srv.last_status || 'unknown',
-      last_error: srv.last_error || ''
-    };
+  return (rawServers || []).map((srv) => ({
+    server_label: srv.server_label || '',
+    server_url: srv.server_url || '',
+    has_api_key: Boolean(srv.apiKeyEnc),
+    transport: srv.transport || 'https',
+    timeoutMs: srv.timeoutMs || 30000,
+    tools: Array.isArray(srv.tools) ? srv.tools : [],
+    last_status: srv.last_status || 'unknown',
+    last_error: srv.last_error || ''
   }));
 }
 
@@ -221,6 +265,7 @@ router.post('/register', authLimiter, async (req, res) => {
     });
 
     const token = jwt.sign({ userId, email, plan: 'self-key' }, JWT_SECRET(), { expiresIn: '7d' });
+    setAuthCookie(res, token);
     res.json({ token, userId, email, plan: 'self-key' });
 
   } catch (err) {
@@ -243,6 +288,7 @@ router.post('/login', authLimiter, async (req, res) => {
 
     const { userId, plan } = user;
     const token = jwt.sign({ userId, email, plan }, JWT_SECRET(), { expiresIn: '7d' });
+    setAuthCookie(res, token);
     res.json({ token, userId, email, plan });
 
   } catch (err) {
@@ -365,16 +411,37 @@ router.put('/mcp-servers', authMiddleware, async (req, res) => {
     const { mcp_servers } = req.body || {};
     if (!Array.isArray(mcp_servers)) return res.status(400).json({ error: 'mcp_servers must be an array' });
 
+    const users = await readUsers();
+    const currentUser = users[req.user.userId] || {};
+    const existingServers = Array.isArray(currentUser.mcpServers) ? currentUser.mcpServers : [];
+    const existingByKey = new Map(
+      existingServers.map((srv) => [`${String(srv.server_label || '').trim()}::${String(srv.server_url || '').trim()}`, srv])
+    );
+
     const normalized = [];
     for (const row of mcp_servers) {
       const server_label = String(row?.server_label || '').trim();
       const server_url = String(row?.server_url || '').trim();
       const api_key = String(row?.api_key || '').trim();
-      if (!server_label || !server_url || !api_key) {
-        return res.status(400).json({ error: 'Each MCP server requires server_label, server_url and api_key' });
+      const keyRef = `${server_label}::${server_url}`;
+      const existing = existingByKey.get(keyRef);
+      const hasSavedKey = Boolean(existing?.apiKeyEnc);
+
+      if (!server_label || !server_url) {
+        return res.status(400).json({ error: 'Each MCP server requires server_label and server_url' });
+      }
+      if (!api_key && !hasSavedKey) {
+        return res.status(400).json({ error: `Missing api_key for MCP server "${server_label}"` });
       }
 
-      const tools = Array.isArray(row?.tools) ? row.tools : await discoverMcpTools({ server_url, api_key, timeoutMs: Number(row?.timeoutMs) || 30000 });
+      const effectiveApiKey = api_key || await decrypt(existing.apiKeyEnc);
+      const encryptedApiKey = api_key
+        ? await encrypt(api_key)
+        : existing.apiKeyEnc;
+
+      const tools = Array.isArray(row?.tools)
+        ? row.tools
+        : await discoverMcpTools({ server_url, api_key: effectiveApiKey, timeoutMs: Number(row?.timeoutMs) || 30000 });
       await saveDiscoveredToolSchemas({ serverUrl: server_url, serverLabel: server_label, tools });
       normalized.push({
         server_label,
@@ -383,7 +450,7 @@ router.put('/mcp-servers', authMiddleware, async (req, res) => {
         headers: { Authorization: 'Bearer ${api_key}' },
         timeoutMs: Number(row?.timeoutMs) || 30000,
         retry: { retries: 1, backoffMs: 300 },
-        apiKeyEnc: await encrypt(api_key),
+        apiKeyEnc: encryptedApiKey,
         tools,
         last_status: 'ok',
         last_error: '',
@@ -487,10 +554,14 @@ router.put('/password', authMiddleware, async (req, res) => {
   }
 });
 
+router.post('/logout', (_, res) => {
+  clearAuthCookie(res);
+  res.json({ ok: true });
+});
+
 // ── MIDDLEWARE ────────────────────────────────────────────────────
 export function authMiddleware(req, res, next) {
-  const header = req.headers.authorization || '';
-  const token  = header.startsWith('Bearer ') ? header.slice(7) : null;
+  const token = extractTokenFromRequest(req);
   if (!token) return res.status(401).json({ error: 'Authorization required' });
   try {
     req.user = jwt.verify(token, JWT_SECRET());
