@@ -10,53 +10,11 @@ import {
   ReactFlowProvider, useReactFlow
 } from '@xyflow/react';
 import dagre from 'dagre';
-
-// ── CONSTANTS ────────────────────────────────────────────────────
-const FIELD_TYPES = ['string','number','integer','boolean','object','array','image_url'];
-const NODE_W = 280, NODE_H = 164;
-const TYPE_COLORS = {
-  prompt:'#f59e0b', api:'#2dd4bf', webpage:'#22d3ee', transform:'#60a5fa', tool:'#a78bfa', script:'#fb923c'
-};
-
-// ── DEMO WORKFLOW ────────────────────────────────────────────────
-const DEMO_WORKFLOW = {
-  lang_name: "demo_pipeline",
-  steps: [
-    {
-      ws_name: "extract_entities",
-      ws_type: "prompt",
-      ws_llm: { provider: "anthropic", model: "claude-sonnet-4-20250514", temperature: 0 },
-      ws_system_prompt: "You are an information extraction expert. Extract named entities from text with precision.",
-      ws_prompt_template: "Extract all named entities from the following text:\n\n{{text}}\n\nGroup them by type (person, org, location, etc).",
-      ws_inputs_schema: { type:"object", required:["text"], properties:{ text:{ type:"string" } } },
-      ws_output_schema: { type:"object", required:["entities"], properties:{ entities:{ type:"array" }, summary:{ type:"string" } } }
-    },
-    {
-      ws_name: "enrich_data",
-      ws_type: "api",
-      ws_api: { method: "GET", url: "https://api.example.com/enrich/{{entity_id}}" },
-      ws_inputs_schema: { type:"object", required:["entity_id"], properties:{ entity_id:{ type:"string" } } },
-      ws_output_schema: { type:"object", required:[], properties:{ enriched:{ type:"object" }, confidence:{ type:"number" } } }
-    },
-    {
-      ws_name: "generate_report",
-      ws_type: "prompt",
-      ws_llm: { provider: "anthropic", model: "claude-sonnet-4-20250514", temperature: 0.3 },
-      ws_system_prompt: "You are a professional report writer. Generate clear, structured, actionable reports.",
-      ws_prompt_template: "Write a report based on:\n- Entities: {{entities}}\n- Enriched data: {{enriched}}\n\nOutput format: {{ws_output_schema}}",
-      ws_inputs_schema: { type:"object", required:["entities","enriched"], properties:{ entities:{ type:"array" }, enriched:{ type:"object" } } },
-      ws_output_schema: { type:"object", required:["report"], properties:{ report:{ type:"string" }, confidence:{ type:"number" }, recommendations:{ type:"array" } } }
-    }
-  ],
-  workflows: [{
-    wf_name: "demo_pipeline",
-    wf_nodes: [
-      { step_id:"node_extract",  ws_ref:"extract_entities", depends_on:[] },
-      { step_id:"node_enrich",   ws_ref:"enrich_data",      depends_on:["node_extract"] },
-      { step_id:"node_report",   ws_ref:"generate_report",  depends_on:["node_enrich"] }
-    ]
-  }]
-};
+import {
+  FIELD_TYPES, NODE_W, NODE_H, TYPE_COLORS,
+  DEMO_WORKFLOW, PROVIDER_MODEL_HINTS, PROVIDER_KEY_PLACEHOLDERS
+} from './js/constants.js';
+import { wfTs, escapeHtml, syntaxHighlight } from './js/utils.js';
 
 // ── STATE ────────────────────────────────────────────────────────
 let token          = localStorage.getItem('wf_token') || null;
@@ -871,13 +829,6 @@ function onTypeChange() {
   }
 }
 
-const PROVIDER_MODEL_HINTS = {
-  anthropic:  'claude-sonnet-4-20250514',
-  openai:     'gpt-4o',
-  perplexity: 'sonar-pro',
-  mistral:    'mistral-large-latest',
-};
-
 function onProviderChange(currentModel) {
   const p = document.getElementById('f-provider')?.value || 'anthropic';
   const sel = document.getElementById('f-model');
@@ -1040,17 +991,6 @@ function setExecutionUiState(running) {
     stepBtn.textContent = _runStepDefaultLabel;
     flowBtn.textContent = _runFlowDefaultLabel;
   }
-}
-
-function truncLog(v) {
-  const txt = typeof v === 'string' ? v : JSON.stringify(v);
-  return txt.length > 256 ? `${txt.slice(0,256)}…` : txt;
-}
-
-function wfTs() {
-  const d = new Date();
-  const p = n => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
 
 function appendWorkflowExecLog(line) {
@@ -1408,52 +1348,6 @@ function findWorkflowNode(wf, ref) {
   return (wf.wf_nodes || []).find(n => n.step_id === ref || n.ws_ref === ref) || null;
 }
 
-function getDownstreamExecutionOrder(startNodeId) {
-  const wf = (currentWf?.data?.workflows || []).find(w => w.wf_nodes?.length);
-  if (!wf) return [];
-  const nodes = wf.wf_nodes || [];
-  const byId = new Map(nodes.map(n => [n.step_id, n]));
-  const children = new Map(nodes.map(n => [n.step_id, []]));
-  nodes.forEach(n => (n.depends_on || []).forEach(dep => {
-    const depNode = findWorkflowNode(wf, dep);
-    if (depNode && children.has(depNode.step_id)) children.get(depNode.step_id).push(n.step_id);
-  }));
-
-  const startNode = findWorkflowNode(wf, startNodeId);
-  if (!startNode) return [];
-
-  const included = new Set();
-  const stack = [startNode.step_id];
-  while (stack.length) {
-    const id = stack.pop();
-    if (!id || included.has(id)) continue;
-    included.add(id);
-    (children.get(id) || []).forEach(c => stack.push(c));
-  }
-
-  const indeg = new Map();
-  included.forEach(id => indeg.set(id, 0));
-  included.forEach(id => {
-    const node = byId.get(id);
-    (node?.depends_on || []).forEach(dep => {
-      const depNode = findWorkflowNode(wf, dep);
-      if (depNode && included.has(depNode.step_id)) indeg.set(id, (indeg.get(id) || 0) + 1);
-    });
-  });
-  const q = [...included].filter(id => indeg.get(id) === 0);
-  const order = [];
-  while (q.length) {
-    const id = q.shift();
-    order.push(id);
-    (children.get(id) || []).forEach(c => {
-      if (!included.has(c)) return;
-      indeg.set(c, indeg.get(c) - 1);
-      if (indeg.get(c) === 0) q.push(c);
-    });
-  }
-  return order;
-}
-
 function getStepRunState(step, nodeId) {
   const key = nodeId || step?.ws_name;
   if (!key) return null;
@@ -1498,13 +1392,6 @@ function renderRunState(step, nodeId) {
   logOutEl.textContent = state.logOutput || '// Full prompt + execution log will appear here…';
   logOutEl.className = `run-output${state.logError ? ' error' : ''}`;
   logMetaEl.innerHTML = state.logMeta || '';
-}
-
-function escapeHtml(v) {
-  return String(v)
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;');
 }
 
 function renderOutputVars(container, rawOutput) {
@@ -1795,13 +1682,6 @@ async function runWorkflowFromHere() {
 }
 
 // ── SETTINGS ─────────────────────────────────────────────────────
-const PROVIDER_KEY_PLACEHOLDERS = {
-  anthropic:  'sk-ant-api03-…',
-  openai:     'sk-…',
-  perplexity: 'pplx-…',
-  mistral:    'your-mistral-key',
-};
-
 function openSettings() {
   if (guestMode) { showSignupCTA(); return; }
   openModal('Settings',`
@@ -2056,16 +1936,6 @@ function toast(msg,type='ok') {
   const el=document.getElementById('toast');
   el.textContent=msg; el.className=`show ${type}`;
   clearTimeout(_toastTimer); _toastTimer=setTimeout(()=>(el.className=''),2500);
-}
-
-// ── UTILS ────────────────────────────────────────────────────────
-function syntaxHighlight(json) {
-  return json.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-    .replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g,m=>{
-      if(/^"/.test(m)) return/:$/.test(m)?`<span class="jk">${m}</span>`:`<span class="js">${m}</span>`;
-      if(/true|false|null/.test(m)) return `<span class="jb">${m}</span>`;
-      return `<span class="jn">${m}</span>`;
-    });
 }
 
 // ── WINDOW EXPORTS ───────────────────────────────────────────────
