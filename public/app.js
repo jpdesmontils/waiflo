@@ -17,7 +17,6 @@ import {
 import { wfTs, escapeHtml, syntaxHighlight } from './js/utils.js';
 
 // ── STATE ────────────────────────────────────────────────────────
-let token          = localStorage.getItem('wf_token') || null;
 let currentUser    = null;
 let guestMode      = false;
 let guestWorkflows = [];
@@ -368,14 +367,14 @@ function syncWorkflowDependencies(sourceId, targetId) {
 
 // ── AUTH / SESSION ────────────────────────────────────────────────
 function doLogout() {
-  token=null; currentUser=null; currentWf=null;
+  fetch('/api/auth/logout', { method:'POST', credentials:'include' }).catch(() => {});
+  currentUser=null; currentWf=null;
   guestMode=false; guestWorkflows=[]; workflows=[];
-  localStorage.removeItem('wf_token');
   window.location.href = '/login';
 }
 
 function enterGuestMode(withDemo = true) {
-  guestMode = true; token=null; currentUser=null;
+  guestMode = true; currentUser=null;
   document.getElementById('guest-banner').classList.remove('hidden');
   document.getElementById('guest-badge').style.display = '';
   document.getElementById('user-badge').textContent = '';
@@ -422,8 +421,8 @@ function showSignupCTA() {
 // ── API CLIENT ───────────────────────────────────────────────────
 async function api(path, method='GET', body=null, auth=true) {
   const headers = { 'Content-Type':'application/json' };
-  if (auth && token) headers['Authorization'] = `Bearer ${token}`;
   const opts = { method, headers };
+  if (auth) opts.credentials = 'include';
   if (body) opts.body = JSON.stringify(body);
   try {
     const res  = await fetch(path,opts);
@@ -1317,7 +1316,7 @@ function updateRunTab(s) {
 // FIX #6 — anti-réentrance + suppression de l'appel récursif updateRunTab
 async function hydrateRunStateFromServer(step, nodeId) {
   const key = nodeId || step?.ws_name;
-  if (!token || !currentWf || !key) return;
+  if (!currentUser || !currentWf || !key) return;
   if (getStepRunState(step, nodeId)) return;   // état déjà connu
   if (_hydratingNodes.has(key)) return;         // hydratation déjà en cours
   _hydratingNodes.add(key);
@@ -1354,10 +1353,10 @@ async function hydrateRunStateFromServer(step, nodeId) {
 
 function stopExecution() {
   if (_runController) _runController.abort();
-  if (_workflowRunId && token) {
+  if (_workflowRunId && currentUser) {
     fetch(`/api/exec/runs/${encodeURIComponent(_workflowRunId)}/stop`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${token}` }
+      credentials: 'include'
     }).catch(() => {});
   }
 }
@@ -1464,7 +1463,7 @@ async function executeStep(stepDef, runMode='step_only') {
   const tsStart = Date.now();
   const ts = () => new Date().toISOString().slice(11,23);
   setRunningGraphState(_currentNodeId || s.ws_name, runMode === 'workflow_from_here');
-  const canUseRefExec = Boolean(token && currentWf?.name && _currentNodeId);
+  const canUseRefExec = Boolean(currentUser && currentWf?.name && _currentNodeId);
   const execUrl = canUseRefExec
     ? `/api/exec/workflows/${encodeURIComponent(currentWf.name)}/step`
     : '/api/exec/step';
@@ -1474,10 +1473,9 @@ async function executeStep(stepDef, runMode='step_only') {
 
   if (['api','webpage'].includes((s.ws_type||'').toLowerCase())) {
     const headers = { 'Content-Type':'application/json' };
-    if (token) headers['Authorization'] = `Bearer ${token}`;
     let res;
     try {
-      const r = await fetch(execUrl, { method:'POST', headers, signal:_runController.signal, body:JSON.stringify(execBody) });
+      const r = await fetch(execUrl, { method:'POST', headers, credentials:'include', signal:_runController.signal, body:JSON.stringify(execBody) });
       res = await r.json();
     } catch(e) {
       const msg = e.name === 'AbortError' ? 'Execution stopped by user' : e.message;
@@ -1506,8 +1504,7 @@ async function executeStep(stepDef, runMode='step_only') {
 
   try {
     const headers = { 'Content-Type':'application/json' };
-    if (token) headers['Authorization'] = `Bearer ${token}`;
-    const resp = await fetch(execUrl, { method:'POST', headers, signal:_runController.signal, body:JSON.stringify(execBody) });
+    const resp = await fetch(execUrl, { method:'POST', headers, credentials:'include', signal:_runController.signal, body:JSON.stringify(execBody) });
     if (!resp.ok) {
       const errBody = await resp.json().catch(()=>({ error:`HTTP ${resp.status}` }));
       throw new Error(errBody.error || `HTTP ${resp.status}`);
@@ -1581,7 +1578,7 @@ async function runStepOnly() {
 async function runWorkflowFromHere() {
   if (_isExecuting) return stopExecution();
   if (!currentStep || !_currentNodeId) return;
-  if (!token || !currentWf?.name) {
+  if (!currentUser || !currentWf?.name) {
     toast('Sign in required for backend workflow orchestration', 'err');
     return;
   }
@@ -1604,7 +1601,8 @@ async function runWorkflowFromHere() {
     appendWorkflowExecLog(`${wfTs()} ## Workflow ## Start from ${savedNodeId} (backend orchestrator)`);
     const launchResp = await fetch(`/api/exec/workflows/${encodeURIComponent(currentWf.name)}/run`, {
       method: 'POST',
-      headers: { 'Content-Type':'application/json', Authorization:`Bearer ${token}` },
+      headers: { 'Content-Type':'application/json' },
+      credentials: 'include',
       body: JSON.stringify({ from_step_id: savedNodeId, inputs: triggerInputs })
     });
     const launch = await launchResp.json().catch(() => ({}));
@@ -1614,7 +1612,7 @@ async function runWorkflowFromHere() {
     _runController = new AbortController();
 
     const streamResp = await fetch(`/api/exec/runs/${encodeURIComponent(_workflowRunId)}/stream`, {
-      headers: { Authorization:`Bearer ${token}` },
+      credentials: 'include',
       signal: _runController.signal
     });
     if (!streamResp.ok) throw new Error(`HTTP ${streamResp.status} while opening run stream`);
@@ -2061,11 +2059,7 @@ window.addEventListener('load', async () => {
   const root = createRoot(document.getElementById('rf-container'));
   root.render(h(AppGraph,null));
 
-  if (token) {
-    const me=await api('/api/auth/me');
-    if (!me.error) { enterAuthUser(me); return; }
-    localStorage.removeItem('wf_token');
-    token=null;
-  }
+  const me=await api('/api/auth/me');
+  if (!me.error) { enterAuthUser(me); return; }
   enterGuestMode(true);
 });

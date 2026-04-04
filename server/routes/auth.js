@@ -13,6 +13,56 @@ const JWT_SECRET  = () => process.env.JWT_SECRET; // Required — validated at s
 const SALT_ROUNDS = 10;
 
 const SUPPORTED_PROVIDERS = Object.keys(PROVIDER_META); // ['anthropic','openai','perplexity','mistral']
+const TOKEN_COOKIE = 'wf_token';
+
+function parseCookies(cookieHeader = '') {
+  const out = {};
+  String(cookieHeader || '')
+    .split(';')
+    .map(v => v.trim())
+    .filter(Boolean)
+    .forEach((part) => {
+      const idx = part.indexOf('=');
+      if (idx <= 0) return;
+      const k = decodeURIComponent(part.slice(0, idx).trim());
+      const v = decodeURIComponent(part.slice(idx + 1).trim());
+      out[k] = v;
+    });
+  return out;
+}
+
+function extractTokenFromRequest(req) {
+  const header = req.headers.authorization || '';
+  if (header.startsWith('Bearer ')) return header.slice(7);
+  const cookies = parseCookies(req.headers.cookie || '');
+  return cookies[TOKEN_COOKIE] || null;
+}
+
+function setAuthCookie(res, token) {
+  const secure = process.env.NODE_ENV === 'production';
+  const parts = [
+    `${TOKEN_COOKIE}=${encodeURIComponent(token)}`,
+    'HttpOnly',
+    'Path=/',
+    'SameSite=Lax',
+    `Max-Age=${7 * 24 * 60 * 60}`
+  ];
+  if (secure) parts.push('Secure');
+  res.setHeader('Set-Cookie', parts.join('; '));
+}
+
+function clearAuthCookie(res) {
+  const secure = process.env.NODE_ENV === 'production';
+  const parts = [
+    `${TOKEN_COOKIE}=`,
+    'HttpOnly',
+    'Path=/',
+    'SameSite=Lax',
+    'Max-Age=0'
+  ];
+  if (secure) parts.push('Secure');
+  res.setHeader('Set-Cookie', parts.join('; '));
+}
 
 const FALLBACK_STRATEGIES = [
   (k) => ({ 'Authorization': `Bearer ${k}` }),
@@ -215,6 +265,7 @@ router.post('/register', authLimiter, async (req, res) => {
     });
 
     const token = jwt.sign({ userId, email, plan: 'self-key' }, JWT_SECRET(), { expiresIn: '7d' });
+    setAuthCookie(res, token);
     res.json({ token, userId, email, plan: 'self-key' });
 
   } catch (err) {
@@ -237,6 +288,7 @@ router.post('/login', authLimiter, async (req, res) => {
 
     const { userId, plan } = user;
     const token = jwt.sign({ userId, email, plan }, JWT_SECRET(), { expiresIn: '7d' });
+    setAuthCookie(res, token);
     res.json({ token, userId, email, plan });
 
   } catch (err) {
@@ -502,10 +554,14 @@ router.put('/password', authMiddleware, async (req, res) => {
   }
 });
 
+router.post('/logout', (_, res) => {
+  clearAuthCookie(res);
+  res.json({ ok: true });
+});
+
 // ── MIDDLEWARE ────────────────────────────────────────────────────
 export function authMiddleware(req, res, next) {
-  const header = req.headers.authorization || '';
-  const token  = header.startsWith('Bearer ') ? header.slice(7) : null;
+  const token = extractTokenFromRequest(req);
   if (!token) return res.status(401).json({ error: 'Authorization required' });
   try {
     req.user = jwt.verify(token, JWT_SECRET());

@@ -12,6 +12,19 @@ import { wfPath } from '../lib/utils.js';
 
 const router = express.Router();
 const workflowRuns = new Map();
+const TOKEN_COOKIE = 'wf_token';
+
+function getTokenFromRequest(req) {
+  const header = req.headers.authorization || '';
+  if (header.startsWith('Bearer ')) return header.slice(7);
+  const cookieHeader = String(req.headers.cookie || '');
+  for (const part of cookieHeader.split(';')) {
+    const trimmed = part.trim();
+    if (!trimmed.startsWith(`${TOKEN_COOKIE}=`)) continue;
+    return decodeURIComponent(trimmed.slice(TOKEN_COOKIE.length + 1));
+  }
+  return null;
+}
 
 function createRun(userId, workflowName) {
   const runId = randomUUID();
@@ -454,8 +467,7 @@ const execLimiter = rateLimit({
 
 // Optional auth: attaches req.user if Bearer token is valid, continues regardless.
 router.use((req, res, next) => {
-  const header = req.headers.authorization || '';
-  const token  = header.startsWith('Bearer ') ? header.slice(7) : null;
+  const token = getTokenFromRequest(req);
   if (token) {
     try { req.user = jwt.verify(token, process.env.JWT_SECRET); } catch { /* guest */ }
   }

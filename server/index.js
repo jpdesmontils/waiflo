@@ -49,9 +49,13 @@ await cleanupStaleLocks();
 // ── Express ───────────────────────────────────────────────────────
 const app = express();
 
+if (process.env.NODE_ENV === 'production' && !process.env.CORS_ORIGIN) {
+  console.error('FATAL: CORS_ORIGIN must be set in production');
+  process.exit(1);
+}
 const corsOrigin = process.env.CORS_ORIGIN
   ? process.env.CORS_ORIGIN.split(',').map(s => s.trim())
-  : true; // Allow all if not configured — set CORS_ORIGIN in production
+  : true;
 app.use(cors({ origin: corsOrigin, credentials: true }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.text({ limit: '10mb' }));
