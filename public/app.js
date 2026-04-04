@@ -10,53 +10,11 @@ import {
   ReactFlowProvider, useReactFlow
 } from '@xyflow/react';
 import dagre from 'dagre';
-
-// ── CONSTANTS ────────────────────────────────────────────────────
-const FIELD_TYPES = ['string','number','integer','boolean','object','array','image_url'];
-const NODE_W = 280, NODE_H = 164;
-const TYPE_COLORS = {
-  prompt:'#f59e0b', api:'#2dd4bf', webpage:'#22d3ee', transform:'#60a5fa', tool:'#a78bfa', script:'#fb923c'
-};
-
-// ── DEMO WORKFLOW ────────────────────────────────────────────────
-const DEMO_WORKFLOW = {
-  lang_name: "demo_pipeline",
-  steps: [
-    {
-      ws_name: "extract_entities",
-      ws_type: "prompt",
-      ws_llm: { provider: "anthropic", model: "claude-sonnet-4-20250514", temperature: 0 },
-      ws_system_prompt: "You are an information extraction expert. Extract named entities from text with precision.",
-      ws_prompt_template: "Extract all named entities from the following text:\n\n{{text}}\n\nGroup them by type (person, org, location, etc).",
-      ws_inputs_schema: { type:"object", required:["text"], properties:{ text:{ type:"string" } } },
-      ws_output_schema: { type:"object", required:["entities"], properties:{ entities:{ type:"array" }, summary:{ type:"string" } } }
-    },
-    {
-      ws_name: "enrich_data",
-      ws_type: "api",
-      ws_api: { method: "GET", url: "https://api.example.com/enrich/{{entity_id}}" },
-      ws_inputs_schema: { type:"object", required:["entity_id"], properties:{ entity_id:{ type:"string" } } },
-      ws_output_schema: { type:"object", required:[], properties:{ enriched:{ type:"object" }, confidence:{ type:"number" } } }
-    },
-    {
-      ws_name: "generate_report",
-      ws_type: "prompt",
-      ws_llm: { provider: "anthropic", model: "claude-sonnet-4-20250514", temperature: 0.3 },
-      ws_system_prompt: "You are a professional report writer. Generate clear, structured, actionable reports.",
-      ws_prompt_template: "Write a report based on:\n- Entities: {{entities}}\n- Enriched data: {{enriched}}\n\nOutput format: {{ws_output_schema}}",
-      ws_inputs_schema: { type:"object", required:["entities","enriched"], properties:{ entities:{ type:"array" }, enriched:{ type:"object" } } },
-      ws_output_schema: { type:"object", required:["report"], properties:{ report:{ type:"string" }, confidence:{ type:"number" }, recommendations:{ type:"array" } } }
-    }
-  ],
-  workflows: [{
-    wf_name: "demo_pipeline",
-    wf_nodes: [
-      { step_id:"node_extract",  ws_ref:"extract_entities", depends_on:[] },
-      { step_id:"node_enrich",   ws_ref:"enrich_data",      depends_on:["node_extract"] },
-      { step_id:"node_report",   ws_ref:"generate_report",  depends_on:["node_enrich"] }
-    ]
-  }]
-};
+import {
+  FIELD_TYPES, NODE_W, NODE_H, TYPE_COLORS,
+  DEMO_WORKFLOW, PROVIDER_MODEL_HINTS, PROVIDER_KEY_PLACEHOLDERS
+} from './js/constants.js';
+import { wfTs, escapeHtml, syntaxHighlight } from './js/utils.js';
 
 // ── STATE ────────────────────────────────────────────────────────
 let token          = localStorage.getItem('wf_token') || null;
@@ -493,21 +451,40 @@ function renderWorkflowList() {
     el.innerHTML='<div style="padding:16px 14px;font-family:JetBrains Mono,monospace;font-size:10px;color:var(--dim)">No workflows yet</div>';
     return;
   }
-  workflows.forEach(wf=>{
+  workflows.forEach(wf => {
     const item = document.createElement('div');
-    item.className='wf-item'+(currentWf?.name===wf.name?' active':'');
+    item.className = 'wf-item' + (currentWf?.name === wf.name ? ' active' : '');
     const d = new Date(wf.updatedAt);
-    item.innerHTML=`
-      <span class="wf-item-icon">&#x2B21;</span>
-      <div class="wf-item-info">
-        <div class="wf-item-name">${wf.name}</div>
-        <div class="wf-item-date">${d.toLocaleDateString()} ${d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</div>
-      </div>
-      <div class="wf-item-actions">
-        <button class="wf-icon-btn" title="Copy JSON" onclick="copyWfJsonByName('${wf.name}',event)">&#x2398;</button>
-        <button class="wf-icon-btn" title="Delete" onclick="deleteWorkflow('${wf.name}',event)">&#x2715;</button>
-      </div>`;
-    item.addEventListener('click', ()=>selectWf(wf.name));
+    const icon = document.createElement('span');
+    icon.className = 'wf-item-icon';
+    icon.innerHTML = '&#x2B21;';
+
+    const info = document.createElement('div');
+    info.className = 'wf-item-info';
+    const name = document.createElement('div');
+    name.className = 'wf-item-name';
+    name.textContent = wf.name;
+    const date = document.createElement('div');
+    date.className = 'wf-item-date';
+    date.textContent = `${d.toLocaleDateString()} ${d.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' })}`;
+    info.append(name, date);
+
+    const actions = document.createElement('div');
+    actions.className = 'wf-item-actions';
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'wf-icon-btn';
+    copyBtn.title = 'Copy JSON';
+    copyBtn.innerHTML = '&#x2398;';
+    copyBtn.addEventListener('click', (event) => copyWfJsonByName(wf.name, event));
+    const delBtn = document.createElement('button');
+    delBtn.className = 'wf-icon-btn';
+    delBtn.title = 'Delete';
+    delBtn.innerHTML = '&#x2715;';
+    delBtn.addEventListener('click', (event) => deleteWorkflow(wf.name, event));
+    actions.append(copyBtn, delBtn);
+
+    item.append(icon, info, actions);
+    item.addEventListener('click', () => selectWf(wf.name));
     el.appendChild(item);
   });
 }
@@ -871,13 +848,6 @@ function onTypeChange() {
   }
 }
 
-const PROVIDER_MODEL_HINTS = {
-  anthropic:  'claude-sonnet-4-20250514',
-  openai:     'gpt-4o',
-  perplexity: 'sonar-pro',
-  mistral:    'mistral-large-latest',
-};
-
 function onProviderChange(currentModel) {
   const p = document.getElementById('f-provider')?.value || 'anthropic';
   const sel = document.getElementById('f-model');
@@ -1040,17 +1010,6 @@ function setExecutionUiState(running) {
     stepBtn.textContent = _runStepDefaultLabel;
     flowBtn.textContent = _runFlowDefaultLabel;
   }
-}
-
-function truncLog(v) {
-  const txt = typeof v === 'string' ? v : JSON.stringify(v);
-  return txt.length > 256 ? `${txt.slice(0,256)}…` : txt;
-}
-
-function wfTs() {
-  const d = new Date();
-  const p = n => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
 
 function appendWorkflowExecLog(line) {
@@ -1408,52 +1367,6 @@ function findWorkflowNode(wf, ref) {
   return (wf.wf_nodes || []).find(n => n.step_id === ref || n.ws_ref === ref) || null;
 }
 
-function getDownstreamExecutionOrder(startNodeId) {
-  const wf = (currentWf?.data?.workflows || []).find(w => w.wf_nodes?.length);
-  if (!wf) return [];
-  const nodes = wf.wf_nodes || [];
-  const byId = new Map(nodes.map(n => [n.step_id, n]));
-  const children = new Map(nodes.map(n => [n.step_id, []]));
-  nodes.forEach(n => (n.depends_on || []).forEach(dep => {
-    const depNode = findWorkflowNode(wf, dep);
-    if (depNode && children.has(depNode.step_id)) children.get(depNode.step_id).push(n.step_id);
-  }));
-
-  const startNode = findWorkflowNode(wf, startNodeId);
-  if (!startNode) return [];
-
-  const included = new Set();
-  const stack = [startNode.step_id];
-  while (stack.length) {
-    const id = stack.pop();
-    if (!id || included.has(id)) continue;
-    included.add(id);
-    (children.get(id) || []).forEach(c => stack.push(c));
-  }
-
-  const indeg = new Map();
-  included.forEach(id => indeg.set(id, 0));
-  included.forEach(id => {
-    const node = byId.get(id);
-    (node?.depends_on || []).forEach(dep => {
-      const depNode = findWorkflowNode(wf, dep);
-      if (depNode && included.has(depNode.step_id)) indeg.set(id, (indeg.get(id) || 0) + 1);
-    });
-  });
-  const q = [...included].filter(id => indeg.get(id) === 0);
-  const order = [];
-  while (q.length) {
-    const id = q.shift();
-    order.push(id);
-    (children.get(id) || []).forEach(c => {
-      if (!included.has(c)) return;
-      indeg.set(c, indeg.get(c) - 1);
-      if (indeg.get(c) === 0) q.push(c);
-    });
-  }
-  return order;
-}
-
 function getStepRunState(step, nodeId) {
   const key = nodeId || step?.ws_name;
   if (!key) return null;
@@ -1498,13 +1411,6 @@ function renderRunState(step, nodeId) {
   logOutEl.textContent = state.logOutput || '// Full prompt + execution log will appear here…';
   logOutEl.className = `run-output${state.logError ? ' error' : ''}`;
   logMetaEl.innerHTML = state.logMeta || '';
-}
-
-function escapeHtml(v) {
-  return String(v)
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;');
 }
 
 function renderOutputVars(container, rawOutput) {
@@ -1795,13 +1701,6 @@ async function runWorkflowFromHere() {
 }
 
 // ── SETTINGS ─────────────────────────────────────────────────────
-const PROVIDER_KEY_PLACEHOLDERS = {
-  anthropic:  'sk-ant-api03-…',
-  openai:     'sk-…',
-  perplexity: 'pplx-…',
-  mistral:    'your-mistral-key',
-};
-
 function openSettings() {
   if (guestMode) { showSignupCTA(); return; }
   openModal('Settings',`
@@ -1852,7 +1751,7 @@ function openSettings() {
     <div class="settings-pane" id="s-pane-mcp">
       <div class="settings-section">
         <div class="settings-title">Registre des MCP servers</div>
-        <div class="settings-desc">Champs requis: server_label, api_key, server_url. Les tools sont découverts après validation.</div>
+        <div class="settings-desc">Champs requis: server_label, server_url. api_key requis seulement à la création/remplacement. Les tools sont découverts après validation.</div>
         <div id="s-mcp-list"></div>
         <div class="settings-row">
           <button class="settings-btn" onclick="addMcpServerRow()">+ Ajouter serveur</button>
@@ -1885,35 +1784,89 @@ function renderMcpServerRows() {
     list.innerHTML = '<div class="settings-desc">Aucun serveur MCP configuré.</div>';
     return;
   }
-  list.innerHTML = _mcpServers.map((srv, i) => `
-    <div class="settings-mcp-item">
-      <div class="settings-row"><input class="settings-input" id="mcp-label-${i}" placeholder="server_label" value="${srv.server_label || ''}"></div>
-      <div class="settings-row"><input class="settings-input" id="mcp-url-${i}" placeholder="https://host.example.com/mcp" value="${srv.server_url || ''}"></div>
-      <div class="settings-row"><input class="settings-input" id="mcp-key-${i}" type="password" placeholder="server-key-val" value="${srv.api_key || ''}"></div>
-      <div class="settings-row" style="justify-content:space-between;align-items:center;">
-        <span class="${srv.last_status==='ok'?'settings-conn-ok':'settings-conn-ko'}">${srv.last_status==='ok'?'● Connecté':'● Non connecté'}</span>
-        <div style="display:flex;gap:8px">
-          <button class="settings-btn" onclick="validateMcpServer(${i})">Valider la connexion</button>
-          <button class="settings-btn danger" onclick="removeMcpServerRow(${i})">Supprimer</button>
-        </div>
-      </div>
-      ${srv.last_error ? `<div class="settings-err">${srv.last_error}</div>` : ''}
-      <div class="settings-desc">Tools: ${(srv.tools || []).map(t => typeof t === 'string' ? t : t.name).filter(Boolean).join(', ') || '—'}</div>
-    </div>
-  `).join('');
+  list.innerHTML = '';
+
+  _mcpServers.forEach((srv, i) => {
+    const item = document.createElement('div');
+    item.className = 'settings-mcp-item';
+
+    const mkInputRow = (id, placeholder, value = '', type = 'text') => {
+      const row = document.createElement('div');
+      row.className = 'settings-row';
+      const input = document.createElement('input');
+      input.className = 'settings-input';
+      input.id = id;
+      input.placeholder = placeholder;
+      input.value = value;
+      input.type = type;
+      row.appendChild(input);
+      return row;
+    };
+
+    item.appendChild(mkInputRow(`mcp-label-${i}`, 'server_label', srv.server_label || ''));
+    item.appendChild(mkInputRow(`mcp-url-${i}`, 'https://host.example.com/mcp', srv.server_url || ''));
+    item.appendChild(mkInputRow(`mcp-key-${i}`, 'server-key-val (laisser vide pour conserver)', '', 'password'));
+
+    const statusRow = document.createElement('div');
+    statusRow.className = 'settings-row';
+    statusRow.style.justifyContent = 'space-between';
+    statusRow.style.alignItems = 'center';
+
+    const status = document.createElement('span');
+    const connected = srv.last_status === 'ok';
+    status.className = connected ? 'settings-conn-ok' : 'settings-conn-ko';
+    status.textContent = connected ? '● Connecté' : '● Non connecté';
+
+    const actions = document.createElement('div');
+    actions.style.display = 'flex';
+    actions.style.gap = '8px';
+    const validateBtn = document.createElement('button');
+    validateBtn.className = 'settings-btn';
+    validateBtn.textContent = 'Valider la connexion';
+    validateBtn.addEventListener('click', () => validateMcpServer(i));
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'settings-btn danger';
+    removeBtn.textContent = 'Supprimer';
+    removeBtn.addEventListener('click', () => removeMcpServerRow(i));
+    actions.append(validateBtn, removeBtn);
+
+    statusRow.append(status, actions);
+    item.appendChild(statusRow);
+
+    if (srv.last_error) {
+      const err = document.createElement('div');
+      err.className = 'settings-err';
+      err.textContent = srv.last_error;
+      item.appendChild(err);
+    }
+
+    const keyInfo = document.createElement('div');
+    keyInfo.className = 'settings-desc';
+    keyInfo.textContent = srv.has_api_key ? 'API key: enregistrée' : 'API key: absente';
+    item.appendChild(keyInfo);
+
+    const toolsInfo = document.createElement('div');
+    toolsInfo.className = 'settings-desc';
+    toolsInfo.textContent = `Tools: ${(srv.tools || []).map(t => typeof t === 'string' ? t : t.name).filter(Boolean).join(', ') || '—'}`;
+    item.appendChild(toolsInfo);
+
+    list.appendChild(item);
+  });
 }
 
 function readMcpServerRow(index) {
+  const current = _mcpServers[index] || {};
   return {
-    ...(_mcpServers[index] || {}),
+    ...current,
     server_label: document.getElementById(`mcp-label-${index}`)?.value?.trim() || '',
     server_url: document.getElementById(`mcp-url-${index}`)?.value?.trim() || '',
-    api_key: document.getElementById(`mcp-key-${index}`)?.value?.trim() || ''
+    api_key: document.getElementById(`mcp-key-${index}`)?.value?.trim() || '',
+    has_api_key: Boolean(current.has_api_key)
   };
 }
 
 function addMcpServerRow() {
-  _mcpServers.push({ server_label:'', server_url:'', api_key:'', tools:[], last_status:'unknown', last_error:'' });
+  _mcpServers.push({ server_label:'', server_url:'', api_key:'', has_api_key:false, tools:[], last_status:'unknown', last_error:'' });
   renderMcpServerRows();
 }
 
@@ -1931,10 +1884,10 @@ async function validateMcpServer(index) {
   }
   const res = await api('/api/auth/mcp-validate', 'POST', row);
   if (res.error) {
-    _mcpServers[index] = { ...row, tools: [], last_status:'error', last_error: res.error };
+    _mcpServers[index] = { ...row, tools: [], has_api_key: row.has_api_key, last_status:'error', last_error: res.error };
     msg.className='settings-err'; msg.textContent=`${row.server_label}: ${res.error}`;
   } else {
-    _mcpServers[index] = { ...row, tools: res.tools || [], last_status:'ok', last_error:'' };
+    _mcpServers[index] = { ...row, api_key:'', has_api_key: true, tools: res.tools || [], last_status:'ok', last_error:'' };
     msg.className='settings-ok'; msg.textContent=`${row.server_label}: connexion établie (${res.count || 0} tools)`;
   }
   renderMcpServerRows();
@@ -2041,7 +1994,9 @@ function openModal(title,bodyHtml,actions=[]) {
 }
 
 function openConfirm(title,sub,onConfirm) {
-  openModal(title,`<div class="confirm-text">${title}</div><div class="confirm-sub">${sub}</div>`,[
+  const safeTitle = escapeHtml(title);
+  const safeSub = escapeHtml(sub);
+  openModal(title,`<div class="confirm-text">${safeTitle}</div><div class="confirm-sub">${safeSub}</div>`,[
     { label:'Cancel', action:closeModal },
     { label:'Delete', action:onConfirm }
   ]);
@@ -2056,16 +2011,6 @@ function toast(msg,type='ok') {
   const el=document.getElementById('toast');
   el.textContent=msg; el.className=`show ${type}`;
   clearTimeout(_toastTimer); _toastTimer=setTimeout(()=>(el.className=''),2500);
-}
-
-// ── UTILS ────────────────────────────────────────────────────────
-function syntaxHighlight(json) {
-  return json.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-    .replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g,m=>{
-      if(/^"/.test(m)) return/:$/.test(m)?`<span class="jk">${m}</span>`:`<span class="js">${m}</span>`;
-      if(/true|false|null/.test(m)) return `<span class="jb">${m}</span>`;
-      return `<span class="jn">${m}</span>`;
-    });
 }
 
 // ── WINDOW EXPORTS ───────────────────────────────────────────────
