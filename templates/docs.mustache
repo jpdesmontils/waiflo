@@ -28,6 +28,7 @@
     </div>
     <div class="docs-sidebar-section">
       <div class="docs-sidebar-label">{{sidebar_api}}</div>
+      <a href="#openapi">{{sidebar_openapi}}</a>
       <a href="#exec">{{sidebar_exec}}</a>
       <a href="#auth">{{sidebar_auth}}</a>
       <a href="#design">{{sidebar_design}}</a>
@@ -174,6 +175,14 @@
     <span class="cc">{</span> <span class="ck">"step_id"</span><span class="cc">:</span> <span class="cs">"draft_response"</span><span class="cc">,</span>    <span class="ck">"depends_on"</span><span class="cc">:</span> <span class="cc">[</span><span class="cs">"classify_ticket"</span><span class="cc">,</span> <span class="cs">"enrich_customer"</span><span class="cc">]</span> <span class="cc">}</span>
   <span class="cc">]</span>
 <span class="cc">}</span></pre></div>
+    </div>
+
+    <!-- OPENAPI -->
+    <div class="docs-section" id="openapi">
+      <h2>{{openapi_h2}}</h2>
+      <p>{{openapi_desc}}</p>
+      <div class="docs-code"><pre><span class="cc">GET</span> <span class="cs">/json_schemas/waiflo_api.openapi.yaml</span></pre></div>
+      <p><a class="docs-download-link" href="/json_schemas/waiflo_api.openapi.yaml" download="waiflo_api.openapi.yaml">{{openapi_download_label}}</a></p>
     </div>
 
     <!-- EXEC API -->

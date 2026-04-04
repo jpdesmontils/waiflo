@@ -7,6 +7,7 @@
   "sidebar_steps":           "Étapes",
   "sidebar_workflows":       "Workflows",
   "sidebar_api":             "API",
+  "sidebar_openapi":         "OpenAPI YAML",
   "sidebar_exec":            "Exécution",
   "sidebar_auth":            "Auth",
   "sidebar_design":          "Design",
@@ -73,6 +74,9 @@
   "field_depends_on": "Tableau de step_id qui doivent se terminer avant que ce nœud s'exécute.",
 
   "exec_h2":   "API d'exécution",
+  "openapi_h2": "Schéma OpenAPI",
+  "openapi_desc": "Téléchargez le schéma OpenAPI YAML complet de l'API Waiflo pour l'importer dans Postman, Insomnia ou votre outillage interne.",
+  "openapi_download_label": "Télécharger waiflo_api.openapi.yaml",
   "exec_desc": "L'API exec exécute une étape unique avec les inputs fournis. Aucun compte requis pour un usage invité si ANTHROPIC_API_KEY est défini côté serveur. Les utilisateurs authentifiés apportent leur propre clé chiffrée.",
 
   "exec_step_desc":     "Exécute une définition d'étape avec les inputs. Les étapes prompt retournent un flux SSE. Les étapes api retournent du JSON.",
