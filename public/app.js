@@ -91,6 +91,7 @@ let _logsPanelDrag = null;
 let _activeRunEdgeIds = new Set();
 // FIX #6 — flag anti-réentrance pour hydrateRunStateFromServer
 let _hydratingNodes = new Set();
+let _workflowRunId = null;
 
 // ══════════════════════════════════════════════════════════════════
 //  REACT FLOW — CUSTOM NODE
@@ -1394,6 +1395,12 @@ async function hydrateRunStateFromServer(step, nodeId) {
 
 function stopExecution() {
   if (_runController) _runController.abort();
+  if (_workflowRunId && token) {
+    fetch(`/api/exec/runs/${encodeURIComponent(_workflowRunId)}/stop`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` }
+    }).catch(() => {});
+  }
 }
 
 function findWorkflowNode(wf, ref) {
@@ -1551,13 +1558,20 @@ async function executeStep(stepDef, runMode='step_only') {
   const tsStart = Date.now();
   const ts = () => new Date().toISOString().slice(11,23);
   setRunningGraphState(_currentNodeId || s.ws_name, runMode === 'workflow_from_here');
+  const canUseRefExec = Boolean(token && currentWf?.name && _currentNodeId);
+  const execUrl = canUseRefExec
+    ? `/api/exec/workflows/${encodeURIComponent(currentWf.name)}/step`
+    : '/api/exec/step';
+  const execBody = canUseRefExec
+    ? { ws_ref: s.ws_name, step_id: _currentNodeId, inputs: finalInputs }
+    : { step:s, inputs: finalInputs, context:{ workflowName: currentWf?.name, nodeId:_currentNodeId, runMode } };
 
   if (['api','webpage'].includes((s.ws_type||'').toLowerCase())) {
     const headers = { 'Content-Type':'application/json' };
     if (token) headers['Authorization'] = `Bearer ${token}`;
     let res;
     try {
-      const r = await fetch('/api/exec/step', { method:'POST', headers, signal:_runController.signal, body:JSON.stringify({ step:s, inputs: finalInputs, context:{ workflowName: currentWf?.name, nodeId:_currentNodeId, runMode } }) });
+      const r = await fetch(execUrl, { method:'POST', headers, signal:_runController.signal, body:JSON.stringify(execBody) });
       res = await r.json();
     } catch(e) {
       const msg = e.name === 'AbortError' ? 'Execution stopped by user' : e.message;
@@ -1587,7 +1601,7 @@ async function executeStep(stepDef, runMode='step_only') {
   try {
     const headers = { 'Content-Type':'application/json' };
     if (token) headers['Authorization'] = `Bearer ${token}`;
-    const resp = await fetch('/api/exec/step', { method:'POST', headers, signal:_runController.signal, body:JSON.stringify({ step:s, inputs: finalInputs, context:{ workflowName: currentWf?.name, nodeId:_currentNodeId, runMode } }) });
+    const resp = await fetch(execUrl, { method:'POST', headers, signal:_runController.signal, body:JSON.stringify(execBody) });
     if (!resp.ok) {
       const errBody = await resp.json().catch(()=>({ error:`HTTP ${resp.status}` }));
       throw new Error(errBody.error || `HTTP ${resp.status}`);
@@ -1661,37 +1675,115 @@ async function runStepOnly() {
 async function runWorkflowFromHere() {
   if (_isExecuting) return stopExecution();
   if (!currentStep || !_currentNodeId) return;
+  if (!token || !currentWf?.name) {
+    toast('Sign in required for backend workflow orchestration', 'err');
+    return;
+  }
 
   const savedStep   = currentStep;
   const savedNodeId = _currentNodeId;
+  const inProps = savedStep.ws_inputs_schema?.properties || {};
+  const triggerInputs = {};
+  for (const k of Object.keys(inProps)) {
+    const el=document.getElementById(`run-in-${k}`); if(!el) continue;
+    if (!el.value.trim()) continue;
+    let val=el.value; try{ val=JSON.parse(val); }catch{}
+    triggerInputs[k]=val;
+  }
 
   setExecutionUiState(true);
   try {
     clearWorkflowExecLogs();
     clearRunningGraphState();
-    appendWorkflowExecLog(`${wfTs()} ## Workflow ## Start from ${savedNodeId}`);
-    const order = getDownstreamExecutionOrder(savedNodeId);
+    appendWorkflowExecLog(`${wfTs()} ## Workflow ## Start from ${savedNodeId} (backend orchestrator)`);
+    const launchResp = await fetch(`/api/exec/workflows/${encodeURIComponent(currentWf.name)}/run`, {
+      method: 'POST',
+      headers: { 'Content-Type':'application/json', Authorization:`Bearer ${token}` },
+      body: JSON.stringify({ from_step_id: savedNodeId, inputs: triggerInputs })
+    });
+    const launch = await launchResp.json().catch(() => ({}));
+    if (!launchResp.ok || !launch?.run_id) throw new Error(launch.error || `HTTP ${launchResp.status}`);
+
+    _workflowRunId = launch.run_id;
+    _runController = new AbortController();
+
+    const streamResp = await fetch(`/api/exec/runs/${encodeURIComponent(_workflowRunId)}/stream`, {
+      headers: { Authorization:`Bearer ${token}` },
+      signal: _runController.signal
+    });
+    if (!streamResp.ok) throw new Error(`HTTP ${streamResp.status} while opening run stream`);
+
     const wf = (currentWf?.data?.workflows || []).find(w => w.wf_nodes?.length);
-    for (const nodeId of order) {
-      if (!_isExecuting) break;
-      const node = findWorkflowNode(wf, nodeId);
-      if (!node) continue;
-      const step = (currentWf.data.steps || []).find(st => st.ws_name === node.ws_ref);
-      if (!step) continue;
-      // Utiliser des variables locales pour l'itération
-      currentStep = step;
-      _currentNodeId = nodeId;
-      appendWorkflowExecLog(`${wfTs()} ## ${step.ws_name} ## Start`);
-      const inVars = buildInheritedInputs(step, nodeId);
-      const inTxt = Object.entries(inVars).map(([k,v]) => `${k}=${truncLog(v)}`).join(', ');
-      appendWorkflowExecLog(`${wfTs()} ## ${step.ws_name} ## inputs : ${inTxt || 'none'}`);
-      const ok = await executeStep(step, 'workflow_from_here');
-      const st = getStepRunState(step, nodeId) || {};
-      appendWorkflowExecLog(`${wfTs()} ## ${step.ws_name} ## End, status ${st.status || (ok?'OK':'ERR')}, output=${truncLog(st.output || '')}`);
-      if (!ok) break;
+    const reader = streamResp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let finished = false;
+
+    while (!finished) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream:true });
+      const frames = buffer.split('\n\n');
+      buffer = frames.pop();
+
+      for (const frame of frames) {
+        const lines = frame.split('\n');
+        const event = lines.find(l=>l.startsWith('event: '))?.slice(7) || 'message';
+        const raw = lines.find(l=>l.startsWith('data: '))?.slice(6);
+        if (!raw) continue;
+        const data = JSON.parse(raw);
+
+        if (event === 'step_started') {
+          const node = findWorkflowNode(wf, data.step_id);
+          const step = (currentWf.data.steps || []).find(st => st.ws_name === data.ws_ref);
+          if (!node || !step) continue;
+          currentStep = step;
+          _currentNodeId = node.step_id;
+          setRunningGraphState(node.step_id, true);
+          saveStepRunState(step, node.step_id, {
+            status:'running',
+            output:'',
+            lastInputs:data.inputs || {},
+            logOutput:'',
+            logMeta:'backend orchestrated running',
+            logError:false
+          });
+          appendWorkflowExecLog(`${wfTs()} ## ${step.ws_name} ## Start`);
+          continue;
+        }
+
+        if (event === 'step_finished') {
+          const node = findWorkflowNode(wf, data.step_id);
+          const step = (currentWf.data.steps || []).find(st => st.ws_name === data.ws_ref);
+          if (!node || !step) continue;
+          const isError = data.status !== 'done';
+          const outputText = isError ? (data.error || '') : JSON.stringify(data.output ?? '', null, 2);
+          if (!isError) rememberStepResult(step, node.step_id, data.output);
+          saveStepRunState(step, node.step_id, {
+            status: isError ? 'error' : 'done',
+            output: outputText,
+            logOutput: outputText,
+            logMeta: isError ? 'backend orchestrated error' : 'backend orchestrated done',
+            logError: isError
+          });
+          appendWorkflowExecLog(`${wfTs()} ## ${step.ws_name} ## End, status ${data.status}`);
+          if (_currentNodeId === node.step_id) renderRunState(step, node.step_id);
+          continue;
+        }
+
+        if (event === 'workflow_finished') {
+          appendWorkflowExecLog(`${wfTs()} ## Workflow ## End (${data.status || 'done'})`);
+          finished = true;
+          break;
+        }
+      }
     }
-    appendWorkflowExecLog(`${wfTs()} ## Workflow ## End`);
+  } catch (err) {
+    const msg = err?.name === 'AbortError' ? 'Execution stopped by user' : (err?.message || 'Workflow execution failed');
+    appendWorkflowExecLog(`${wfTs()} ## Workflow ## Error: ${msg}`);
+    toast(msg, 'err');
   } finally {
+    _workflowRunId = null;
     _runController = null;
     setExecutionUiState(false);
     clearRunningGraphState();
