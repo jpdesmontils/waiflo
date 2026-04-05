@@ -171,6 +171,27 @@ function buildSchemaMismatchContext(step, inputs) {
   };
 }
 
+function normalizeErrorDetails(err) {
+  if (!err) return null;
+  const causes = [];
+  let cursor = err;
+  while (cursor) {
+    causes.push({
+      name: cursor.name || 'Error',
+      message: cursor.message || String(cursor),
+      code: cursor.code || null
+    });
+    cursor = cursor.cause;
+  }
+
+  return {
+    name: err.name || 'Error',
+    message: err.message || String(err),
+    code: err.code || null,
+    causes
+  };
+}
+
 async function executeResolvedStep(req, res, { step, inputs, context }) {
   if (!step || !step.ws_name) return res.status(400).json({ error: 'step definition required' });
 
@@ -466,7 +487,8 @@ async function runWorkflowOrchestration(req, run, workflowData, fromStepId, trig
         step_id: nodeId,
         ws_ref: node.ws_ref,
         status: 'error',
-        error: err.message
+        error: err.message,
+        error_details: normalizeErrorDetails(err)
       });
       run.status = 'error';
       pushRunEvent(run, 'workflow_finished', { status: 'error' });
@@ -599,7 +621,11 @@ router.post('/workflows/:workflowName/run', authMiddleware, execLimiter, async (
     runWorkflowOrchestration(req, run, workflowData, fromStepId, triggerInputs)
       .catch((err) => {
         run.status = 'error';
-        pushRunEvent(run, 'workflow_finished', { status: 'error', error: err.message });
+        pushRunEvent(run, 'workflow_finished', {
+          status: 'error',
+          error: err.message,
+          error_details: normalizeErrorDetails(err)
+        });
       })
       .finally(() => {
         setTimeout(() => {

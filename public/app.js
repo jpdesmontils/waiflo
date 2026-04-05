@@ -1191,6 +1191,31 @@ function appendWorkflowExecLog(line) {
   if (pre) { pre.textContent = _workflowExecLogs.join('\n'); pre.scrollTop = pre.scrollHeight; }
 }
 
+function formatWorkflowEventContext(data = {}) {
+  const parts = [];
+  if (data.step_id) parts.push(`step_id=${data.step_id}`);
+  if (data.ws_ref) parts.push(`ws_ref=${data.ws_ref}`);
+  if (data.status) parts.push(`status=${data.status}`);
+  return parts.length ? ` [${parts.join(' | ')}]` : '';
+}
+
+function formatDetailedWorkflowError(data = {}) {
+  const chunks = [];
+  if (data.error) chunks.push(`error=${data.error}`);
+  if (Array.isArray(data.details) && data.details.length) {
+    chunks.push(`details=${data.details.join(' ; ')}`);
+  }
+  if (data.error_details?.code) chunks.push(`code=${data.error_details.code}`);
+  const causes = data.error_details?.causes;
+  if (Array.isArray(causes) && causes.length) {
+    const causeText = causes
+      .map((cause, idx) => `#${idx + 1} ${cause.name || 'Error'}: ${cause.message}${cause.code ? ` (code=${cause.code})` : ''}`)
+      .join(' -> ');
+    chunks.push(`causes=${causeText}`);
+  }
+  return chunks.length ? ` | ${chunks.join(' | ')}` : '';
+}
+
 // FIX #11 — fonctions exposées dans window (étaient manquantes)
 async function copyWorkflowExecLogs() {
   const txt = _workflowExecLogs.join('\n');
@@ -1915,7 +1940,7 @@ async function runWorkflowFromHere() {
             logMeta:'backend orchestrated running',
             logError:false
           });
-          appendWorkflowExecLog(`${wfTs()} ## ${step.ws_name} ## Start`);
+          appendWorkflowExecLog(`${wfTs()} ## ${step.ws_name} ## Start${formatWorkflowEventContext(data)}`);
           continue;
         }
 
@@ -1935,13 +1960,13 @@ async function runWorkflowFromHere() {
             logMeta: isError ? 'backend orchestrated error' : 'backend orchestrated done',
             logError: isError
           });
-          appendWorkflowExecLog(`${wfTs()} ## ${step.ws_name} ## End, status ${data.status}`);
+          appendWorkflowExecLog(`${wfTs()} ## ${step.ws_name} ## End${formatWorkflowEventContext(data)}${isError ? formatDetailedWorkflowError(data) : ''}`);
           if (_currentNodeId === node.step_id) renderRunState(step, node.step_id);
           continue;
         }
 
         if (event === 'workflow_finished') {
-          appendWorkflowExecLog(`${wfTs()} ## Workflow ## End (${data.status || 'done'})`);
+          appendWorkflowExecLog(`${wfTs()} ## Workflow ## End${formatWorkflowEventContext(data)}${formatDetailedWorkflowError(data)}`);
           finished = true;
           break;
         }
