@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="{{lang}}">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{page_title}}</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=JetBrains+Mono:wght@300;400;500;600&family=Figtree:ital,wght@0,300;0,400;0,500;1,300&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/workflow-logs.css">
+</head>
+<body>
+  <div id="logs-page">
+    <header id="logs-topbar">
+      <div class="logo">waiflo <span class="logo-badge">{{logo_badge}}</span></div>
+      <div class="topbar-actions">
+        <a class="tb-btn" href="/editor">{{btn_back_editor}}</a>
+      </div>
+    </header>
+
+    <main id="logs-main">
+      <section class="logs-header card">
+        <div class="header-row">
+          <label class="control">
+            <span>{{label_workflow}}</span>
+            <select id="workflow-select"></select>
+          </label>
+          <label class="control search-control">
+            <span>{{label_search}}</span>
+            <input id="search-input" type="text" placeholder="workflow / step / status">
+          </label>
+          <label class="control">
+            <span>{{label_date}}</span>
+            <input id="date-filter" type="date">
+          </label>
+          <label class="control">
+            <span>{{label_status}}</span>
+            <select id="status-filter"></select>
+          </label>
+          <label class="control">
+            <span>{{label_step}}</span>
+            <select id="step-filter"></select>
+          </label>
+          <label class="control">
+            <span>{{label_run_mode}}</span>
+            <select id="runmode-filter"></select>
+          </label>
+          <label class="control">
+            <span>{{label_sort}}</span>
+            <select id="sort-filter">
+              <option value="createdAt-desc">Date ↓</option>
+              <option value="createdAt-asc">Date ↑</option>
+              <option value="durationMs-desc">Duration ↓</option>
+              <option value="durationMs-asc">Duration ↑</option>
+            </select>
+          </label>
+          <button id="refresh-btn" class="btn-action">{{btn_refresh}}</button>
+        </div>
+      </section>
+
+      <section class="kpi-row">
+        <article class="kpi-card card">
+          <h3>Executions</h3>
+          <div class="kpi-value" id="kpi-executions">0</div>
+        </article>
+        <article class="kpi-card card">
+          <h3>Success rate</h3>
+          <div class="kpi-value" id="kpi-success">0%</div>
+        </article>
+        <article class="kpi-card card">
+          <h3>Average duration</h3>
+          <div class="kpi-value" id="kpi-duration">0 ms</div>
+        </article>
+        <article class="kpi-card card">
+          <h3>Last error</h3>
+          <div class="kpi-value small" id="kpi-last-error">—</div>
+        </article>
+      </section>
+
+      <section id="panels-grid">
+        <div class="panel card" id="panel-runs">
+          <div class="panel-header"><h2>{{title_executions}}</h2></div>
+          <div class="panel-body" id="runs-state"></div>
+          <div class="panel-scroll" id="runs-container"></div>
+        </div>
+        <div class="divider" id="divider-left" aria-hidden="true"></div>
+        <div class="panel card" id="panel-steps">
+          <div class="panel-header"><h2>{{title_steps}}</h2></div>
+          <div class="panel-body" id="steps-state"></div>
+          <div class="panel-scroll" id="steps-container"></div>
+        </div>
+        <div class="divider" id="divider-right" aria-hidden="true"></div>
+        <div class="panel card" id="panel-detail">
+          <div class="panel-header"><h2>{{title_detail}}</h2></div>
+          <div class="tabs" id="detail-tabs"></div>
+          <div class="panel-scroll" id="detail-container"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script type="module" src="js/workflow-logs/page.js"></script>
+</body>
+</html>

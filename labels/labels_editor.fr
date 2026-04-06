@@ -51,5 +51,6 @@
   "run_outputs_placeholder": "// Les variables de sortie apparaîtront ici…",
   "run_log_placeholder": "// Le prompt complet et son exécution apparaîtront ici…",
   "btn_run_step_only": "▶ Exécuter ce step uniquement",
-  "btn_run_workflow_from_here": "▶ Exécuter le workflow depuis ici"
+  "btn_run_workflow_from_here": "▶ Exécuter le workflow depuis ici",
+  "btn_workflow_logs": "Workflow Logs"
 }

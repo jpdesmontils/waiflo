@@ -36,6 +36,16 @@ router.get('/editor', async (req, res) => {
   }
 });
 
+
+router.get('/workflow-logs', async (req, res) => {
+  try {
+    res.send(await render('workflow_logs', req.lang));
+  } catch (e) {
+    console.error('[pages] workflow_logs error:', e);
+    res.status(500).send('Server error');
+  }
+});
+
 router.get('/docs', async (req, res) => {
   try {
     res.send(await render('docs', req.lang));
