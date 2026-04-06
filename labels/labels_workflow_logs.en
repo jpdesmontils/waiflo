@@ -1,0 +1,16 @@
+{
+  "page_title": "Waiflo Workflow Logs",
+  "logo_badge": "WORKFLOW LOGS",
+  "btn_back_editor": "← Back to editor",
+  "label_workflow": "Workflow",
+  "label_search": "Search",
+  "label_date": "Date",
+  "label_status": "Status",
+  "label_step": "Step",
+  "label_run_mode": "Run mode",
+  "label_sort": "Sort",
+  "btn_refresh": "Refresh",
+  "title_executions": "Exécutions",
+  "title_steps": "Steps",
+  "title_detail": "Détail"
+}
