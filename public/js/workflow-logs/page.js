@@ -1,5 +1,4 @@
 import './model.js';
-import { WORKFLOW_LOG_FILES } from './mock-data.js';
 import { mapLogsToWorkflowViews, buildKpis } from './mapper.js';
 
 const state = {
@@ -62,13 +61,17 @@ function bindControls() {
   document.getElementById('refresh-btn').addEventListener('click', loadData);
 }
 
-function loadData() {
+async function loadData() {
   state.loading = true;
   state.error = '';
   renderStates();
 
   try {
-    state.workflows = mapLogsToWorkflowViews(WORKFLOW_LOG_FILES);
+    const workflowQuery = state.selectedWorkflow ? `?workflow=${encodeURIComponent(state.selectedWorkflow)}` : '';
+    const response = await fetch(`/api/exec/history/logs${workflowQuery}`, { credentials: 'include' });
+    if (!response.ok) throw new Error(`Unable to load logs (${response.status})`);
+    const payload = await response.json();
+    state.workflows = mapLogsToWorkflowViews(payload.logs || []);
     state.selectedWorkflow = state.selectedWorkflow || state.workflows[0]?.workflowName || null;
     refreshOptionFilters();
     ensureActiveSelection();
@@ -102,6 +105,7 @@ function refreshOptionFilters() {
 
 function fillSelect(id, values, selectedValue = null) {
   const select = document.getElementById(id);
+  if (!values.length) values = ['all'];
   const previous = selectedValue ?? state.filters[id.replace('-filter', '')] ?? 'all';
   select.innerHTML = values.map((value) => `<option value="${value}">${value}</option>`).join('');
   select.value = values.includes(previous) ? previous : values[0];
@@ -280,7 +284,7 @@ function renderDetail() {
   const raw = step.raw;
   const views = {
     summary: renderSummary(raw),
-    inputs: `<div class="detail"><div class="block">${escapeHtml(JSON.stringify(raw.inputs, null, 2))}</div></div>`,
+    inputs: renderInputs(raw.inputs),
     output: `<div class="detail">${jsonTree(raw.output)}</div>`,
     logOutput: `<div class="detail"><div class="block">${escapeHtml(prettyMaybeJson(raw.logOutput))}</div></div>`,
     meta: `<div class="detail"><div class="block">${escapeHtml(JSON.stringify(raw.logMeta, null, 2))}</div></div>`,
@@ -295,6 +299,15 @@ function renderDetail() {
     });
     mountMonacoIfAvailable(raw);
   }
+}
+
+function renderInputs(inputs) {
+  const pretty = escapeHtml(JSON.stringify(inputs, null, 2));
+  const urls = extractUrls(inputs).filter((url) => /\.(png|jpe?g|gif|webp|svg)(\?|#|$)/i.test(url));
+  const links = urls.length
+    ? `<div class="kv-grid">${urls.map((url) => `<article class="kv-item"><h4>Image URL</h4><p><a href="${escapeHtml(url)}" target="_blank" rel="noreferrer">${escapeHtml(url)}</a></p></article>`).join('')}</div>`
+    : '';
+  return `<div class="detail">${links}<div class="block">${pretty}</div></div>`;
 }
 
 function renderSummary(raw) {
@@ -378,6 +391,26 @@ function escapeHtml(text) {
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#039;');
+}
+
+function extractUrls(input) {
+  const urls = [];
+  const stack = [input];
+  while (stack.length) {
+    const current = stack.pop();
+    if (typeof current === 'string' && /^https?:\/\//i.test(current)) {
+      urls.push(current);
+      continue;
+    }
+    if (Array.isArray(current)) {
+      current.forEach((item) => stack.push(item));
+      continue;
+    }
+    if (current && typeof current === 'object') {
+      Object.values(current).forEach((item) => stack.push(item));
+    }
+  }
+  return urls;
 }
 
 function enableResizablePanels() {

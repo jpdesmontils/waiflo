@@ -7,7 +7,7 @@ import { authMiddleware } from './auth.js';
 import { getUser } from '../lib/users.js';
 import { runPromptStep, runApiStep, runWebpageStep, runToolStep } from '../lib/runner.js';
 import { PROVIDER_META } from '../lib/providers/index.js';
-import { getLatestStepRunRecord, saveStepRunRecord } from '../lib/runStore.js';
+import { getLatestStepRunRecord, listStepRunRecords, saveStepRunRecord } from '../lib/runStore.js';
 import { CACHE_CONFIG } from '../config.js';
 import { getCachedStepResult, saveCachedStepResult } from '../lib/stepCacheStore.js';
 import { wfPath } from '../lib/utils.js';
@@ -796,6 +796,18 @@ router.get('/history/latest', authMiddleware, async (req, res) => {
     res.json({ ok: true, record });
   } catch (err) {
     if (err.code === 'ENOENT') return res.json({ ok: true, record: null });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/history/logs', authMiddleware, async (req, res) => {
+  try {
+    const workflowName = String(req.query.workflow || '').trim();
+    const logs = await listStepRunRecords(req.user.userId, {
+      workflowName: workflowName || null
+    });
+    res.json({ ok: true, logs });
+  } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });

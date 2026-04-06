@@ -26,7 +26,7 @@ export function mapLogsToWorkflowViews(files) {
         .slice()
         .sort((a, b) => (a.logMeta?.stepOrder ?? 9999) - (b.logMeta?.stepOrder ?? 9999));
 
-      const stepStatuses = orderedRows.map((row) => row.status);
+      const stepStatuses = orderedRows.map((row) => normalizeStatus(row.status));
       const status = stepStatuses.includes('error')
         ? 'error'
         : stepStatuses.includes('running')
@@ -38,12 +38,12 @@ export function mapLogsToWorkflowViews(files) {
       const durationMs = finishedAt ? (new Date(finishedAt).getTime() - new Date(startedAt).getTime()) : null;
 
       const steps = orderedRows.map((row, index) => ({
-        id: row.id,
+        id: row.id || `${runId}-${row.nodeId || row.stepName || 'step'}-${index}`,
         order: row.logMeta?.stepOrder ?? index + 1,
         nodeId: row.nodeId,
         stepName: row.stepName,
         wsType: row.wsType,
-        status: row.status,
+        status: normalizeStatus(row.status),
         createdAt: row.createdAt,
         raw: row
       }));
@@ -63,6 +63,14 @@ export function mapLogsToWorkflowViews(files) {
 
     return { workflowName, runs };
   });
+}
+
+function normalizeStatus(rawStatus) {
+  const status = String(rawStatus || '').toLowerCase();
+  if (status === 'done' || status === 'done_raw' || status === 'success') return 'success';
+  if (status === 'running') return 'running';
+  if (status === 'queued') return 'queued';
+  return 'error';
 }
 
 export function buildKpis(filteredRuns) {

@@ -7,7 +7,7 @@
  * @property {string} wsType
  * @property {'manual'|'scheduled'|'api'|'retry'} runMode
  * @property {Record<string, any>} inputs
- * @property {'success'|'error'|'running'|'queued'} status
+ * @property {'success'|'error'|'running'|'queued'|'done'|'done_raw'} status
  * @property {string|Object} logOutput
  * @property {any} output
  * @property {string} prompt
