@@ -584,7 +584,8 @@ async function runWorkflowOrchestration(req, run, workflowData, fromStepId, trig
         step_id: nodeId,
         ws_ref: node.ws_ref,
         step_desc: step.step_desc || '',
-        status: 'done'
+        status: 'done',
+        output: result
       };
     } catch (err) {
       await saveStepRunRecord(req.user.userId, run.workflowName, step.ws_name, {
