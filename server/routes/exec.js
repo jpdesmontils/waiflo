@@ -501,8 +501,8 @@ async function runWorkflowOrchestration(req, run, workflowData, fromStepId, trig
   const order = getDownstreamOrderFromGraph(graph, fromStepId);
   const stepMap = new Map((workflowData?.steps || []).map((step) => [step.ws_name, step]));
   const outputsByNodeId = {};
-  const outputsByStepRef = {};
   const user = await getUser(req.user.userId);
+  let lastFinishedStep = null;
   req.workflowNameForRun = run.workflowName;
 
   pushRunEvent(run, 'workflow_started', { from_step_id: fromStepId, total_steps: order.length });
@@ -521,6 +521,7 @@ async function runWorkflowOrchestration(req, run, workflowData, fromStepId, trig
       pushRunEvent(run, 'step_finished', {
         step_id: nodeId,
         ws_ref: node.ws_ref,
+        step_desc: '',
         status: 'error',
         error: `Step "${node.ws_ref}" not found`
       });
@@ -531,12 +532,18 @@ async function runWorkflowOrchestration(req, run, workflowData, fromStepId, trig
 
     const mergedInputs = buildInputsFromDependencies(node, graph.byId, outputsByNodeId, triggerInputs);
     const validationErrors = validateInputsAgainstSchema(step, mergedInputs);
-    pushRunEvent(run, 'step_started', { step_id: nodeId, ws_ref: node.ws_ref, inputs: mergedInputs });
+    pushRunEvent(run, 'step_started', {
+      step_id: nodeId,
+      ws_ref: node.ws_ref,
+      step_desc: step.step_desc || '',
+      inputs: mergedInputs
+    });
 
     if (validationErrors.length) {
       pushRunEvent(run, 'step_finished', {
         step_id: nodeId,
         ws_ref: node.ws_ref,
+        step_desc: step.step_desc || '',
         status: 'error',
         error: 'Inputs do not match ws_inputs_schema',
         details: validationErrors,
@@ -550,7 +557,6 @@ async function runWorkflowOrchestration(req, run, workflowData, fromStepId, trig
     try {
       const result = await executeStepForWorkflowRun(step, mergedInputs, req, user);
       outputsByNodeId[nodeId] = result;
-      outputsByStepRef[node.ws_ref] = result;
 
       await saveStepRunRecord(req.user.userId, run.workflowName, step.ws_name, {
         workflowName: run.workflowName,
@@ -570,9 +576,17 @@ async function runWorkflowOrchestration(req, run, workflowData, fromStepId, trig
       pushRunEvent(run, 'step_finished', {
         step_id: nodeId,
         ws_ref: node.ws_ref,
+        step_desc: step.step_desc || '',
         status: 'done',
         output: result
       });
+      lastFinishedStep = {
+        step_id: nodeId,
+        ws_ref: node.ws_ref,
+        step_desc: step.step_desc || '',
+        status: 'done',
+        output: result
+      };
     } catch (err) {
       await saveStepRunRecord(req.user.userId, run.workflowName, step.ws_name, {
         workflowName: run.workflowName,
@@ -592,6 +606,7 @@ async function runWorkflowOrchestration(req, run, workflowData, fromStepId, trig
       pushRunEvent(run, 'step_finished', {
         step_id: nodeId,
         ws_ref: node.ws_ref,
+        step_desc: step.step_desc || '',
         status: 'error',
         error: err.message,
         error_details: normalizeErrorDetails(err)
@@ -606,7 +621,7 @@ async function runWorkflowOrchestration(req, run, workflowData, fromStepId, trig
   pushRunEvent(run, 'workflow_finished', {
     status: 'done',
     steps_done: Object.keys(outputsByNodeId).length,
-    outputs: outputsByStepRef
+    last_step: lastFinishedStep
   });
 }
 

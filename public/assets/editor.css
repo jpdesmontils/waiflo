@@ -13,7 +13,7 @@
 :root.light {
   --bg:#f0f4f8; --panel:#ffffff; --panel2:#f5f7fa;
   --border:#d6e0ea; --border2:#b8cad8;
-  --text:#4a6075; --hi:#1a2a3a; --dim:#8aa0b4;
+  --text:#4a6075; --hi:#1a2a3a; --dim:#111111;
   --amber:#d97706; --amber2:#b45309; --teal:#0d9488;
   --blue:#2563eb; --purple:#7c3aed; --green:#059669;
   --red:#dc2626; --coral:#ea580c;
