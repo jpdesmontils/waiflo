@@ -8,6 +8,8 @@ import { getUser } from '../lib/users.js';
 import { runPromptStep, runApiStep, runWebpageStep, runToolStep } from '../lib/runner.js';
 import { PROVIDER_META } from '../lib/providers/index.js';
 import { getLatestStepRunRecord, saveStepRunRecord } from '../lib/runStore.js';
+import { CACHE_CONFIG } from '../config.js';
+import { getCachedStepResult, saveCachedStepResult } from '../lib/stepCacheStore.js';
 import { wfPath } from '../lib/utils.js';
 
 const router = express.Router();
@@ -192,6 +194,39 @@ function normalizeErrorDetails(err) {
   };
 }
 
+function shouldUsePromptCache(wsType) {
+  if (!CACHE_CONFIG.enabled) return false;
+  if (CACHE_CONFIG.cachePromptOnly) return wsType === 'prompt';
+  return true;
+}
+
+function cacheMetaFromStep(step) {
+  const llm = step?.ws_llm || {};
+  return {
+    provider: llm.provider || 'anthropic',
+    model: llm.model || null
+  };
+}
+
+function promptStreamEnabled(req) {
+  const queryStream = req?.query?.stream;
+  return !(queryStream === '0' || queryStream === 'false');
+}
+
+function sendPromptCacheResponse(req, res, output) {
+  const stream = promptStreamEnabled(req);
+  if (stream) {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.write(`event: done\n`);
+    res.write(`data: ${JSON.stringify({ full: typeof output === 'string' ? output : JSON.stringify(output), parsed: output, cache_hit: true })}\n\n`);
+    res.end();
+    return;
+  }
+  res.json({ ok: true, full: typeof output === 'string' ? output : JSON.stringify(output), parsed: output, cache_hit: true });
+}
+
 async function executeResolvedStep(req, res, { step, inputs, context }) {
   if (!step || !step.ws_name) return res.status(400).json({ error: 'step definition required' });
 
@@ -230,8 +265,50 @@ async function executeResolvedStep(req, res, { step, inputs, context }) {
   }
 
   if (wsType === 'prompt') {
-    // Streaming SSE
-    const promptRun = await runPromptStep(step, inputs || {}, user, req, res);
+    let cacheHit = false;
+    let cacheKey = null;
+    let promptRun = null;
+
+    if (shouldUsePromptCache(wsType)) {
+      const cached = await getCachedStepResult({
+        userId: req.user?.userId || 'guest',
+        workflowName,
+        stepName: step.ws_name,
+        wsType,
+        inputs: inputs || {}
+      });
+
+      if (cached.hit) {
+        cacheHit = true;
+        cacheKey = cached.key;
+        promptRun = {
+          fullText: typeof cached.output === 'string' ? cached.output : JSON.stringify(cached.output),
+          parsed: cached.output,
+          userPrompt: '',
+          error: null
+        };
+        sendPromptCacheResponse(req, res, cached.output);
+      }
+    }
+
+    if (!cacheHit) {
+      // Streaming SSE
+      promptRun = await runPromptStep(step, inputs || {}, user, req, res);
+
+      if (!promptRun?.error && shouldUsePromptCache(wsType)) {
+        const saved = await saveCachedStepResult({
+          userId: req.user?.userId || 'guest',
+          workflowName,
+          stepName: step.ws_name,
+          wsType,
+          inputs: inputs || {},
+          output: promptRun?.parsed || promptRun?.fullText || '',
+          meta: cacheMetaFromStep(step)
+        });
+        cacheKey = saved.key;
+      }
+    }
+
     if (req.user?.userId) {
       await saveStepRunRecord(req.user.userId, workflowName, step.ws_name, {
         workflowName,
@@ -244,7 +321,9 @@ async function executeResolvedStep(req, res, { step, inputs, context }) {
         logOutput: promptRun?.error || promptRun?.fullText || '',
         output: promptRun?.parsed || promptRun?.fullText || '',
         prompt: promptRun?.userPrompt || '',
-        logMeta: promptRun?.error ? 'prompt error' : 'prompt done',
+        logMeta: promptRun?.error
+          ? 'prompt error'
+          : (cacheHit ? `prompt done (cache hit ${cacheKey || ''})`.trim() : `prompt done${cacheKey ? ` (cache store ${cacheKey})` : ''}`),
         createdAt: new Date().toISOString()
       });
     }
@@ -353,8 +432,20 @@ function getDownstreamOrderFromGraph(graph, startNodeId) {
 
 async function executeStepForWorkflowRun(step, inputs, req, user) {
   const wsType = (step.ws_type || 'prompt').toLowerCase();
+  const workflowName = req?.workflowNameForRun || 'ad-hoc';
 
   if (wsType === 'prompt') {
+    if (shouldUsePromptCache(wsType)) {
+      const cached = await getCachedStepResult({
+        userId: req.user?.userId || 'guest',
+        workflowName,
+        stepName: step.ws_name,
+        wsType,
+        inputs: inputs || {}
+      });
+      if (cached.hit) return cached.output;
+    }
+
     const fakeReq = { query: {} };
     const fakeRes = {
       statusCode: 200,
@@ -367,7 +458,21 @@ async function executeStepForWorkflowRun(step, inputs, req, user) {
     };
     const promptRun = await runPromptStep(step, inputs || {}, user, fakeReq, fakeRes);
     if (promptRun?.error) throw new Error(promptRun.error);
-    return promptRun?.parsed || promptRun?.fullText || '';
+    const result = promptRun?.parsed || promptRun?.fullText || '';
+
+    if (shouldUsePromptCache(wsType)) {
+      await saveCachedStepResult({
+        userId: req.user?.userId || 'guest',
+        workflowName,
+        stepName: step.ws_name,
+        wsType,
+        inputs: inputs || {},
+        output: result,
+        meta: cacheMetaFromStep(step)
+      });
+    }
+
+    return result;
   }
 
   if (wsType === 'webpage') return runWebpageStep(step, inputs || {});
@@ -398,6 +503,7 @@ async function runWorkflowOrchestration(req, run, workflowData, fromStepId, trig
   const outputsByNodeId = {};
   const outputsByStepRef = {};
   const user = await getUser(req.user.userId);
+  req.workflowNameForRun = run.workflowName;
 
   pushRunEvent(run, 'workflow_started', { from_step_id: fromStepId, total_steps: order.length });
 

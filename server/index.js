@@ -19,6 +19,7 @@ import authRoutes               from './routes/auth.js';
 import workflowRoutes           from './routes/workflows.js';
 import execRoutes               from './routes/exec.js';
 import { wfRouter, stepRouter } from './routes/design.js';
+import { startStepCacheJanitor } from './lib/stepCacheStore.js';
 
 // ── Validate required env vars before anything else ───────────────
 if (!process.env.JWT_SECRET) {
@@ -45,6 +46,7 @@ async function cleanupStaleLocks() {
   }
 }
 await cleanupStaleLocks();
+startStepCacheJanitor();
 
 // ── Express ───────────────────────────────────────────────────────
 const app = express();
