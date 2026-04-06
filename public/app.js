@@ -59,8 +59,8 @@ const StepNode = memo(function StepNode({ data, selected }) {
   const s      = data.step || {};
   const wsType = (s.ws_type || 'prompt').toLowerCase();
   const name   = s.ws_name || '—';
-  const sysPrmt = s.ws_system_prompt || s.ws_prompt_template || '';
-  const desc   = sysPrmt.length > 90 ? sysPrmt.slice(0,88)+'…' : (sysPrmt || '—');
+  const rawDesc = (s.step_desc || '').trim();
+  const desc   = rawDesc.length > 90 ? rawDesc.slice(0,88)+'…' : (rawDesc || '—');
   const llm    = s.ws_llm;
 
   const llmBadge = llm
@@ -937,6 +937,7 @@ function parseJsonEditorField(fieldId, label) {
 
 function populateEditor(s) {
   document.getElementById('f-name').value      = s.ws_name||'';
+  document.getElementById('f-step-desc').value = s.step_desc||'';
   document.getElementById('f-type').value      = s.ws_type||'prompt';
   document.getElementById('f-provider').value  = s.ws_llm?.provider||'anthropic';
   document.getElementById('f-temp').value      = s.ws_llm?.temperature??0;
@@ -1045,6 +1046,8 @@ function collectStep() {
   const type=document.getElementById('f-type').value;
   const s={ ws_name:document.getElementById('f-name').value.trim(), ws_type:type,
     ws_inputs_schema:readSchemaFields('inputs-fields'), ws_output_schema:readSchemaFields('outputs-fields') };
+  const stepDesc = document.getElementById('f-step-desc')?.value?.trim() || '';
+  if (stepDesc) s.step_desc = stepDesc;
   if (type==='prompt' || type==='tool') {
     const _prov=document.getElementById('f-provider').value;
     const _model=document.getElementById('f-model').value.trim() || PROVIDER_MODEL_HINTS[_prov] || '';
@@ -1195,7 +1198,10 @@ function formatWorkflowEventContext(data = {}) {
   const parts = [];
   if (data.step_id) parts.push(`step_id=${data.step_id}`);
   if (data.ws_ref) parts.push(`ws_ref=${data.ws_ref}`);
+  if (data.step_desc) parts.push(`step_desc=${data.step_desc}`);
   if (data.status) parts.push(`status=${data.status}`);
+  if (data.last_step?.ws_ref) parts.push(`last_ws_ref=${data.last_step.ws_ref}`);
+  if (data.last_step?.step_desc) parts.push(`last_step_desc=${data.last_step.step_desc}`);
   return parts.length ? ` [${parts.join(' | ')}]` : '';
 }
 
@@ -1929,6 +1935,7 @@ async function runWorkflowFromHere() {
           const node = findWorkflowNode(wf, data.step_id);
           const step = (currentWf.data.steps || []).find(st => st.ws_name === data.ws_ref);
           if (!node || !step) continue;
+          const stepLabel = data.step_desc || step.ws_name;
           currentStep = step;
           _currentNodeId = node.step_id;
           setRunningGraphState(node.step_id, true);
@@ -1940,7 +1947,7 @@ async function runWorkflowFromHere() {
             logMeta:'backend orchestrated running',
             logError:false
           });
-          appendWorkflowExecLog(`${wfTs()} ## ${step.ws_name} ## Start${formatWorkflowEventContext(data)}`);
+          appendWorkflowExecLog(`${wfTs()} ## ${stepLabel} ## Start${formatWorkflowEventContext(data)}`);
           continue;
         }
 
@@ -1948,6 +1955,7 @@ async function runWorkflowFromHere() {
           const node = findWorkflowNode(wf, data.step_id);
           const step = (currentWf.data.steps || []).find(st => st.ws_name === data.ws_ref);
           if (!node || !step) continue;
+          const stepLabel = data.step_desc || step.ws_name;
           const isError = data.status !== 'done';
           const outputText = isError
             ? buildSchemaMismatchLogText(data, data.error || '')
@@ -1960,7 +1968,7 @@ async function runWorkflowFromHere() {
             logMeta: isError ? 'backend orchestrated error' : 'backend orchestrated done',
             logError: isError
           });
-          appendWorkflowExecLog(`${wfTs()} ## ${step.ws_name} ## End${formatWorkflowEventContext(data)}${isError ? formatDetailedWorkflowError(data) : ''}`);
+          appendWorkflowExecLog(`${wfTs()} ## ${stepLabel} ## End${formatWorkflowEventContext(data)}${isError ? formatDetailedWorkflowError(data) : ''}`);
           if (_currentNodeId === node.step_id) renderRunState(step, node.step_id);
           continue;
         }
