@@ -84,6 +84,9 @@
         "ws_name": {
           "type": "string"
         },
+        "step_desc": {
+          "type": "string"
+        },
         "ws_desc": {
           "type": "string"
         },
