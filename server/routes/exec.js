@@ -208,6 +208,14 @@ function cacheMetaFromStep(step) {
   };
 }
 
+function cacheKeyParamsFromStep(step) {
+  return {
+    promptTemplate: step?.ws_prompt_template || '',
+    systemPrompt: step?.ws_system_prompt || '',
+    outputSchema: step?.ws_output_schema || {}
+  };
+}
+
 function promptStreamEnabled(req) {
   const queryStream = req?.query?.stream;
   return !(queryStream === '0' || queryStream === 'false');
@@ -275,7 +283,8 @@ async function executeResolvedStep(req, res, { step, inputs, context }) {
         workflowName,
         stepName: step.ws_name,
         wsType,
-        inputs: inputs || {}
+        inputs: inputs || {},
+        keyParams: cacheKeyParamsFromStep(step)
       });
 
       if (cached.hit) {
@@ -303,7 +312,8 @@ async function executeResolvedStep(req, res, { step, inputs, context }) {
           wsType,
           inputs: inputs || {},
           output: promptRun?.parsed || promptRun?.fullText || '',
-          meta: cacheMetaFromStep(step)
+          meta: cacheMetaFromStep(step),
+          keyParams: cacheKeyParamsFromStep(step)
         });
         cacheKey = saved.key;
       }
@@ -441,7 +451,8 @@ async function executeStepForWorkflowRun(step, inputs, req, user) {
         workflowName,
         stepName: step.ws_name,
         wsType,
-        inputs: inputs || {}
+        inputs: inputs || {},
+        keyParams: cacheKeyParamsFromStep(step)
       });
       if (cached.hit) return cached.output;
     }
@@ -468,7 +479,8 @@ async function executeStepForWorkflowRun(step, inputs, req, user) {
         wsType,
         inputs: inputs || {},
         output: result,
-        meta: cacheMetaFromStep(step)
+        meta: cacheMetaFromStep(step),
+        keyParams: cacheKeyParamsFromStep(step)
       });
     }
 

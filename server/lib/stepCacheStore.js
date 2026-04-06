@@ -33,13 +33,14 @@ function stepSegments(workflowName, stepName) {
   return { workflow, step };
 }
 
-export function computeStepCacheKey({ userId, workflowName, stepName, wsType, inputs }) {
+export function computeStepCacheKey({ userId, workflowName, stepName, wsType, inputs, keyParams = {} }) {
   return checksumFromObject({
     userId: CACHE_CONFIG.scopeByUser ? (userId || 'guest') : 'global',
     workflowName: workflowName || 'default',
     stepName: stepName || 'step',
     wsType: wsType || 'prompt',
-    inputs: inputs || {}
+    inputs: inputs || {},
+    keyParams: keyParams || {}
   });
 }
 
@@ -49,8 +50,8 @@ function cacheFilePath({ userId, workflowName, stepName, key }) {
   return path.join(CACHE_CONFIG.dir, user, workflow, step, `${key}.json`);
 }
 
-export async function getCachedStepResult({ userId, workflowName, stepName, wsType, inputs }) {
-  const key = computeStepCacheKey({ userId, workflowName, stepName, wsType, inputs });
+export async function getCachedStepResult({ userId, workflowName, stepName, wsType, inputs, keyParams = {} }) {
+  const key = computeStepCacheKey({ userId, workflowName, stepName, wsType, inputs, keyParams });
   const fp = cacheFilePath({ userId, workflowName, stepName, key });
 
   let raw;
@@ -80,8 +81,8 @@ export async function getCachedStepResult({ userId, workflowName, stepName, wsTy
   };
 }
 
-export async function saveCachedStepResult({ userId, workflowName, stepName, wsType, inputs, output, meta = {} }) {
-  const key = computeStepCacheKey({ userId, workflowName, stepName, wsType, inputs });
+export async function saveCachedStepResult({ userId, workflowName, stepName, wsType, inputs, output, meta = {}, keyParams = {} }) {
+  const key = computeStepCacheKey({ userId, workflowName, stepName, wsType, inputs, keyParams });
   const fp = cacheFilePath({ userId, workflowName, stepName, key });
   await fs.mkdir(path.dirname(fp), { recursive: true });
 
