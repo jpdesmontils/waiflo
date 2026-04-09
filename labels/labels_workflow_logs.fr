@@ -1,6 +1,9 @@
 {
   "page_title": "Waiflo Workflow Logs",
   "logo_badge": "WORKFLOW LOGS",
+  "btn_theme_light": "☀️ Thème clair",
+  "btn_theme_dark": "🌙 Thème sombre",
+  "btn_clear_logs": "Clean all logs",
   "btn_back_editor": "← Retour éditeur",
   "label_workflow": "Workflow",
   "label_search": "Recherche",

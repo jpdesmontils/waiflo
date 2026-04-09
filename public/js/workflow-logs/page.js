@@ -1,6 +1,10 @@
 import './model.js';
 import { mapLogsToWorkflowViews, buildKpis } from './mapper.js';
 
+const THEME_KEY = 'wf_logs_theme';
+const THEME_DARK = 'dark';
+const THEME_LIGHT = 'light';
+
 const state = {
   workflows: [],
   selectedWorkflow: null,
@@ -31,6 +35,7 @@ const tabs = [
 ];
 
 function init() {
+  applySavedTheme();
   bindControls();
   enableResizablePanels();
   loadData();
@@ -61,6 +66,58 @@ function bindControls() {
     render();
   });
   document.getElementById('refresh-btn').addEventListener('click', loadData);
+  document.getElementById('clear-logs-btn').addEventListener('click', clearAllLogs);
+  document.getElementById('theme-toggle-btn').addEventListener('click', toggleTheme);
+}
+
+function applySavedTheme() {
+  const savedTheme = localStorage.getItem(THEME_KEY);
+  const selectedTheme = savedTheme === THEME_LIGHT ? THEME_LIGHT : THEME_DARK;
+  document.documentElement.setAttribute('data-theme', selectedTheme);
+  updateThemeToggleLabel();
+}
+
+function toggleTheme() {
+  const currentTheme = document.documentElement.getAttribute('data-theme') || THEME_DARK;
+  const nextTheme = currentTheme === THEME_DARK ? THEME_LIGHT : THEME_DARK;
+  document.documentElement.setAttribute('data-theme', nextTheme);
+  localStorage.setItem(THEME_KEY, nextTheme);
+  updateThemeToggleLabel();
+}
+
+function updateThemeToggleLabel() {
+  const button = document.getElementById('theme-toggle-btn');
+  if (!button) return;
+  const currentTheme = document.documentElement.getAttribute('data-theme') || THEME_DARK;
+  const lightLabel = button.dataset.labelLight || '☀️ Light theme';
+  const darkLabel = button.dataset.labelDark || '🌙 Dark theme';
+  button.textContent = currentTheme === THEME_DARK ? lightLabel : darkLabel;
+}
+
+async function clearAllLogs() {
+  if (!window.confirm('Clear all workflow logs?')) return;
+
+  const button = document.getElementById('clear-logs-btn');
+  button.disabled = true;
+
+  try {
+    const response = await fetch('/api/exec/history/logs', {
+      method: 'DELETE',
+      credentials: 'include'
+    });
+    if (!response.ok) throw new Error(`Unable to clear logs (${response.status})`);
+    state.workflows = [];
+    state.selectedWorkflow = null;
+    state.selectedRunId = null;
+    state.selectedStepId = null;
+    refreshOptionFilters();
+    await loadData();
+  } catch (error) {
+    state.error = error instanceof Error ? error.message : 'Unknown clear error';
+    render();
+  } finally {
+    button.disabled = false;
+  }
 }
 
 async function loadData() {
@@ -398,7 +455,7 @@ async function mountMonacoIfAvailable(raw) {
         readOnly: true,
         minimap: { enabled: false },
         fontSize: 12,
-        theme: 'vs-dark'
+        theme: (document.documentElement.getAttribute('data-theme') || THEME_DARK) === THEME_DARK ? 'vs-dark' : 'vs'
       });
     });
   } catch {

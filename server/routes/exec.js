@@ -7,7 +7,7 @@ import { authMiddleware } from './auth.js';
 import { getUser } from '../lib/users.js';
 import { runPromptStep, runApiStep, runWebpageStep, runToolStep } from '../lib/runner.js';
 import { PROVIDER_META } from '../lib/providers/index.js';
-import { getLatestStepRunRecord, listStepRunRecords, saveStepRunRecord } from '../lib/runStore.js';
+import { deleteAllRunData, getLatestStepRunRecord, listStepRunRecords, saveStepRunRecord } from '../lib/runStore.js';
 import { CACHE_CONFIG } from '../config.js';
 import { getCachedStepResult, saveCachedStepResult } from '../lib/stepCacheStore.js';
 import { wfPath } from '../lib/utils.js';
