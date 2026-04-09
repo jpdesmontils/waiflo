@@ -212,7 +212,8 @@ function cacheKeyParamsFromStep(step) {
   return {
     promptTemplate: step?.ws_prompt_template || '',
     systemPrompt: step?.ws_system_prompt || '',
-    outputSchema: step?.ws_output_schema || {}
+    outputSchema: step?.ws_output_schema || {},
+    formatControlEnabled: step?.ws_enable_format_control !== false
   };
 }
 
