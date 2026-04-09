@@ -1,6 +1,9 @@
 import { decrypt } from './crypto.js';
 import { createProvider, PROVIDER_META } from './providers/index.js';
 import { getSharedToolSchema, readSharedMcpRegistry, urlMatchesRegistry } from './mcpShared.js';
+import fs from 'fs/promises';
+import path from 'path';
+import { safeName } from './utils.js';
 
 /**
  * Resolve the API key for a given provider from user record or env fallback.
@@ -90,6 +93,37 @@ function buildPrompt(template, inputs) {
   return prompt;
 }
 
+function selectedPromptInputNames(step, inputs = {}) {
+  const selected = Array.isArray(step?.ws_selected_inputs_for_prompt)
+    ? step.ws_selected_inputs_for_prompt
+    : Object.keys(inputs || {});
+  return new Set(selected);
+}
+
+function buildPromptInputs(step, inputs = {}) {
+  const selected = selectedPromptInputNames(step, inputs);
+  const substituted = Object.fromEntries(
+    Object.entries(inputs || {}).filter(([k]) => selected.has(k))
+  );
+  if (!Object.prototype.hasOwnProperty.call(substituted, 'ws_output_schema')) {
+    substituted.ws_output_schema = JSON.stringify(step?.ws_output_schema || {}, null, 2);
+  }
+  return substituted;
+}
+
+async function writePromptLog(step, promptText) {
+  try {
+    const dataDir = process.env.DATA_DIR || './waiflo-data';
+    const stepName = safeName(step?.ws_name || 'step');
+    if (!stepName) return;
+    const runDir = path.join(dataDir, 'run', stepName);
+    await fs.mkdir(runDir, { recursive: true });
+    await fs.writeFile(path.join(runDir, 'prompt.log'), String(promptText || ''), 'utf8');
+  } catch {
+    // Logging must never block execution.
+  }
+}
+
 /**
  * Execute a prompt step with SSE streaming.
  * Writes SSE events to res (Express response).
@@ -109,7 +143,8 @@ export async function runPromptStep(step, inputs, user, req, res) {
   const model  = llm.model || meta.defaultModel;
   const temp   = llm.temperature ?? 0;
   const maxTok = llm.max_tokens || 2048;
-  const system = step.ws_system_prompt || '';
+  const system_prompt = step.ws_system_prompt || '';
+  const formatControlEnabled = step.ws_enable_format_control !== false;
 
   const queryStream = req?.query?.stream;
   // Default to SSE for prompt execution unless explicitly disabled.
@@ -119,12 +154,11 @@ export async function runPromptStep(step, inputs, user, req, res) {
   const llmProvider = createProvider(provider, apiKey);
   apiKey = null;
 
-  const allInputs = {
-    ...inputs,
-    ws_output_schema: JSON.stringify(step.ws_output_schema || {}, null, 2)
-  };
+  const allInputs = buildPromptInputs(step, inputs || {});
 
+  const renderedSystemPrompt = buildPrompt(system_prompt, allInputs);
   const userPrompt = buildPrompt(step.ws_prompt_template || '', allInputs);
+  await writePromptLog(step, `${renderedSystemPrompt}\n\n${userPrompt}`);
 
   let send = () => {};
 
@@ -147,7 +181,7 @@ export async function runPromptStep(step, inputs, user, req, res) {
 
     for await (const chunk of llmProvider.stream({
       model,
-      system,
+      system: renderedSystemPrompt,
       userPrompt,
       imageUrls,
       temperature: temp,
@@ -164,17 +198,18 @@ export async function runPromptStep(step, inputs, user, req, res) {
     }
 
     let parsed = null;
+    if (formatControlEnabled) {
+      try {
+        const clean = fullText
+          .replace(/^```json\s*/i, '')
+          .replace(/```\s*$/, '')
+          .trim();
 
-    try {
-      const clean = fullText
-        .replace(/^```json\s*/i, '')
-        .replace(/```\s*$/, '')
-        .trim();
+        parsed = JSON.parse(clean);
 
-      parsed = JSON.parse(clean);
-
-    } catch {
-      parsed = null;
+      } catch {
+        parsed = null;
+      }
     }
 
     if (stream) {
@@ -192,6 +227,7 @@ export async function runPromptStep(step, inputs, user, req, res) {
       fullText,
       parsed,
       userPrompt,
+      systemPrompt: renderedSystemPrompt,
       error: null
     };
 
@@ -211,6 +247,7 @@ export async function runPromptStep(step, inputs, user, req, res) {
       fullText: '',
       parsed: null,
       userPrompt,
+      systemPrompt: renderedSystemPrompt,
       error: err.message
     };
   }

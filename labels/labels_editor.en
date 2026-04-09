@@ -46,6 +46,7 @@
   "run_available_inputs_title": "Available inputs from connected steps",
   "technical_section_title": "Technical settings",
   "edit_available_inputs_title": "Available inputs (connections)",
+  "label_format_control_enabled": "Format control enabled",
   "tab_log": "Logs",
   "run_status_idle": "idle",
   "run_outputs_placeholder": "// Output variables will appear here…",

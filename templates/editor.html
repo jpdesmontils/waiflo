@@ -212,8 +212,6 @@
               </div>
             </div>
           </div>
-          <div class="run-available-title">{{edit_available_inputs_title}}</div>
-          <div class="run-available-inputs" id="edit-available-inputs"></div>
           <div class="form-section">
             <div class="form-label">{{label_inputs}}</div>
             <div id="inputs-fields"></div>
@@ -243,6 +241,12 @@
               <textarea class="form-textarea" id="f-template" placeholder="{{input_name}} or {{{raw}}} or {{ws_output_schema}}"></textarea>
               <div class="form-hint">{{hint_template}}</div>
             </div>
+          </div>
+          <div class="form-section" id="format-control-section">
+            <label class="form-label checkbox-label" for="f-format-control-enabled">
+              <input type="checkbox" id="f-format-control-enabled" checked>
+              {{label_format_control_enabled}}
+            </label>
           </div>
           <div class="form-section">
             <div class="form-label">{{label_outputs}}</div>

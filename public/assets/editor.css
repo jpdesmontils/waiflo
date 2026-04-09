@@ -295,6 +295,12 @@ option { background:var(--panel2); }
 .schema-req-check { accent-color:var(--amber); width:14px; height:14px; cursor:pointer; flex-shrink:0; }
 .schema-remove-btn { background:none; border:none; color:var(--dim); cursor:pointer; font-size:13px; transition:color .15s; flex-shrink:0; }
 .schema-remove-btn:hover { color:var(--red); }
+.input-field-row { display:grid; grid-template-columns:minmax(0,1fr) 120px 22px 22px; gap:6px; align-items:center; margin-bottom:6px; }
+.input-field-type { font-family:'JetBrains Mono',monospace; font-size:11px; color:var(--dim); border:1px solid var(--border); background:var(--panel2); border-radius:4px; padding:7px 9px; text-transform:lowercase; }
+.input-field-check { margin:0; width:14px; height:14px; accent-color:var(--teal); justify-self:center; }
+.input-field-name[disabled], .schema-remove-btn[disabled] { opacity:.45; cursor:not-allowed; }
+.checkbox-label { display:flex; align-items:center; gap:8px; font-size:10px; }
+.checkbox-label input[type="checkbox"] { width:14px; height:14px; accent-color:var(--teal); margin:0; }
 .schema-add-btn { font-family:'JetBrains Mono',monospace; font-size:9px; color:var(--teal); background:none; border:1px dashed rgba(45,212,191,.3); border-radius:3px; padding:4px 10px; cursor:pointer; transition:all .15s; width:100%; margin-top:4px; }
 .schema-add-btn:hover { background:rgba(45,212,191,.05); }
 #editor-actions { display:flex; gap:8px; padding:10px 14px; border-top:1px solid var(--border); flex-shrink:0; }
@@ -311,10 +317,6 @@ option { background:var(--panel2); }
 /* run */
 #run-panel { padding:14px; display:flex; flex-direction:column; gap:12px; }
 .run-inputs { display:flex; flex-direction:column; gap:8px; }
-.run-available-title { font-family:'JetBrains Mono',monospace; font-size:9px; color:var(--dim); letter-spacing:1px; text-transform:uppercase; margin-top:8px; }
-.run-available-inputs { display:flex; flex-wrap:wrap; gap:6px; min-height:24px; }
-.run-var-chip { font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--teal); border:1px solid var(--border); background:var(--panel2); border-radius:999px; padding:3px 8px; }
-.run-available-empty { font-family:'JetBrains Mono',monospace; font-size:9px; color:var(--dim); }
 .run-input-label { font-family:'JetBrains Mono',monospace; font-size:9px; color:var(--dim); letter-spacing:.5px; text-transform:uppercase; margin-bottom:3px; display:flex; align-items:center; gap:6px; }
 .run-input-req { color:var(--amber); font-size:8px; }
 .run-btn { font-family:'JetBrains Mono',monospace; font-size:11px; font-weight:500; color:var(--bg); background:var(--green); border:none; border-radius:5px; padding:9px; cursor:pointer; transition:background .15s; flex-shrink:0; }
