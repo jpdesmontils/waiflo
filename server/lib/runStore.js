@@ -113,6 +113,11 @@ export async function deleteStepRunData(userId, workflowName, stepName) {
   await fs.rm(dir, { recursive: true, force: true });
 }
 
+export async function deleteAllRunData(userId) {
+  const dir = runBaseDir(userId);
+  await fs.rm(dir, { recursive: true, force: true });
+}
+
 export async function pruneWorkflowRunData(userId, workflowName, allowedSteps = []) {
   const wfDir = workflowDir(userId, workflowName);
   const allowed = new Set(allowedSteps.map(s => safeName(s)).filter(Boolean));

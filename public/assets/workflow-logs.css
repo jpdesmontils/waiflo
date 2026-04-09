@@ -2,14 +2,21 @@
   --bg:#080c12; --panel:#0f1722; --panel2:#131d2d; --text:#9cb1ce; --hi:#e6eef8;
   --border:#22314d; --accent:#f59e0b; --ok:#34d399; --warn:#fbbf24; --bad:#f87171;
 }
+:root[data-theme="light"]{
+  --bg:#f3f6fb; --panel:#ffffff; --panel2:#edf2fa; --text:#334155; --hi:#0f172a;
+  --border:#cbd5e1; --accent:#d97706; --ok:#047857; --warn:#b45309; --bad:#b91c1c;
+}
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%;overflow:hidden}
 body{font-family:'Figtree',sans-serif;background:var(--bg);color:var(--text)}
 #logs-page{display:flex;flex-direction:column;height:100vh}
 #logs-topbar{height:48px;display:flex;justify-content:space-between;align-items:center;padding:0 14px;background:var(--panel);border-bottom:1px solid var(--border)}
+.topbar-actions{display:flex;gap:8px;align-items:center}
 .logo{font-family:'Syne',sans-serif;font-size:16px;color:var(--hi);display:flex;gap:8px;align-items:center}
 .logo-badge{font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--accent);border:1px solid rgba(245,158,11,.25);padding:1px 6px;border-radius:3px}
 .tb-btn{color:var(--text);text-decoration:none;border:1px solid var(--border);padding:6px 10px;border-radius:6px;font-family:'JetBrains Mono',monospace;font-size:11px}
+.tb-btn.danger{color:var(--bad);border-color:rgba(248,113,113,.45)}
+.tb-btn:disabled{opacity:.6;cursor:not-allowed}
 #logs-main{padding:14px;display:flex;flex-direction:column;gap:12px;min-height:0;flex:1}
 .card{background:var(--panel);border:1px solid var(--border);border-radius:10px}
 .logs-header{padding:12px}
