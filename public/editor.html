@@ -227,9 +227,14 @@
             <div class="form-hint">{{var}} = escaped · {{{var}}} = raw · {{ws_output_schema}} = runtime injected</div>
           </div>
           <div class="form-section">
-            <div class="form-label">Inputs</div>
-            <div id="inputs-fields"></div>
-            <button class="schema-add-btn" onclick="addInputField()">+ Add input</button>
+            <div class="form-label-row">
+              <div class="form-label">Inputs</div>
+              <button class="wf-json-btn section-fold-btn" type="button" id="inputs-fold-btn" onclick="toggleInputsSection()" title="Fold/Unfold">▾</button>
+            </div>
+            <div id="inputs-content">
+              <div id="inputs-fields"></div>
+              <button class="schema-add-btn" onclick="addInputField()">+ Add input</button>
+            </div>
           </div>
           <div class="form-section">
             <div class="form-label">Outputs</div>
