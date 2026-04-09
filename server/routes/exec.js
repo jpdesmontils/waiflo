@@ -223,6 +223,42 @@ function cacheKeyParamsFromStep(step) {
   };
 }
 
+function tryParseJsonFromText(raw) {
+  if (typeof raw !== 'string') return null;
+  const clean = raw
+    .replace(/^```json\s*/i, '')
+    .replace(/^```\s*/i, '')
+    .replace(/```\s*$/i, '')
+    .trim();
+  if (!clean) return null;
+  try { return JSON.parse(clean); } catch { /* noop */ }
+
+  const candidates = [
+    [clean.indexOf('{'), clean.lastIndexOf('}')],
+    [clean.indexOf('['), clean.lastIndexOf(']')]
+  ];
+  for (const [start, end] of candidates) {
+    if (start < 0 || end <= start) continue;
+    const chunk = clean.slice(start, end + 1).trim();
+    if (!chunk) continue;
+    try { return JSON.parse(chunk); } catch { /* noop */ }
+  }
+  return null;
+}
+
+function normalizePromptOutput(step, promptRun) {
+  if (promptRun?.parsed != null) return promptRun.parsed;
+  const fallback = tryParseJsonFromText(promptRun?.fullText || '');
+  if (fallback == null) return promptRun?.fullText || '';
+
+  const expectsObject = step?.ws_output_schema?.type === 'object'
+    || Boolean(step?.ws_output_schema?.properties && typeof step.ws_output_schema.properties === 'object');
+  if (expectsObject && (typeof fallback !== 'object' || fallback === null || Array.isArray(fallback))) {
+    return promptRun?.fullText || '';
+  }
+  return fallback;
+}
+
 function promptStreamEnabled(req) {
   const queryStream = req?.query?.stream;
   return !(queryStream === '0' || queryStream === 'false');
@@ -326,7 +362,7 @@ async function executeResolvedStep(req, res, { step, inputs, context }) {
           stepName: step.ws_name,
           wsType,
           inputs: inputs || {},
-          output: promptRun?.parsed || promptRun?.fullText || '',
+          output: normalizePromptOutput(step, promptRun),
           meta: cacheMetaFromStep(step),
           keyParams: cacheKeyParamsFromStep(step)
         });
@@ -344,7 +380,7 @@ async function executeResolvedStep(req, res, { step, inputs, context }) {
         inputs: inputs || {},
         status: promptRun?.error ? 'error' : (promptRun?.parsed ? 'done' : 'done_raw'),
         logOutput: promptRun?.error || promptRun?.fullText || '',
-        output: promptRun?.parsed || promptRun?.fullText || '',
+        output: normalizePromptOutput(step, promptRun),
         prompt: promptRun?.userPrompt || '',
         promptDumpPath: promptRun?.promptDumpPath || '',
         callerIp,
@@ -500,7 +536,7 @@ async function executeStepForWorkflowRun(step, inputs, req, user) {
     };
     const promptRun = await runPromptStep(step, inputs || {}, user, fakeReq, fakeRes);
     if (promptRun?.error) throw new Error(promptRun.error);
-    const result = promptRun?.parsed || promptRun?.fullText || '';
+    const result = normalizePromptOutput(step, promptRun);
 
     if (shouldUsePromptCache(wsType)) {
       await saveCachedStepResult({
