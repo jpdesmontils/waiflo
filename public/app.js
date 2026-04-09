@@ -944,6 +944,7 @@ function populateEditor(s) {
   onProviderChange(s.ws_llm?.model||'');
   document.getElementById('f-sysprompt').value = s.ws_system_prompt||'';
   document.getElementById('f-template').value  = s.ws_prompt_template||'';
+  document.getElementById('f-format-control-enabled').checked = s.ws_enable_format_control !== false;
   document.getElementById('f-method').value    = s.ws_api?.method||'GET';
   document.getElementById('f-url').value       = s.ws_webpage?.url || s.ws_api?.url || '';
   document.getElementById('f-api-headers').value = formatJsonForEditor(s.ws_api?.headers || s.ws_webpage?.headers);
@@ -979,6 +980,7 @@ function onTypeChange() {
   document.getElementById('llm-section').style.display       = p?'':'none';
   document.getElementById('sysprompt-section').style.display = p?'':'none';
   document.getElementById('template-section').style.display  = p?'':'none';
+  document.getElementById('format-control-section').style.display = p?'':'none';
   document.getElementById('api-section').style.display       = a?'':'none';
   document.getElementById('tool-section').style.display      = tool?'':'none';
   document.getElementById('method-section').style.display    = w?'none':'';
@@ -1014,6 +1016,10 @@ function onProviderChange(currentModel) {
 function renderSchemaFields(containerId,props,required) {
   const container=document.getElementById(containerId);
   container.innerHTML='';
+  if (containerId === 'inputs-fields') {
+    renderInputRows(props, required);
+    return;
+  }
   Object.keys(props).forEach(k=>addSchemaRow(container,k,props[k].type||'string',required.includes(k)));
 }
 
@@ -1028,10 +1034,10 @@ function addSchemaRow(container,name='',type='string',req=false) {
   container.appendChild(row);
 }
 
-function addInputField()  { addSchemaRow(document.getElementById('inputs-fields')); }
 function addOutputField() { addSchemaRow(document.getElementById('outputs-fields')); }
 
 function readSchemaFields(containerId) {
+  if (containerId === 'inputs-fields') return readInputFields();
   const rows=document.getElementById(containerId).querySelectorAll('.schema-field-row');
   const props={},required=[];
   rows.forEach(row=>{
@@ -1042,10 +1048,131 @@ function readSchemaFields(containerId) {
   return { type:'object',required,properties:props };
 }
 
+function getConnectedInputDescriptors(nodeId) {
+  if (!currentWf || !nodeId) return [];
+  const wf = (currentWf.data.workflows || []).find(w => w.wf_nodes?.length);
+  if (!wf) return [];
+  const node = findWorkflowNode(wf, nodeId);
+  if (!node) return [];
+  const descriptors = [];
+  for (const depId of (node.depends_on || [])) {
+    const depNode = findWorkflowNode(wf, depId);
+    if (!depNode) continue;
+    const depStep = (currentWf.data.steps || []).find(s => s.ws_name === depNode.ws_ref);
+    const outProps = depStep?.ws_output_schema?.properties || {};
+    Object.entries(outProps).forEach(([name, schema]) => {
+      descriptors.push({ name, type: schema?.type || 'string', fromConnection: true });
+    });
+    descriptors.push({ name: depNode.ws_ref, type: 'object', fromConnection: true });
+    descriptors.push({ name: `${depNode.ws_ref}_output`, type: 'object', fromConnection: true });
+  }
+  return descriptors;
+}
+
+function hasIncomingConnections(nodeId) {
+  if (!currentWf || !nodeId) return false;
+  const wf = (currentWf.data.workflows || []).find(w => w.wf_nodes?.length);
+  const node = wf ? findWorkflowNode(wf, nodeId) : null;
+  return Boolean(node && Array.isArray(node.depends_on) && node.depends_on.length);
+}
+
+function getSelectedInputNames(step, availableNames = []) {
+  const configured = Array.isArray(step?.ws_selected_inputs_for_prompt)
+    ? step.ws_selected_inputs_for_prompt
+    : null;
+  if (!configured) return new Set(availableNames);
+  return new Set(configured.filter(n => availableNames.includes(n)));
+}
+
+function renderInputRows(props = {}, required = []) {
+  const container = document.getElementById('inputs-fields');
+  if (!container) return;
+  container.innerHTML = '';
+
+  const incomingLocked = hasIncomingConnections(_currentNodeId);
+  const connected = getConnectedInputDescriptors(_currentNodeId);
+  const byName = new Map();
+  Object.entries(props || {}).forEach(([name, schema]) => {
+    byName.set(name, {
+      name,
+      type: schema?.type || 'string',
+      required: required.includes(name),
+      fromConnection: false
+    });
+  });
+  connected.forEach((row) => {
+    if (byName.has(row.name)) return;
+    byName.set(row.name, { ...row, required: false });
+  });
+  const rows = Array.from(byName.values()).sort((a, b) => a.name.localeCompare(b.name));
+  const selected = getSelectedInputNames(currentStep || {}, rows.map(r => r.name));
+
+  rows.forEach((row) => {
+    const line = document.createElement('div');
+    line.className = 'input-field-row schema-field-row';
+    line.dataset.inputRow = '1';
+    line.dataset.source = row.fromConnection ? 'connection' : 'local';
+    line.innerHTML = `
+      <input class="form-input input-field-name" placeholder="field_name" value="${escapeHtml(row.name)}" ${incomingLocked || row.fromConnection ? 'disabled' : ''}>
+      <span class="input-field-type">${escapeHtml(row.type || 'string')}</span>
+      <input type="checkbox" class="input-field-check schema-req-check" title="Substitute in prompts" ${selected.has(row.name) ? 'checked' : ''}>
+      <button class="schema-remove-btn" title="Remove input" ${incomingLocked || row.fromConnection ? 'disabled' : ''} onclick="if(!this.disabled)this.parentElement.remove()">&#x2715;</button>
+      <input type="hidden" class="input-field-type-hidden" value="${escapeHtml(row.type || 'string')}">
+      <input type="hidden" class="input-field-source-hidden" value="${row.fromConnection ? 'connection' : 'local'}">
+      <input type="hidden" class="input-field-required-hidden" value="${row.required ? '1' : ''}">
+    `;
+    container.appendChild(line);
+  });
+
+  const addBtn = document.querySelector('button[onclick="addInputField()"]');
+  if (addBtn) addBtn.disabled = incomingLocked;
+}
+
+function addInputField() {
+  const container = document.getElementById('inputs-fields');
+  if (!container || hasIncomingConnections(_currentNodeId)) return;
+  const row = document.createElement('div');
+  row.className = 'input-field-row schema-field-row';
+  row.dataset.inputRow = '1';
+  row.dataset.source = 'local';
+  row.innerHTML = `
+    <input class="form-input input-field-name" placeholder="field_name" value="">
+    <span class="input-field-type">string</span>
+    <input type="checkbox" class="input-field-check schema-req-check" title="Substitute in prompts" checked>
+    <button class="schema-remove-btn" title="Remove input" onclick="this.parentElement.remove()">&#x2715;</button>
+    <input type="hidden" class="input-field-type-hidden" value="string">
+    <input type="hidden" class="input-field-source-hidden" value="local">
+    <input type="hidden" class="input-field-required-hidden" value="">
+  `;
+  container.appendChild(row);
+}
+
+function readInputFields() {
+  const rows = document.getElementById('inputs-fields').querySelectorAll('[data-input-row="1"]');
+  const props = {}, required = [], selected = [];
+  rows.forEach((row) => {
+    const name = row.querySelector('.input-field-name')?.value?.trim() || '';
+    const type = row.querySelector('.input-field-type-hidden')?.value || 'string';
+    const source = row.querySelector('.input-field-source-hidden')?.value || 'local';
+    const isRequired = Boolean(row.querySelector('.input-field-required-hidden')?.value);
+    const checked = row.querySelector('.input-field-check')?.checked;
+    if (!name) return;
+    if (source === 'local') {
+      props[name] = { type };
+      if (isRequired) required.push(name);
+    }
+    if (checked) selected.push(name);
+  });
+  return { type:'object', required, properties: props, selected };
+}
+
 function collectStep() {
   const type=document.getElementById('f-type').value;
+  const inputSchema = readSchemaFields('inputs-fields');
   const s={ ws_name:document.getElementById('f-name').value.trim(), ws_type:type,
-    ws_inputs_schema:readSchemaFields('inputs-fields'), ws_output_schema:readSchemaFields('outputs-fields') };
+    ws_inputs_schema:{ type:'object', required: inputSchema.required || [], properties: inputSchema.properties || {} },
+    ws_output_schema:readSchemaFields('outputs-fields') };
+  s.ws_selected_inputs_for_prompt = inputSchema.selected || [];
   const stepDesc = document.getElementById('f-step-desc')?.value?.trim() || '';
   if (stepDesc) s.step_desc = stepDesc;
   if (type==='prompt' || type==='tool') {
@@ -1054,6 +1181,7 @@ function collectStep() {
     s.ws_llm={ provider:_prov, model:_model, temperature:parseFloat(document.getElementById('f-temp').value)||0 };
     s.ws_system_prompt  =document.getElementById('f-sysprompt').value;
     s.ws_prompt_template=document.getElementById('f-template').value;
+    s.ws_enable_format_control = document.getElementById('f-format-control-enabled')?.checked !== false;
     if (type==='tool') {
       const mcp_server_label = document.getElementById('f-tool-mcp-server')?.value || '';
       const tool_name = document.getElementById('f-tool-name')?.value || '';
@@ -1123,25 +1251,24 @@ function applyStepEdit() {
   if (!s) return;
   if (!s.ws_name) return toast('ws_name is required','err');
 
-  // Validate that input variables are referenced in the prompt
-  if ((s.ws_type === 'prompt' || s.ws_type === 'tool') && s.ws_inputs_schema?.properties) {
-    const inputNames = Object.keys(s.ws_inputs_schema.properties);
-    if (inputNames.length > 0) {
-      const promptText = (s.ws_system_prompt || '') + ' ' + (s.ws_prompt_template || '');
-      const usedVars = inputNames.filter(name => promptText.includes(`{{${name}}}`));
-      if (usedVars.length === 0) {
-        const varList = inputNames.map(n => `<code>{{${n}}}</code>`).join(', ');
-        openModal(
-          '⚠ Variables d\'entrée non utilisées',
-          `<div class="confirm-text">Aucune variable d'entrée n'est référencée dans le prompt.</div>
-           <div class="confirm-sub" style="margin-top:8px">Les variables ${varList} ne sont pas présentes dans le System Prompt ni dans le Template.<br><br>Les entrées ne seront pas transmises au LLM.</div>`,
-          [
-            { label: 'Sauvegarder quand même', action: () => { closeModal(); _doSaveStep(s); }, primary: true },
-            { label: 'Annuler', action: closeModal }
-          ]
-        );
-        return;
-      }
+  if (s.ws_type === 'prompt' || s.ws_type === 'tool') {
+    const checkedInputs = Array.isArray(s.ws_selected_inputs_for_prompt) ? s.ws_selected_inputs_for_prompt : [];
+    const missing = checkedInputs.filter((name) => {
+      const token = `{{${name}}}`;
+      return !(s.ws_system_prompt || '').includes(token) && !(s.ws_prompt_template || '').includes(token);
+    });
+    if (missing.length) {
+      const varList = missing.map(n => `<code>{{${escapeHtml(n)}}}</code>`).join(', ');
+      openModal(
+        '⚠ Variables cochées absentes des prompts',
+        `<div class="confirm-text">Certaines variables cochées ne sont référencées dans aucun prompt.</div>
+         <div class="confirm-sub" style="margin-top:8px">Variables non trouvées : ${varList}<br><br>Format attendu : <code>{{nom_variable}}</code>.</div>`,
+        [
+          { label: 'Sauvegarder quand même', action: () => { closeModal(); _doSaveStep(s); }, primary: true },
+          { label: 'Annuler', action: closeModal }
+        ]
+      );
+      return;
     }
   }
 
@@ -1529,29 +1656,9 @@ function buildInheritedInputs(step, nodeId) {
   return inherited;
 }
 
-function getAvailableConnectedInputs(step, nodeId) {
-  if (!currentWf || !nodeId) return [];
-  const wf = (currentWf.data.workflows || []).find(w => w.wf_nodes?.length);
-  if (!wf) return [];
-  const node = findWorkflowNode(wf, nodeId);
-  if (!node) return [];
-  const names = new Set();
-  for (const depId of (node.depends_on || [])) {
-    const depNode = findWorkflowNode(wf, depId);
-    if (!depNode) continue;
-    const depStep = (currentWf.data.steps || []).find(s => s.ws_name === depNode.ws_ref);
-    const outProps = depStep?.ws_output_schema?.properties || {};
-    Object.keys(outProps).forEach(k => names.add(k));
-    names.add(depNode.ws_ref);
-    names.add(`${depNode.ws_ref}_output`);
-  }
-  return Array.from(names).sort();
-}
-
 function updateRunTab(s) {
   const area = document.getElementById('run-inputs-area');
   area.innerHTML = '';
-  const availableEl = document.getElementById('edit-available-inputs');
   const inProps = s?.ws_inputs_schema?.properties || {};
   const inReq   = s?.ws_inputs_schema?.required   || [];
 
@@ -1578,13 +1685,6 @@ function updateRunTab(s) {
       if (!el) return;
       el.value = typeof v === 'string' ? v : JSON.stringify(v, null, 2);
     });
-  }
-
-  if (availableEl) {
-    const vars = getAvailableConnectedInputs(s, _currentNodeId);
-    availableEl.innerHTML = vars.length
-      ? vars.map(v => `<span class="run-var-chip">{{${v}}}</span>`).join('')
-      : '<span class="run-available-empty">Aucune variable disponible (connectez un step entrant).</span>';
   }
 
   renderRunState(s, _currentNodeId);
@@ -1728,6 +1828,16 @@ function buildSchemaMismatchLogText(payload, fallbackMessage = '') {
   return lines.join('\n');
 }
 
+function filterInputsForPromptSubstitution(step, allInputs = {}) {
+  const selected = Array.isArray(step?.ws_selected_inputs_for_prompt)
+    ? step.ws_selected_inputs_for_prompt
+    : Object.keys(allInputs || {});
+  const allowed = new Set(selected);
+  return Object.fromEntries(
+    Object.entries(allInputs || {}).filter(([k]) => allowed.has(k))
+  );
+}
+
 async function executeStep(stepDef, runMode='step_only') {
   const s = stepDef || currentStep || collectStep();
   if (!s) return false;
@@ -1742,6 +1852,7 @@ async function executeStep(stepDef, runMode='step_only') {
     inputs[k]=val;
   }
   const finalInputs = { ...inheritedInputs, ...inputs };
+  const filteredInputs = filterInputsForPromptSubstitution(s, finalInputs);
 
   const statusEl=document.getElementById('run-status');
   const varsEl=document.getElementById('run-output-vars');
@@ -1761,8 +1872,8 @@ async function executeStep(stepDef, runMode='step_only') {
     ? `/api/exec/workflows/${encodeURIComponent(currentWf.name)}/step`
     : '/api/exec/step';
   const execBody = canUseRefExec
-    ? { ws_ref: s.ws_name, step_id: _currentNodeId, inputs: finalInputs }
-    : { step:s, inputs: finalInputs, context:{ workflowName: currentWf?.name, nodeId:_currentNodeId, runMode } };
+    ? { ws_ref: s.ws_name, step_id: _currentNodeId, inputs: filteredInputs }
+    : { step:s, inputs: filteredInputs, context:{ workflowName: currentWf?.name, nodeId:_currentNodeId, runMode } };
 
   if (['api','webpage'].includes((s.ws_type||'').toLowerCase())) {
     const headers = { 'Content-Type':'application/json' };
@@ -1887,6 +1998,7 @@ async function runWorkflowFromHere() {
     let val=el.value; try{ val=JSON.parse(val); }catch{}
     triggerInputs[k]=val;
   }
+  const filteredTriggerInputs = filterInputsForPromptSubstitution(savedStep, triggerInputs);
 
   setExecutionUiState(true);
   try {
@@ -1897,7 +2009,7 @@ async function runWorkflowFromHere() {
       method: 'POST',
       headers: { 'Content-Type':'application/json' },
       credentials: 'include',
-      body: JSON.stringify({ from_step_id: savedNodeId, inputs: triggerInputs })
+      body: JSON.stringify({ from_step_id: savedNodeId, inputs: filteredTriggerInputs })
     });
     const launch = await launchResp.json().catch(() => ({}));
     if (!launchResp.ok || !launch?.run_id) throw new Error(launch.error || `HTTP ${launchResp.status}`);
