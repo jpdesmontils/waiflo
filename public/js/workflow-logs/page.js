@@ -14,6 +14,7 @@ const state = {
     runMode: 'all',
     sort: 'createdAt-desc'
   },
+  promptDumpCache: {},
   activeTab: 'summary',
   loading: false,
   error: ''
@@ -25,7 +26,8 @@ const tabs = [
   ['output', 'Output'],
   ['logOutput', 'Log output'],
   ['meta', 'Métadonnées'],
-  ['raw', 'Raw JSON']
+  ['raw', 'Raw JSON'],
+  ['prompt', 'Prompt']
 ];
 
 function init() {
@@ -288,7 +290,8 @@ function renderDetail() {
     output: `<div class="detail">${jsonTree(raw.output)}</div>`,
     logOutput: `<div class="detail"><div class="block">${escapeHtml(prettyMaybeJson(raw.logOutput))}</div></div>`,
     meta: `<div class="detail"><div class="block">${escapeHtml(JSON.stringify(raw.logMeta, null, 2))}</div></div>`,
-    raw: `<div class="detail"><button class="copy-btn" id="copy-raw">Copy raw</button><div class="block" id="monaco-host">${escapeHtml(JSON.stringify(raw, null, 2))}</div></div>`
+    raw: `<div class="detail"><button class="copy-btn" id="copy-raw">Copy raw</button><div class="block" id="monaco-host">${escapeHtml(JSON.stringify(raw, null, 2))}</div></div>`,
+    prompt: renderPromptDump(raw)
   };
 
   container.innerHTML = views[state.activeTab] || views.summary;
@@ -299,6 +302,34 @@ function renderDetail() {
     });
     mountMonacoIfAvailable(raw);
   }
+}
+
+function renderPromptDump(raw) {
+  const dumpPath = String(raw?.promptDumpPath || '').trim();
+  if (!dumpPath) {
+    return `<div class="detail"><div class="block">${escapeHtml(raw?.prompt || '// No prompt dump available')}</div></div>`;
+  }
+
+  const cacheKey = dumpPath;
+  if (!Object.prototype.hasOwnProperty.call(state.promptDumpCache, cacheKey)) {
+    state.promptDumpCache[cacheKey] = '__loading__';
+    fetch(`/api/exec/history/prompt-dump?path=${encodeURIComponent(dumpPath)}`, { credentials: 'include' })
+      .then((res) => res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`)))
+      .then((payload) => {
+        state.promptDumpCache[cacheKey] = payload?.content || '';
+        if (state.activeTab === 'prompt') renderDetail();
+      })
+      .catch((err) => {
+        state.promptDumpCache[cacheKey] = `Unable to load prompt dump: ${err.message}`;
+        if (state.activeTab === 'prompt') renderDetail();
+      });
+  }
+
+  const cached = state.promptDumpCache[cacheKey];
+  if (cached === '__loading__') {
+    return '<div class="detail"><div class="block">Loading prompt dump…</div></div>';
+  }
+  return `<div class="detail"><div class="block">${escapeHtml(cached || '')}</div></div>`;
 }
 
 function renderInputs(inputs) {
@@ -319,7 +350,8 @@ function renderSummary(raw) {
     ['Run mode', raw.runMode],
     ['Status', raw.status],
     ['Created at', new Date(raw.createdAt).toLocaleString()],
-    ['Prompt', raw.prompt]
+    ['Prompt', raw.prompt],
+    ['Caller IP', raw.callerIp || '—']
   ];
 
   return `<div class="detail"><div class="kv-grid">${fields.map(([k, v]) => `<article class="kv-item"><h4>${k}</h4><p>${escapeHtml(String(v ?? '—'))}</p></article>`).join('')}</div></div>`;

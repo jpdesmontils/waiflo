@@ -28,6 +28,12 @@ function getTokenFromRequest(req) {
   return null;
 }
 
+function getCallerIp(req) {
+  const forwarded = String(req?.headers?.['x-forwarded-for'] || '').trim();
+  if (forwarded) return forwarded.split(',')[0].trim();
+  return req?.ip || req?.socket?.remoteAddress || 'unknown';
+}
+
 function createRun(userId, workflowName) {
   const runId = randomUUID();
   const run = {
@@ -251,6 +257,8 @@ async function executeResolvedStep(req, res, { step, inputs, context }) {
   const workflowName = context?.workflowName || 'ad-hoc';
   const nodeId = context?.nodeId || step.ws_name;
   const runMode = context?.runMode || 'step_only';
+  const callerIp = getCallerIp(req);
+  const executionId = randomUUID();
 
   // Resolve user — guest fallback if no auth
   let user = null;
@@ -302,6 +310,12 @@ async function executeResolvedStep(req, res, { step, inputs, context }) {
 
     if (!cacheHit) {
       // Streaming SSE
+      req.promptDumpContext = {
+        userId: req.user?.userId || 'guest',
+        workflowName,
+        stepName: step.ws_name,
+        executionId
+      };
       promptRun = await runPromptStep(step, inputs || {}, user, req, res);
 
       if (!promptRun?.error && shouldUsePromptCache(wsType)) {
@@ -331,6 +345,8 @@ async function executeResolvedStep(req, res, { step, inputs, context }) {
         logOutput: promptRun?.error || promptRun?.fullText || '',
         output: promptRun?.parsed || promptRun?.fullText || '',
         prompt: promptRun?.userPrompt || '',
+        promptDumpPath: promptRun?.promptDumpPath || '',
+        callerIp,
         logMeta: promptRun?.error
           ? 'prompt error'
           : (cacheHit ? `prompt done (cache hit ${cacheKey || ''})`.trim() : `prompt done${cacheKey ? ` (cache store ${cacheKey})` : ''}`),
@@ -360,6 +376,8 @@ async function executeResolvedStep(req, res, { step, inputs, context }) {
           logOutput: JSON.stringify(result, null, 2),
           output: result,
           prompt: '',
+          promptDumpPath: '',
+          callerIp,
           logMeta: `${wsType} done`,
           createdAt: new Date().toISOString()
         });
@@ -378,6 +396,8 @@ async function executeResolvedStep(req, res, { step, inputs, context }) {
           logOutput: err.message,
           output: '',
           prompt: '',
+          promptDumpPath: '',
+          callerIp,
           logMeta: `${wsType} error`,
           createdAt: new Date().toISOString()
         });
@@ -454,10 +474,20 @@ async function executeStepForWorkflowRun(step, inputs, req, user) {
         inputs: inputs || {},
         keyParams: cacheKeyParamsFromStep(step)
       });
-      if (cached.hit) return cached.output;
+      if (cached.hit) return { result: cached.output, prompt: '', promptDumpPath: '' };
     }
 
-    const fakeReq = { query: {} };
+    const executionId = randomUUID();
+    const fakeReq = {
+      query: {},
+      user: req.user,
+      promptDumpContext: {
+        userId: req.user?.userId || 'guest',
+        workflowName,
+        stepName: step.ws_name,
+        executionId
+      }
+    };
     const fakeRes = {
       statusCode: 200,
       headers: {},
@@ -484,12 +514,16 @@ async function executeStepForWorkflowRun(step, inputs, req, user) {
       });
     }
 
-    return result;
+    return {
+      result,
+      prompt: promptRun?.userPrompt || '',
+      promptDumpPath: promptRun?.promptDumpPath || ''
+    };
   }
 
-  if (wsType === 'webpage') return runWebpageStep(step, inputs || {});
-  if (wsType === 'tool') return runToolStep(step, inputs || {}, user);
-  if (wsType === 'api') return runApiStep(step, inputs || {});
+  if (wsType === 'webpage') return { result: await runWebpageStep(step, inputs || {}), prompt: '', promptDumpPath: '' };
+  if (wsType === 'tool') return { result: await runToolStep(step, inputs || {}, user), prompt: '', promptDumpPath: '' };
+  if (wsType === 'api') return { result: await runApiStep(step, inputs || {}), prompt: '', promptDumpPath: '' };
   throw new Error(`ws_type "${wsType}" not supported in workflow run`);
 }
 
@@ -565,7 +599,8 @@ async function runWorkflowOrchestration(req, run, workflowData, fromStepId, trig
     }
 
     try {
-      const result = await executeStepForWorkflowRun(step, mergedInputs, req, user);
+      const execution = await executeStepForWorkflowRun(step, mergedInputs, req, user);
+      const result = execution?.result;
       outputsByNodeId[nodeId] = result;
 
       await saveStepRunRecord(req.user.userId, run.workflowName, step.ws_name, {
@@ -578,8 +613,13 @@ async function runWorkflowOrchestration(req, run, workflowData, fromStepId, trig
         status: 'done',
         logOutput: typeof result === 'string' ? result : JSON.stringify(result, null, 2),
         output: result,
-        prompt: '',
-        logMeta: 'workflow orchestrated done',
+        prompt: execution?.prompt || '',
+        promptDumpPath: execution?.promptDumpPath || '',
+        callerIp: getCallerIp(req),
+        logMeta: {
+          source: 'workflow-run',
+          runId: run.runId
+        },
         createdAt: new Date().toISOString()
       });
 
@@ -609,7 +649,12 @@ async function runWorkflowOrchestration(req, run, workflowData, fromStepId, trig
         logOutput: err.message,
         output: '',
         prompt: '',
-        logMeta: 'workflow orchestrated error',
+        promptDumpPath: '',
+        callerIp: getCallerIp(req),
+        logMeta: {
+          source: 'workflow-run',
+          runId: run.runId
+        },
         createdAt: new Date().toISOString()
       });
 
@@ -806,6 +851,27 @@ router.get('/history/logs', authMiddleware, async (req, res) => {
     });
     res.json({ ok: true, logs });
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/history/prompt-dump', authMiddleware, async (req, res) => {
+  try {
+    const dumpPath = String(req.query.path || '').trim();
+    if (!dumpPath) return res.status(400).json({ error: 'path is required' });
+    if (dumpPath.includes('..')) return res.status(400).json({ error: 'invalid path' });
+
+    const safePrefix = `runs/${req.user.userId}/`;
+    if (!dumpPath.startsWith(safePrefix)) {
+      return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const dataDir = process.env.DATA_DIR || './waiflo-data';
+    const absPath = `${dataDir}/${dumpPath}`;
+    const content = await fs.readFile(absPath, 'utf8');
+    res.json({ ok: true, path: dumpPath, content });
+  } catch (err) {
+    if (err.code === 'ENOENT') return res.status(404).json({ error: 'prompt dump not found' });
     res.status(500).json({ error: err.message });
   }
 });

@@ -111,16 +111,22 @@ function buildPromptInputs(step, inputs = {}) {
   return substituted;
 }
 
-async function writePromptLog(step, promptText) {
+async function writePromptLog(context, promptText) {
   try {
     const dataDir = process.env.DATA_DIR || './waiflo-data';
-    const stepName = safeName(step?.ws_name || 'step');
+    const userId = safeName(context?.userId || 'guest');
+    const workflowName = safeName(context?.workflowName || 'ad-hoc');
+    const stepName = safeName(context?.stepName || 'step');
+    const executionId = safeName(context?.executionId || `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`);
     if (!stepName) return;
-    const runDir = path.join(dataDir, 'run', stepName);
+    const runDir = path.join(dataDir, 'runs', userId, workflowName, stepName, 'prompts');
     await fs.mkdir(runDir, { recursive: true });
-    await fs.writeFile(path.join(runDir, 'prompt.log'), String(promptText || ''), 'utf8');
+    const promptFile = `${executionId}.prompt.log`;
+    await fs.writeFile(path.join(runDir, promptFile), String(promptText || ''), 'utf8');
+    return path.join('runs', userId, workflowName, stepName, 'prompts', promptFile).replaceAll('\\', '/');
   } catch {
     // Logging must never block execution.
+    return null;
   }
 }
 
@@ -158,7 +164,7 @@ export async function runPromptStep(step, inputs, user, req, res) {
 
   const renderedSystemPrompt = buildPrompt(system_prompt, allInputs);
   const userPrompt = buildPrompt(step.ws_prompt_template || '', allInputs);
-  await writePromptLog(step, `${renderedSystemPrompt}\n\n${userPrompt}`);
+  const promptDumpPath = await writePromptLog(req?.promptDumpContext, `${renderedSystemPrompt}\n\n${userPrompt}`);
 
   let send = () => {};
 
@@ -228,6 +234,7 @@ export async function runPromptStep(step, inputs, user, req, res) {
       parsed,
       userPrompt,
       systemPrompt: renderedSystemPrompt,
+      promptDumpPath,
       error: null
     };
 
