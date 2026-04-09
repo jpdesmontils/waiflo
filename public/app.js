@@ -1161,10 +1161,8 @@ function readInputFields() {
     const isRequired = Boolean(row.querySelector('.input-field-required-hidden')?.value);
     const checked = row.querySelector('.input-field-check')?.checked;
     if (!name) return;
-    if (source === 'local') {
-      props[name] = { type };
-      if (isRequired) required.push(name);
-    }
+    props[name] = { type };
+    if (source === 'local' && isRequired) required.push(name);
     if (checked) selected.push(name);
   });
   return { type:'object', required, properties: props, selected };

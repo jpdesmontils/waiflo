@@ -218,8 +218,45 @@ function cacheKeyParamsFromStep(step) {
   return {
     promptTemplate: step?.ws_prompt_template || '',
     systemPrompt: step?.ws_system_prompt || '',
-    outputSchema: step?.ws_output_schema || {}
+    outputSchema: step?.ws_output_schema || {},
+    formatControlEnabled: step?.ws_enable_format_control !== false
   };
+}
+
+function tryParseJsonFromText(raw) {
+  if (typeof raw !== 'string') return null;
+  const clean = raw
+    .replace(/^```json\s*/i, '')
+    .replace(/^```\s*/i, '')
+    .replace(/```\s*$/i, '')
+    .trim();
+  if (!clean) return null;
+  try { return JSON.parse(clean); } catch { /* noop */ }
+
+  const candidates = [
+    [clean.indexOf('{'), clean.lastIndexOf('}')],
+    [clean.indexOf('['), clean.lastIndexOf(']')]
+  ];
+  for (const [start, end] of candidates) {
+    if (start < 0 || end <= start) continue;
+    const chunk = clean.slice(start, end + 1).trim();
+    if (!chunk) continue;
+    try { return JSON.parse(chunk); } catch { /* noop */ }
+  }
+  return null;
+}
+
+function normalizePromptOutput(step, promptRun) {
+  if (promptRun?.parsed != null) return promptRun.parsed;
+  const fallback = tryParseJsonFromText(promptRun?.fullText || '');
+  if (fallback == null) return promptRun?.fullText || '';
+
+  const expectsObject = step?.ws_output_schema?.type === 'object'
+    || Boolean(step?.ws_output_schema?.properties && typeof step.ws_output_schema.properties === 'object');
+  if (expectsObject && (typeof fallback !== 'object' || fallback === null || Array.isArray(fallback))) {
+    return promptRun?.fullText || '';
+  }
+  return fallback;
 }
 
 function promptStreamEnabled(req) {
@@ -325,7 +362,7 @@ async function executeResolvedStep(req, res, { step, inputs, context }) {
           stepName: step.ws_name,
           wsType,
           inputs: inputs || {},
-          output: promptRun?.parsed || promptRun?.fullText || '',
+          output: normalizePromptOutput(step, promptRun),
           meta: cacheMetaFromStep(step),
           keyParams: cacheKeyParamsFromStep(step)
         });
@@ -343,7 +380,7 @@ async function executeResolvedStep(req, res, { step, inputs, context }) {
         inputs: inputs || {},
         status: promptRun?.error ? 'error' : (promptRun?.parsed ? 'done' : 'done_raw'),
         logOutput: promptRun?.error || promptRun?.fullText || '',
-        output: promptRun?.parsed || promptRun?.fullText || '',
+        output: normalizePromptOutput(step, promptRun),
         prompt: promptRun?.userPrompt || '',
         promptDumpPath: promptRun?.promptDumpPath || '',
         callerIp,
@@ -413,19 +450,27 @@ function buildWorkflowGraph(workflowData) {
   const wf = (workflowData?.workflows || []).find((row) => Array.isArray(row?.wf_nodes) && row.wf_nodes.length);
   const nodes = wf?.wf_nodes || [];
   const byId = new Map(nodes.map((n) => [n.step_id, n]));
+  const byRef = new Map(nodes.map((n) => [n.ws_ref, n.step_id]));
   const children = new Map(nodes.map((n) => [n.step_id, []]));
+  const resolveNodeId = (ref) => {
+    if (!ref) return null;
+    if (byId.has(ref)) return ref;
+    return byRef.get(ref) || null;
+  };
 
   nodes.forEach((node) => {
-    (node.depends_on || []).forEach((depId) => {
+    (node.depends_on || []).forEach((depRef) => {
+      const depId = resolveNodeId(depRef);
+      if (!depId) return;
       if (children.has(depId)) children.get(depId).push(node.step_id);
     });
   });
 
-  return { wf, nodes, byId, children };
+  return { wf, nodes, byId, byRef, children, resolveNodeId };
 }
 
 function getDownstreamOrderFromGraph(graph, startNodeId) {
-  const { byId, children } = graph;
+  const { byId, children, resolveNodeId } = graph;
   if (!byId.has(startNodeId)) return [];
 
   const included = new Set();
@@ -441,7 +486,9 @@ function getDownstreamOrderFromGraph(graph, startNodeId) {
   included.forEach((id) => indeg.set(id, 0));
   included.forEach((id) => {
     const node = byId.get(id);
-    (node?.depends_on || []).forEach((depId) => {
+    (node?.depends_on || []).forEach((depRef) => {
+      const depId = resolveNodeId(depRef);
+      if (!depId) return;
       if (included.has(depId)) indeg.set(id, (indeg.get(id) || 0) + 1);
     });
   });
@@ -499,7 +546,7 @@ async function executeStepForWorkflowRun(step, inputs, req, user) {
     };
     const promptRun = await runPromptStep(step, inputs || {}, user, fakeReq, fakeRes);
     if (promptRun?.error) throw new Error(promptRun.error);
-    const result = promptRun?.parsed || promptRun?.fullText || '';
+    const result = normalizePromptOutput(step, promptRun);
 
     if (shouldUsePromptCache(wsType)) {
       await saveCachedStepResult({
@@ -527,10 +574,12 @@ async function executeStepForWorkflowRun(step, inputs, req, user) {
   throw new Error(`ws_type "${wsType}" not supported in workflow run`);
 }
 
-function buildInputsFromDependencies(node, byId, outputsByNodeId, triggerInputs) {
+function buildInputsFromDependencies(node, byId, outputsByNodeId, triggerInputs, resolveNodeId = (id) => id) {
   const inherited = {};
 
-  (node.depends_on || []).forEach((depId) => {
+  (node.depends_on || []).forEach((depRef) => {
+    const depId = resolveNodeId(depRef);
+    if (!depId) return;
     const depNode = byId.get(depId);
     const depOutput = outputsByNodeId[depId];
     if (!depNode || !depOutput || typeof depOutput !== 'object') return;
@@ -574,7 +623,7 @@ async function runWorkflowOrchestration(req, run, workflowData, fromStepId, trig
       return;
     }
 
-    const mergedInputs = buildInputsFromDependencies(node, graph.byId, outputsByNodeId, triggerInputs);
+    const mergedInputs = buildInputsFromDependencies(node, graph.byId, outputsByNodeId, triggerInputs, graph.resolveNodeId);
     const validationErrors = validateInputsAgainstSchema(step, mergedInputs);
     pushRunEvent(run, 'step_started', {
       step_id: nodeId,
