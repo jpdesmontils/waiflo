@@ -971,6 +971,12 @@ function populateEditor(s) {
 
   renderSchemaFields('inputs-fields',  s.ws_inputs_schema?.properties||{},  s.ws_inputs_schema?.required||[]);
   renderSchemaFields('outputs-fields', s.ws_output_schema?.properties||{}, s.ws_output_schema?.required||[]);
+  const inputsContent = document.getElementById('inputs-content');
+  const inputsBtn = document.getElementById('inputs-fold-btn');
+  if (inputsContent && inputsBtn) {
+    inputsContent.classList.remove('collapsed');
+    inputsBtn.textContent = '▾';
+  }
   onTypeChange(); updateJsonTab(); updateRunTab(s);
 }
 
@@ -1063,8 +1069,6 @@ function getConnectedInputDescriptors(nodeId) {
     Object.entries(outProps).forEach(([name, schema]) => {
       descriptors.push({ name, type: schema?.type || 'string', fromConnection: true });
     });
-    descriptors.push({ name: depNode.ws_ref, type: 'object', fromConnection: true });
-    descriptors.push({ name: `${depNode.ws_ref}_output`, type: 'object', fromConnection: true });
   }
   return descriptors;
 }
@@ -1596,6 +1600,14 @@ function toggleSyspromptSection() {
 function toggleTemplateSection() {
   const content = document.getElementById('template-content');
   const btn = document.getElementById('template-fold-btn');
+  if (!content || !btn) return;
+  const collapsed = content.classList.toggle('collapsed');
+  btn.textContent = collapsed ? '▸' : '▾';
+}
+
+function toggleInputsSection() {
+  const content = document.getElementById('inputs-content');
+  const btn = document.getElementById('inputs-fold-btn');
   if (!content || !btn) return;
   const collapsed = content.classList.toggle('collapsed');
   btn.textContent = collapsed ? '▸' : '▾';
@@ -2430,7 +2442,7 @@ Object.assign(window,{
   applyStepEdit, deleteCurrentStep, closeEditor, switchEditorTab,
   addInputField, addOutputField, onTypeChange,
   toggleTechSection, toggleApiAdvancedSection, toggleToolAdvancedSection, toggleEditorMaximize,
-  toggleSyspromptSection, toggleTemplateSection, startRightPanelResize,
+  toggleSyspromptSection, toggleTemplateSection, toggleInputsSection, startRightPanelResize,
   runStepOnly, runWorkflowFromHere, stopExecution, closeModal, showSignupCTA,
   confirmEdgeDelete, toggleWorkflowExecLogs, toggleRightPanel,
   copyWorkflowExecLogs, clearWorkflowExecLogs,
