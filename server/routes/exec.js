@@ -7,7 +7,9 @@ import { authMiddleware } from './auth.js';
 import { getUser } from '../lib/users.js';
 import { runPromptStep, runApiStep, runWebpageStep, runToolStep } from '../lib/runner.js';
 import { PROVIDER_META } from '../lib/providers/index.js';
-import { getLatestStepRunRecord, saveStepRunRecord } from '../lib/runStore.js';
+import { getLatestStepRunRecord, listStepRunRecords, saveStepRunRecord } from '../lib/runStore.js';
+import { CACHE_CONFIG } from '../config.js';
+import { getCachedStepResult, saveCachedStepResult } from '../lib/stepCacheStore.js';
 import { wfPath } from '../lib/utils.js';
 
 const router = express.Router();
@@ -147,6 +149,92 @@ function validateInputsAgainstSchema(step, inputs) {
   return errors;
 }
 
+function inferSchemaFromValue(value) {
+  if (Array.isArray(value)) {
+    if (!value.length) return { type: 'array', items: {} };
+    return { type: 'array', items: inferSchemaFromValue(value[0]) };
+  }
+  if (value == null) return { type: 'null' };
+  if (typeof value === 'object') {
+    const properties = {};
+    for (const [key, nestedValue] of Object.entries(value)) {
+      properties[key] = inferSchemaFromValue(nestedValue);
+    }
+    return { type: 'object', properties };
+  }
+  if (typeof value === 'number' && Number.isInteger(value)) return { type: 'integer' };
+  return { type: typeof value };
+}
+
+function buildSchemaMismatchContext(step, inputs) {
+  return {
+    expected_schema: step?.ws_inputs_schema || null,
+    received_schema: inferSchemaFromValue(inputs)
+  };
+}
+
+function normalizeErrorDetails(err) {
+  if (!err) return null;
+  const causes = [];
+  let cursor = err;
+  while (cursor) {
+    causes.push({
+      name: cursor.name || 'Error',
+      message: cursor.message || String(cursor),
+      code: cursor.code || null
+    });
+    cursor = cursor.cause;
+  }
+
+  return {
+    name: err.name || 'Error',
+    message: err.message || String(err),
+    code: err.code || null,
+    causes
+  };
+}
+
+function shouldUsePromptCache(wsType) {
+  if (!CACHE_CONFIG.enabled) return false;
+  if (CACHE_CONFIG.cachePromptOnly) return wsType === 'prompt';
+  return true;
+}
+
+function cacheMetaFromStep(step) {
+  const llm = step?.ws_llm || {};
+  return {
+    provider: llm.provider || 'anthropic',
+    model: llm.model || null
+  };
+}
+
+function cacheKeyParamsFromStep(step) {
+  return {
+    promptTemplate: step?.ws_prompt_template || '',
+    systemPrompt: step?.ws_system_prompt || '',
+    outputSchema: step?.ws_output_schema || {}
+  };
+}
+
+function promptStreamEnabled(req) {
+  const queryStream = req?.query?.stream;
+  return !(queryStream === '0' || queryStream === 'false');
+}
+
+function sendPromptCacheResponse(req, res, output) {
+  const stream = promptStreamEnabled(req);
+  if (stream) {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.write(`event: done\n`);
+    res.write(`data: ${JSON.stringify({ full: typeof output === 'string' ? output : JSON.stringify(output), parsed: output, cache_hit: true })}\n\n`);
+    res.end();
+    return;
+  }
+  res.json({ ok: true, full: typeof output === 'string' ? output : JSON.stringify(output), parsed: output, cache_hit: true });
+}
+
 async function executeResolvedStep(req, res, { step, inputs, context }) {
   if (!step || !step.ws_name) return res.status(400).json({ error: 'step definition required' });
 
@@ -154,7 +242,8 @@ async function executeResolvedStep(req, res, { step, inputs, context }) {
   if (validationErrors.length) {
     return res.status(422).json({
       error: 'Inputs do not match ws_inputs_schema',
-      details: validationErrors
+      details: validationErrors,
+      ...buildSchemaMismatchContext(step, inputs)
     });
   }
 
@@ -184,8 +273,52 @@ async function executeResolvedStep(req, res, { step, inputs, context }) {
   }
 
   if (wsType === 'prompt') {
-    // Streaming SSE
-    const promptRun = await runPromptStep(step, inputs || {}, user, req, res);
+    let cacheHit = false;
+    let cacheKey = null;
+    let promptRun = null;
+
+    if (shouldUsePromptCache(wsType)) {
+      const cached = await getCachedStepResult({
+        userId: req.user?.userId || 'guest',
+        workflowName,
+        stepName: step.ws_name,
+        wsType,
+        inputs: inputs || {},
+        keyParams: cacheKeyParamsFromStep(step)
+      });
+
+      if (cached.hit) {
+        cacheHit = true;
+        cacheKey = cached.key;
+        promptRun = {
+          fullText: typeof cached.output === 'string' ? cached.output : JSON.stringify(cached.output),
+          parsed: cached.output,
+          userPrompt: '',
+          error: null
+        };
+        sendPromptCacheResponse(req, res, cached.output);
+      }
+    }
+
+    if (!cacheHit) {
+      // Streaming SSE
+      promptRun = await runPromptStep(step, inputs || {}, user, req, res);
+
+      if (!promptRun?.error && shouldUsePromptCache(wsType)) {
+        const saved = await saveCachedStepResult({
+          userId: req.user?.userId || 'guest',
+          workflowName,
+          stepName: step.ws_name,
+          wsType,
+          inputs: inputs || {},
+          output: promptRun?.parsed || promptRun?.fullText || '',
+          meta: cacheMetaFromStep(step),
+          keyParams: cacheKeyParamsFromStep(step)
+        });
+        cacheKey = saved.key;
+      }
+    }
+
     if (req.user?.userId) {
       await saveStepRunRecord(req.user.userId, workflowName, step.ws_name, {
         workflowName,
@@ -198,7 +331,9 @@ async function executeResolvedStep(req, res, { step, inputs, context }) {
         logOutput: promptRun?.error || promptRun?.fullText || '',
         output: promptRun?.parsed || promptRun?.fullText || '',
         prompt: promptRun?.userPrompt || '',
-        logMeta: promptRun?.error ? 'prompt error' : 'prompt done',
+        logMeta: promptRun?.error
+          ? 'prompt error'
+          : (cacheHit ? `prompt done (cache hit ${cacheKey || ''})`.trim() : `prompt done${cacheKey ? ` (cache store ${cacheKey})` : ''}`),
         createdAt: new Date().toISOString()
       });
     }
@@ -307,8 +442,21 @@ function getDownstreamOrderFromGraph(graph, startNodeId) {
 
 async function executeStepForWorkflowRun(step, inputs, req, user) {
   const wsType = (step.ws_type || 'prompt').toLowerCase();
+  const workflowName = req?.workflowNameForRun || 'ad-hoc';
 
   if (wsType === 'prompt') {
+    if (shouldUsePromptCache(wsType)) {
+      const cached = await getCachedStepResult({
+        userId: req.user?.userId || 'guest',
+        workflowName,
+        stepName: step.ws_name,
+        wsType,
+        inputs: inputs || {},
+        keyParams: cacheKeyParamsFromStep(step)
+      });
+      if (cached.hit) return cached.output;
+    }
+
     const fakeReq = { query: {} };
     const fakeRes = {
       statusCode: 200,
@@ -321,7 +469,22 @@ async function executeStepForWorkflowRun(step, inputs, req, user) {
     };
     const promptRun = await runPromptStep(step, inputs || {}, user, fakeReq, fakeRes);
     if (promptRun?.error) throw new Error(promptRun.error);
-    return promptRun?.parsed || promptRun?.fullText || '';
+    const result = promptRun?.parsed || promptRun?.fullText || '';
+
+    if (shouldUsePromptCache(wsType)) {
+      await saveCachedStepResult({
+        userId: req.user?.userId || 'guest',
+        workflowName,
+        stepName: step.ws_name,
+        wsType,
+        inputs: inputs || {},
+        output: result,
+        meta: cacheMetaFromStep(step),
+        keyParams: cacheKeyParamsFromStep(step)
+      });
+    }
+
+    return result;
   }
 
   if (wsType === 'webpage') return runWebpageStep(step, inputs || {});
@@ -350,8 +513,9 @@ async function runWorkflowOrchestration(req, run, workflowData, fromStepId, trig
   const order = getDownstreamOrderFromGraph(graph, fromStepId);
   const stepMap = new Map((workflowData?.steps || []).map((step) => [step.ws_name, step]));
   const outputsByNodeId = {};
-  const outputsByStepRef = {};
   const user = await getUser(req.user.userId);
+  let lastFinishedStep = null;
+  req.workflowNameForRun = run.workflowName;
 
   pushRunEvent(run, 'workflow_started', { from_step_id: fromStepId, total_steps: order.length });
 
@@ -369,6 +533,7 @@ async function runWorkflowOrchestration(req, run, workflowData, fromStepId, trig
       pushRunEvent(run, 'step_finished', {
         step_id: nodeId,
         ws_ref: node.ws_ref,
+        step_desc: '',
         status: 'error',
         error: `Step "${node.ws_ref}" not found`
       });
@@ -379,15 +544,22 @@ async function runWorkflowOrchestration(req, run, workflowData, fromStepId, trig
 
     const mergedInputs = buildInputsFromDependencies(node, graph.byId, outputsByNodeId, triggerInputs);
     const validationErrors = validateInputsAgainstSchema(step, mergedInputs);
-    pushRunEvent(run, 'step_started', { step_id: nodeId, ws_ref: node.ws_ref, inputs: mergedInputs });
+    pushRunEvent(run, 'step_started', {
+      step_id: nodeId,
+      ws_ref: node.ws_ref,
+      step_desc: step.step_desc || '',
+      inputs: mergedInputs
+    });
 
     if (validationErrors.length) {
       pushRunEvent(run, 'step_finished', {
         step_id: nodeId,
         ws_ref: node.ws_ref,
+        step_desc: step.step_desc || '',
         status: 'error',
         error: 'Inputs do not match ws_inputs_schema',
-        details: validationErrors
+        details: validationErrors,
+        ...buildSchemaMismatchContext(step, mergedInputs)
       });
       run.status = 'error';
       pushRunEvent(run, 'workflow_finished', { status: 'error' });
@@ -397,7 +569,6 @@ async function runWorkflowOrchestration(req, run, workflowData, fromStepId, trig
     try {
       const result = await executeStepForWorkflowRun(step, mergedInputs, req, user);
       outputsByNodeId[nodeId] = result;
-      outputsByStepRef[node.ws_ref] = result;
 
       await saveStepRunRecord(req.user.userId, run.workflowName, step.ws_name, {
         workflowName: run.workflowName,
@@ -417,9 +588,17 @@ async function runWorkflowOrchestration(req, run, workflowData, fromStepId, trig
       pushRunEvent(run, 'step_finished', {
         step_id: nodeId,
         ws_ref: node.ws_ref,
+        step_desc: step.step_desc || '',
         status: 'done',
         output: result
       });
+      lastFinishedStep = {
+        step_id: nodeId,
+        ws_ref: node.ws_ref,
+        step_desc: step.step_desc || '',
+        status: 'done',
+        output: result
+      };
     } catch (err) {
       await saveStepRunRecord(req.user.userId, run.workflowName, step.ws_name, {
         workflowName: run.workflowName,
@@ -439,8 +618,10 @@ async function runWorkflowOrchestration(req, run, workflowData, fromStepId, trig
       pushRunEvent(run, 'step_finished', {
         step_id: nodeId,
         ws_ref: node.ws_ref,
+        step_desc: step.step_desc || '',
         status: 'error',
-        error: err.message
+        error: err.message,
+        error_details: normalizeErrorDetails(err)
       });
       run.status = 'error';
       pushRunEvent(run, 'workflow_finished', { status: 'error' });
@@ -452,7 +633,7 @@ async function runWorkflowOrchestration(req, run, workflowData, fromStepId, trig
   pushRunEvent(run, 'workflow_finished', {
     status: 'done',
     steps_done: Object.keys(outputsByNodeId).length,
-    outputs: outputsByStepRef
+    last_step: lastFinishedStep
   });
 }
 
@@ -519,25 +700,10 @@ router.post('/workflows/:workflowName/step', authMiddleware, execLimiter, async 
       });
     }
 
-    if (wsType === 'prompt') {
-      // Streaming SSE
-      const promptRun = await runPromptStep(step, inputs || {}, user, req, res);
-      if (req.user?.userId) {
-        await saveStepRunRecord(req.user.userId, workflowName, step.ws_name, {
-          workflowName,
-          nodeId,
-          stepName: step.ws_name,
-          wsType,
-          runMode,
-          inputs: inputs || {},
-          status: promptRun?.error ? 'error' : (promptRun?.parsed ? 'done' : 'done_raw'),
-          logOutput: promptRun?.error || promptRun?.fullText || '',
-          output: promptRun?.parsed || promptRun?.fullText || '',
-          prompt: promptRun?.userPrompt || '',
-          logMeta: promptRun?.error ? 'prompt error' : 'prompt done',
-          createdAt: new Date().toISOString()
-        });
-      }
+    const step = (workflow.steps || []).find((entry) => entry?.ws_name === ws_ref);
+    if (!step) {
+      return res.status(404).json({ error: `Step "${ws_ref}" not found in workflow steps` });
+    }
 
     await executeResolvedStep(req, res, {
       step,
@@ -588,7 +754,11 @@ router.post('/workflows/:workflowName/run', authMiddleware, execLimiter, async (
     runWorkflowOrchestration(req, run, workflowData, fromStepId, triggerInputs)
       .catch((err) => {
         run.status = 'error';
-        pushRunEvent(run, 'workflow_finished', { status: 'error', error: err.message });
+        pushRunEvent(run, 'workflow_finished', {
+          status: 'error',
+          error: err.message,
+          error_details: normalizeErrorDetails(err)
+        });
       })
       .finally(() => {
         setTimeout(() => {
@@ -626,6 +796,18 @@ router.get('/history/latest', authMiddleware, async (req, res) => {
     res.json({ ok: true, record });
   } catch (err) {
     if (err.code === 'ENOENT') return res.json({ ok: true, record: null });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/history/logs', authMiddleware, async (req, res) => {
+  try {
+    const workflowName = String(req.query.workflow || '').trim();
+    const logs = await listStepRunRecords(req.user.userId, {
+      workflowName: workflowName || null
+    });
+    res.json({ ok: true, logs });
+  } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });

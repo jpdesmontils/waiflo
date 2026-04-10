@@ -7,16 +7,6 @@ process.on('unhandledRejection', (reason) => {
   console.error('[UNHANDLED REJECTION]', reason);
   process.exit(1);
 });
-// ── Validate required env vars before anything else ───────────────
-if (!process.env.JWT_SECRET) {
-  console.error('FATAL: JWT_SECRET environment variable is not set');
-  process.exit(1);
-}
-if (!process.env.MASTER_SECRET) {
-  console.error('FATAL: MASTER_SECRET environment variable is not set');
-  process.exit(1);
-}
-
 import 'dotenv/config';
 import express          from 'express';
 import cors             from 'cors';
@@ -29,6 +19,17 @@ import authRoutes               from './routes/auth.js';
 import workflowRoutes           from './routes/workflows.js';
 import execRoutes               from './routes/exec.js';
 import { wfRouter, stepRouter } from './routes/design.js';
+import { startStepCacheJanitor } from './lib/stepCacheStore.js';
+
+// ── Validate required env vars before anything else ───────────────
+if (!process.env.JWT_SECRET) {
+  console.error('FATAL: JWT_SECRET environment variable is not set');
+  process.exit(1);
+}
+if (!process.env.MASTER_SECRET) {
+  console.error('FATAL: MASTER_SECRET environment variable is not set');
+  process.exit(1);
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT      = process.env.PORT || 3001;
@@ -45,17 +46,17 @@ async function cleanupStaleLocks() {
   }
 }
 await cleanupStaleLocks();
+startStepCacheJanitor();
 
 // ── Express ───────────────────────────────────────────────────────
 const app = express();
 
-if (process.env.NODE_ENV === 'production' && !process.env.CORS_ORIGIN) {
-  console.error('FATAL: CORS_ORIGIN must be set in production');
-  process.exit(1);
-}
 const corsOrigin = process.env.CORS_ORIGIN
-  ? process.env.CORS_ORIGIN.split(',').map(s => s.trim())
+  ? process.env.CORS_ORIGIN.split(',').map((s) => s.trim()).filter(Boolean)
   : true;
+if (process.env.NODE_ENV === 'production' && corsOrigin === true) {
+  console.warn('WARNING: CORS_ORIGIN is not set in production; allowing all origins.');
+}
 app.use(cors({ origin: corsOrigin, credentials: true }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.text({ limit: '10mb' }));

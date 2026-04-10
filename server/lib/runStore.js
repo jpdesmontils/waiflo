@@ -38,6 +38,71 @@ export async function getLatestStepRunRecord(userId, workflowName, stepName) {
   return JSON.parse(raw);
 }
 
+export async function listStepRunRecords(userId, { workflowName = null } = {}) {
+  const rootDir = runBaseDir(userId);
+  const workflows = [];
+
+  try {
+    const wfEntries = await fs.readdir(rootDir, { withFileTypes: true });
+    for (const wfEntry of wfEntries) {
+      if (!wfEntry.isDirectory()) continue;
+      if (workflowName && wfEntry.name !== safeName(workflowName)) continue;
+      workflows.push(wfEntry.name);
+    }
+  } catch (err) {
+    if (err.code === 'ENOENT') return [];
+    throw err;
+  }
+
+  const records = [];
+
+  for (const wfName of workflows) {
+    const wfDir = path.join(rootDir, wfName);
+    let stepEntries = [];
+    try {
+      stepEntries = await fs.readdir(wfDir, { withFileTypes: true });
+    } catch (err) {
+      if (err.code === 'ENOENT') continue;
+      throw err;
+    }
+
+    for (const stepEntry of stepEntries) {
+      if (!stepEntry.isDirectory()) continue;
+      const stepFolder = stepEntry.name;
+      const stepPath = path.join(wfDir, stepFolder);
+      let fileEntries = [];
+      try {
+        fileEntries = await fs.readdir(stepPath, { withFileTypes: true });
+      } catch (err) {
+        if (err.code === 'ENOENT') continue;
+        throw err;
+      }
+
+      for (const fileEntry of fileEntries) {
+        if (!fileEntry.isFile() || !fileEntry.name.endsWith('.json')) continue;
+        const fp = path.join(stepPath, fileEntry.name);
+        try {
+          const raw = await fs.readFile(fp, 'utf8');
+          const parsed = JSON.parse(raw);
+          records.push({
+            ...parsed,
+            __meta: {
+              workflowFolder: wfName,
+              stepFolder,
+              fileName: fileEntry.name
+            }
+          });
+        } catch {
+          // Ignore malformed records
+        }
+      }
+    }
+  }
+
+  records.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+  return records;
+}
+
 export async function deleteWorkflowRunData(userId, workflowName) {
   const dir = workflowDir(userId, workflowName);
   await fs.rm(dir, { recursive: true, force: true });
