@@ -1014,17 +1014,16 @@ function onProviderChange(currentModel) {
 function renderSchemaFields(containerId,props,required) {
   const container=document.getElementById(containerId);
   container.innerHTML='';
-  Object.keys(props).forEach(k=>addSchemaRow(container,k,props[k].type||'string',required.includes(k), Boolean(props[k]?.x_prompt_schema)));
+  Object.keys(props).forEach(k=>addSchemaRow(container,k,props[k].type||'string',required.includes(k)));
 }
 
-function addSchemaRow(container,name='',type='string',req=false,schema=false) {
+function addSchemaRow(container,name='',type='string',req=false) {
   const row=document.createElement('div');
   row.className='schema-field-row';
   row.innerHTML=`
     <input class="form-input" placeholder="field_name" value="${name}" style="flex:2">
-    <select class="form-select" style="flex:1" disabled>${FIELD_TYPES.map(t=>`<option ${t===type?'selected':''}>${t}</option>`).join('')}</select>
+    <select class="form-select" style="flex:1">${FIELD_TYPES.map(t=>`<option ${t===type?'selected':''}>${t}</option>`).join('')}</select>
     <input type="checkbox" class="schema-req-check" title="Required" ${req?'checked':''}>
-    <input type="checkbox" class="schema-in-schema-check" title="Schema substitution" ${schema?'checked':''}>
     <button class="schema-remove-btn" onclick="this.parentElement.remove()">&#x2715;</button>`;
   container.appendChild(row);
 }
@@ -1037,27 +1036,10 @@ function readSchemaFields(containerId) {
   const props={},required=[];
   rows.forEach(row=>{
     const inputs=row.querySelectorAll('input,select');
-    const name=inputs[0].value.trim(),type=inputs[1].value,req=inputs[2].checked,schema=inputs[3].checked;
-    if(name){ props[name]={ type, x_prompt_schema: schema }; if(req) required.push(name); }
+    const name=inputs[0].value.trim(),type=inputs[1].value,req=inputs[2].checked;
+    if(name){ props[name]={ type }; if(req) required.push(name); }
   });
   return { type:'object',required,properties:props };
-}
-
-function getPromptSchemaVariables(step) {
-  const props = step?.ws_inputs_schema?.properties || {};
-  return Object.entries(props)
-    .filter(([, cfg]) => Boolean(cfg?.x_prompt_schema))
-    .map(([name]) => name);
-}
-
-function findMissingPromptVariables(step) {
-  const promptText = `${step?.ws_system_prompt || ''}\n${step?.ws_prompt_template || ''}`;
-  const vars = getPromptSchemaVariables(step);
-  return vars.filter((name) => {
-    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const rx = new RegExp(`\\{\\{\\{?\\s*${escaped}\\s*\\}\\}?\\}`);
-    return !rx.test(promptText);
-  });
 }
 
 function collectStep() {
@@ -1141,20 +1123,25 @@ function applyStepEdit() {
   if (!s) return;
   if (!s.ws_name) return toast('ws_name is required','err');
 
+  // Validate that input variables are referenced in the prompt
   if ((s.ws_type === 'prompt' || s.ws_type === 'tool') && s.ws_inputs_schema?.properties) {
-    const missingVars = findMissingPromptVariables(s);
-    if (missingVars.length > 0) {
-      const varList = missingVars.map(n => `<code>{{${n}}}</code>`).join(', ');
-      openModal(
-        '⚠ Variables schéma absentes des prompts',
-        `<div class="confirm-text">Certaines variables cochées "schéma" ne sont pas présentes dans les prompts.</div>
-         <div class="confirm-sub" style="margin-top:8px">Variables manquantes : ${varList}</div>`,
-        [
-          { label: 'Sauvegarder quand même', action: () => { closeModal(); _doSaveStep(s); }, primary: true },
-          { label: 'Annuler', action: closeModal }
-        ]
-      );
-      return;
+    const inputNames = Object.keys(s.ws_inputs_schema.properties);
+    if (inputNames.length > 0) {
+      const promptText = (s.ws_system_prompt || '') + ' ' + (s.ws_prompt_template || '');
+      const usedVars = inputNames.filter(name => promptText.includes(`{{${name}}}`));
+      if (usedVars.length === 0) {
+        const varList = inputNames.map(n => `<code>{{${n}}}</code>`).join(', ');
+        openModal(
+          '⚠ Variables d\'entrée non utilisées',
+          `<div class="confirm-text">Aucune variable d'entrée n'est référencée dans le prompt.</div>
+           <div class="confirm-sub" style="margin-top:8px">Les variables ${varList} ne sont pas présentes dans le System Prompt ni dans le Template.<br><br>Les entrées ne seront pas transmises au LLM.</div>`,
+          [
+            { label: 'Sauvegarder quand même', action: () => { closeModal(); _doSaveStep(s); }, primary: true },
+            { label: 'Annuler', action: closeModal }
+          ]
+        );
+        return;
+      }
     }
   }
 
@@ -1565,17 +1552,8 @@ function updateRunTab(s) {
   const area = document.getElementById('run-inputs-area');
   area.innerHTML = '';
   const availableEl = document.getElementById('edit-available-inputs');
-  const vars = getAvailableConnectedInputs(s, _currentNodeId);
   const inProps = s?.ws_inputs_schema?.properties || {};
   const inReq   = s?.ws_inputs_schema?.required   || [];
-  const container = document.getElementById('inputs-fields');
-  if (container) {
-    const existing = new Set(Object.keys(inProps));
-    vars.forEach((name) => {
-      if (existing.has(name)) return;
-      addSchemaRow(container, name, 'string', false, false);
-    });
-  }
 
   // Rendu des inputs + pré-remplissage depuis les output vars du step précédent
   const inheritedInputs = buildInheritedInputs(s, _currentNodeId);
@@ -1592,11 +1570,6 @@ function updateRunTab(s) {
     }
   });
 
-  const formatControl = document.getElementById('run-enforce-format');
-  if (formatControl) {
-    formatControl.checked = s?.ws_validate_input_format !== false;
-  }
-
   // Écraser / compléter avec les dernières valeurs saisies par l'utilisateur
   const state = getStepRunState(s, _currentNodeId);
   if (state?.lastInputs) {
@@ -1608,6 +1581,7 @@ function updateRunTab(s) {
   }
 
   if (availableEl) {
+    const vars = getAvailableConnectedInputs(s, _currentNodeId);
     availableEl.innerHTML = vars.length
       ? vars.map(v => `<span class="run-var-chip">{{${v}}}</span>`).join('')
       : '<span class="run-available-empty">Aucune variable disponible (connectez un step entrant).</span>';
@@ -1787,8 +1761,8 @@ async function executeStep(stepDef, runMode='step_only') {
     ? `/api/exec/workflows/${encodeURIComponent(currentWf.name)}/step`
     : '/api/exec/step';
   const execBody = canUseRefExec
-    ? { ws_ref: s.ws_name, step_id: _currentNodeId, inputs: finalInputs, validate_input_format: Boolean(document.getElementById('run-enforce-format')?.checked ?? true) }
-    : { step:{ ...s, ws_validate_input_format: Boolean(document.getElementById('run-enforce-format')?.checked ?? true) }, inputs: finalInputs, context:{ workflowName: currentWf?.name, nodeId:_currentNodeId, runMode } };
+    ? { ws_ref: s.ws_name, step_id: _currentNodeId, inputs: finalInputs }
+    : { step:s, inputs: finalInputs, context:{ workflowName: currentWf?.name, nodeId:_currentNodeId, runMode } };
 
   if (['api','webpage'].includes((s.ws_type||'').toLowerCase())) {
     const headers = { 'Content-Type':'application/json' };
@@ -1923,11 +1897,7 @@ async function runWorkflowFromHere() {
       method: 'POST',
       headers: { 'Content-Type':'application/json' },
       credentials: 'include',
-      body: JSON.stringify({
-        from_step_id: savedNodeId,
-        inputs: triggerInputs,
-        validate_input_format: Boolean(document.getElementById('run-enforce-format')?.checked ?? true)
-      })
+      body: JSON.stringify({ from_step_id: savedNodeId, inputs: triggerInputs })
     });
     const launch = await launchResp.json().catch(() => ({}));
     if (!launchResp.ok || !launch?.run_id) throw new Error(launch.error || `HTTP ${launchResp.status}`);

@@ -78,15 +78,9 @@ function collectImageUrls(step, inputs) {
   return urls.filter(Boolean);
 }
 
-function buildPrompt(template, inputs, step) {
+function buildPrompt(template, inputs) {
   let prompt = template;
-  const schemaVars = new Set(
-    Object.entries(step?.ws_inputs_schema?.properties || {})
-      .filter(([, cfg]) => cfg?.x_prompt_schema)
-      .map(([key]) => key)
-  );
   for (const [k, v] of Object.entries(inputs)) {
-    if (k !== 'ws_output_schema' && !schemaVars.has(k)) continue;
     const val = typeof v === 'object' ? JSON.stringify(v, null, 2) : String(v);
     // triple braces = no escaping
     prompt = prompt.replaceAll(`{{{${k}}}}`, val);
@@ -130,7 +124,7 @@ export async function runPromptStep(step, inputs, user, req, res) {
     ws_output_schema: JSON.stringify(step.ws_output_schema || {}, null, 2)
   };
 
-  const userPrompt = buildPrompt(step.ws_prompt_template || '', allInputs, step);
+  const userPrompt = buildPrompt(step.ws_prompt_template || '', allInputs);
 
   let send = () => {};
 
