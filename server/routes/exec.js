@@ -501,8 +501,6 @@ function buildInputsFromDependencies(node, byId, outputsByNodeId, triggerInputs)
     const depOutput = outputsByNodeId[depId];
     if (!depNode || !depOutput || typeof depOutput !== 'object') return;
     Object.assign(inherited, depOutput);
-    inherited[depNode.ws_ref] = depOutput;
-    inherited[`${depNode.ws_ref}_output`] = depOutput;
   });
 
   return { ...inherited, ...(triggerInputs || {}) };
