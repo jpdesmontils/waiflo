@@ -293,6 +293,11 @@ option { background:var(--panel2); }
 .form-hint { font-family:'JetBrains Mono',monospace; font-size:9px; color:var(--dim); }
 .schema-field-row { display:flex; gap:5px; align-items:center; margin-bottom:5px; }
 .schema-req-check { accent-color:var(--amber); width:14px; height:14px; cursor:pointer; flex-shrink:0; }
+.schema-in-schema-check { accent-color:#60a5fa; width:14px; height:14px; cursor:pointer; flex-shrink:0; }
+.schema-list-head { display:grid; grid-template-columns:2fr 1fr 90px 80px 30px; gap:6px; color:var(--dim); font-family:'JetBrains Mono',monospace; font-size:10px; margin:8px 0 6px; }
+.schema-list-head span { text-transform:uppercase; letter-spacing:.04em; }
+.run-format-toggle { display:flex; align-items:center; gap:8px; font-size:11px; color:var(--dim); margin-bottom:8px; }
+.run-format-toggle input { accent-color:var(--amber); }
 .schema-remove-btn { background:none; border:none; color:var(--dim); cursor:pointer; font-size:13px; transition:color .15s; flex-shrink:0; }
 .schema-remove-btn:hover { color:var(--red); }
 .schema-add-btn { font-family:'JetBrains Mono',monospace; font-size:9px; color:var(--teal); background:none; border:1px dashed rgba(45,212,191,.3); border-radius:3px; padding:4px 10px; cursor:pointer; transition:all .15s; width:100%; margin-top:4px; }

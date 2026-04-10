@@ -7,7 +7,7 @@ import { authMiddleware } from './auth.js';
 import { getUser } from '../lib/users.js';
 import { runPromptStep, runApiStep, runWebpageStep, runToolStep } from '../lib/runner.js';
 import { PROVIDER_META } from '../lib/providers/index.js';
-import { getLatestStepRunRecord, listStepRunRecords, saveStepRunRecord } from '../lib/runStore.js';
+import { getLatestStepRunRecord, listStepRunRecords, readStepPromptLog, saveStepPromptLog, saveStepRunRecord } from '../lib/runStore.js';
 import { CACHE_CONFIG } from '../config.js';
 import { getCachedStepResult, saveCachedStepResult } from '../lib/stepCacheStore.js';
 import { wfPath } from '../lib/utils.js';
@@ -71,7 +71,8 @@ function attachRunClient(run, res) {
   res.on('close', () => run.clients.delete(res));
 }
 
-function validateInputValue(value, schema = {}, path = 'inputs') {
+function validateInputValue(value, schema = {}, path = 'inputs', options = {}) {
+  const enforceFormat = options.enforceFormat !== false;
   const errors = [];
   const type = schema?.type;
 
@@ -97,7 +98,7 @@ function validateInputValue(value, schema = {}, path = 'inputs') {
     }
   }
 
-  if (!errors.length && typeof value === 'string') {
+  if (enforceFormat && !errors.length && typeof value === 'string') {
     if (schema.format === 'email' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
       fail('must match format email');
     } else if (schema.format === 'uri') {
@@ -111,14 +112,14 @@ function validateInputValue(value, schema = {}, path = 'inputs') {
 
   if (Array.isArray(value) && schema?.items && typeof schema.items === 'object') {
     value.forEach((item, index) => {
-      errors.push(...validateInputValue(item, schema.items, `${path}[${index}]`));
+      errors.push(...validateInputValue(item, schema.items, `${path}[${index}]`, options));
     });
   }
 
   return errors;
 }
 
-function validateInputsAgainstSchema(step, inputs) {
+function validateInputsAgainstSchema(step, inputs, options = {}) {
   const schema = step?.ws_inputs_schema;
   if (!schema || typeof schema !== 'object' || Array.isArray(schema)) return [];
 
@@ -143,7 +144,7 @@ function validateInputsAgainstSchema(step, inputs) {
 
   for (const [key, value] of Object.entries(safeInputs)) {
     if (!Object.prototype.hasOwnProperty.call(properties, key)) continue;
-    errors.push(...validateInputValue(value, properties[key], `inputs.${key}`));
+    errors.push(...validateInputValue(value, properties[key], `inputs.${key}`, options));
   }
 
   return errors;
@@ -238,7 +239,8 @@ function sendPromptCacheResponse(req, res, output) {
 async function executeResolvedStep(req, res, { step, inputs, context }) {
   if (!step || !step.ws_name) return res.status(400).json({ error: 'step definition required' });
 
-  const validationErrors = validateInputsAgainstSchema(step, inputs);
+  const enforceFormat = req.body?.validate_input_format ?? step?.ws_validate_input_format ?? true;
+  const validationErrors = validateInputsAgainstSchema(step, inputs, { enforceFormat });
   if (validationErrors.length) {
     return res.status(422).json({
       error: 'Inputs do not match ws_inputs_schema',
@@ -277,6 +279,7 @@ async function executeResolvedStep(req, res, { step, inputs, context }) {
     let cacheKey = null;
     let promptRun = null;
 
+    let promptFileName = '';
     if (shouldUsePromptCache(wsType)) {
       const cached = await getCachedStepResult({
         userId: req.user?.userId || 'guest',
@@ -293,7 +296,7 @@ async function executeResolvedStep(req, res, { step, inputs, context }) {
         promptRun = {
           fullText: typeof cached.output === 'string' ? cached.output : JSON.stringify(cached.output),
           parsed: cached.output,
-          userPrompt: '',
+          userPrompt: step.ws_prompt_template || '',
           error: null
         };
         sendPromptCacheResponse(req, res, cached.output);
@@ -320,6 +323,10 @@ async function executeResolvedStep(req, res, { step, inputs, context }) {
     }
 
     if (req.user?.userId) {
+      if (promptRun?.userPrompt) {
+        const logInfo = await saveStepPromptLog(req.user.userId, workflowName, step.ws_name, promptRun.userPrompt);
+        promptFileName = logInfo.fileName;
+      }
       await saveStepRunRecord(req.user.userId, workflowName, step.ws_name, {
         workflowName,
         nodeId,
@@ -331,6 +338,7 @@ async function executeResolvedStep(req, res, { step, inputs, context }) {
         logOutput: promptRun?.error || promptRun?.fullText || '',
         output: promptRun?.parsed || promptRun?.fullText || '',
         prompt: promptRun?.userPrompt || '',
+        promptFileName,
         logMeta: promptRun?.error
           ? 'prompt error'
           : (cacheHit ? `prompt done (cache hit ${cacheKey || ''})`.trim() : `prompt done${cacheKey ? ` (cache store ${cacheKey})` : ''}`),
@@ -470,6 +478,10 @@ async function executeStepForWorkflowRun(step, inputs, req, user) {
     const promptRun = await runPromptStep(step, inputs || {}, user, fakeReq, fakeRes);
     if (promptRun?.error) throw new Error(promptRun.error);
     const result = promptRun?.parsed || promptRun?.fullText || '';
+    const payload = {
+      result,
+      prompt: promptRun?.userPrompt || ''
+    };
 
     if (shouldUsePromptCache(wsType)) {
       await saveCachedStepResult({
@@ -484,7 +496,7 @@ async function executeStepForWorkflowRun(step, inputs, req, user) {
       });
     }
 
-    return result;
+    return payload;
   }
 
   if (wsType === 'webpage') return runWebpageStep(step, inputs || {});
@@ -508,7 +520,7 @@ function buildInputsFromDependencies(node, byId, outputsByNodeId, triggerInputs)
   return { ...inherited, ...(triggerInputs || {}) };
 }
 
-async function runWorkflowOrchestration(req, run, workflowData, fromStepId, triggerInputs) {
+async function runWorkflowOrchestration(req, run, workflowData, fromStepId, triggerInputs, validateInputFormat = true) {
   const graph = buildWorkflowGraph(workflowData);
   const order = getDownstreamOrderFromGraph(graph, fromStepId);
   const stepMap = new Map((workflowData?.steps || []).map((step) => [step.ws_name, step]));
@@ -543,7 +555,8 @@ async function runWorkflowOrchestration(req, run, workflowData, fromStepId, trig
     }
 
     const mergedInputs = buildInputsFromDependencies(node, graph.byId, outputsByNodeId, triggerInputs);
-    const validationErrors = validateInputsAgainstSchema(step, mergedInputs);
+    const enforceFormat = validateInputFormat ?? (step?.ws_validate_input_format ?? true);
+    const validationErrors = validateInputsAgainstSchema(step, mergedInputs, { enforceFormat });
     pushRunEvent(run, 'step_started', {
       step_id: nodeId,
       ws_ref: node.ws_ref,
@@ -567,8 +580,16 @@ async function runWorkflowOrchestration(req, run, workflowData, fromStepId, trig
     }
 
     try {
-      const result = await executeStepForWorkflowRun(step, mergedInputs, req, user);
+      const rawResult = await executeStepForWorkflowRun(step, mergedInputs, req, user);
+      const result = (step.ws_type || 'prompt').toLowerCase() === 'prompt' && rawResult && typeof rawResult === 'object' && Object.prototype.hasOwnProperty.call(rawResult, 'result')
+        ? rawResult.result
+        : rawResult;
       outputsByNodeId[nodeId] = result;
+      let promptFileName = '';
+      if ((step.ws_type || 'prompt').toLowerCase() === 'prompt' && rawResult?.prompt) {
+        const logInfo = await saveStepPromptLog(req.user.userId, run.workflowName, step.ws_name, rawResult.prompt);
+        promptFileName = logInfo.fileName;
+      }
 
       await saveStepRunRecord(req.user.userId, run.workflowName, step.ws_name, {
         workflowName: run.workflowName,
@@ -580,7 +601,8 @@ async function runWorkflowOrchestration(req, run, workflowData, fromStepId, trig
         status: 'done',
         logOutput: typeof result === 'string' ? result : JSON.stringify(result, null, 2),
         output: result,
-        prompt: '',
+        prompt: rawResult?.prompt || '',
+        promptFileName,
         logMeta: 'workflow orchestrated done',
         createdAt: new Date().toISOString()
       });
@@ -730,6 +752,7 @@ router.post('/workflows/:workflowName/run', authMiddleware, execLimiter, async (
     const triggerInputs = (req.body?.inputs && typeof req.body.inputs === 'object' && !Array.isArray(req.body.inputs))
       ? req.body.inputs
       : {};
+    const validateInputFormat = req.body?.validate_input_format ?? true;
 
     if (!workflowName) return res.status(400).json({ error: 'workflowName is required in path' });
     if (!fromStepId) return res.status(400).json({ error: 'from_step_id is required' });
@@ -751,7 +774,7 @@ router.post('/workflows/:workflowName/run', authMiddleware, execLimiter, async (
     const run = createRun(req.user.userId, workflowName);
     res.status(202).json({ ok: true, run_id: run.runId, status: run.status });
 
-    runWorkflowOrchestration(req, run, workflowData, fromStepId, triggerInputs)
+    runWorkflowOrchestration(req, run, workflowData, fromStepId, triggerInputs, validateInputFormat)
       .catch((err) => {
         run.status = 'error';
         pushRunEvent(run, 'workflow_finished', {
@@ -808,6 +831,20 @@ router.get('/history/logs', authMiddleware, async (req, res) => {
     });
     res.json({ ok: true, logs });
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/history/prompt', authMiddleware, async (req, res) => {
+  try {
+    const workflow = String(req.query.workflow || '').trim();
+    const step = String(req.query.step || '').trim();
+    const file = String(req.query.file || '').trim();
+    if (!workflow || !step || !file) return res.status(400).json({ error: 'workflow, step and file are required' });
+    const prompt = await readStepPromptLog(req.user.userId, workflow, step, file);
+    res.json({ ok: true, prompt });
+  } catch (err) {
+    if (err.code === 'ENOENT') return res.status(404).json({ error: 'prompt non disponible' });
     res.status(500).json({ error: err.message });
   }
 });

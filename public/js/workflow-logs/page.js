@@ -31,7 +31,14 @@ const tabs = [
 function init() {
   bindControls();
   enableResizablePanels();
+  bindPromptDrawer();
   loadData();
+}
+
+function bindPromptDrawer() {
+  const close = document.getElementById('prompt-drawer-close');
+  const drawer = document.getElementById('prompt-drawer');
+  if (close) close.addEventListener('click', () => drawer?.classList.remove('open'));
 }
 
 function bindControls() {
@@ -262,14 +269,16 @@ function renderSteps() {
 
 function renderTabs() {
   const tabsNode = document.getElementById('detail-tabs');
-  tabsNode.innerHTML = tabs.map(([id, label]) => `<button class="tab ${state.activeTab === id ? 'active' : ''}" data-tab="${id}">${label}</button>`).join('');
+  tabsNode.innerHTML = `${tabs.map(([id, label]) => `<button class="tab ${state.activeTab === id ? 'active' : ''}" data-tab="${id}">${label}</button>`).join('')}<button class="tab" id="prompt-tab-btn">Prompt</button>`;
   tabsNode.querySelectorAll('.tab').forEach((tab) => {
+    if (tab.id === 'prompt-tab-btn') return;
     tab.addEventListener('click', () => {
       state.activeTab = tab.dataset.tab;
       renderDetail();
       renderTabs();
     });
   });
+  document.getElementById('prompt-tab-btn')?.addEventListener('click', openPromptDrawer);
 }
 
 function renderDetail() {
@@ -298,6 +307,31 @@ function renderDetail() {
       await navigator.clipboard.writeText(JSON.stringify(raw, null, 2));
     });
     mountMonacoIfAvailable(raw);
+  }
+}
+
+async function openPromptDrawer() {
+  const run = filteredRuns().find((it) => it.id === state.selectedRunId);
+  const step = run?.steps.find((it) => it.id === state.selectedStepId);
+  const raw = step?.raw;
+  const drawer = document.getElementById('prompt-drawer');
+  const content = document.getElementById('prompt-drawer-content');
+  if (!drawer || !content || !raw) return;
+  drawer.classList.add('open');
+  content.textContent = 'Loading prompt…';
+  const promptFileName = raw.promptFileName;
+  if (!promptFileName) {
+    content.textContent = 'prompt non disponible';
+    return;
+  }
+  try {
+    const query = `workflow=${encodeURIComponent(raw.workflowName)}&step=${encodeURIComponent(raw.stepName)}&file=${encodeURIComponent(promptFileName)}`;
+    const response = await fetch(`/api/exec/history/prompt?${query}`, { credentials: 'include' });
+    if (!response.ok) throw new Error('missing');
+    const payload = await response.json();
+    content.textContent = payload.prompt || 'prompt non disponible';
+  } catch {
+    content.textContent = 'prompt non disponible';
   }
 }
 
