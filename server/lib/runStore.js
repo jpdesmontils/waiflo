@@ -29,6 +29,23 @@ export async function saveStepRunRecord(userId, workflowName, stepName, payload)
   return fp;
 }
 
+export async function saveStepPromptLog(userId, workflowName, stepName, content) {
+  const dir = stepDir(userId, workflowName, stepName);
+  await fs.mkdir(dir, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const fileName = `${stamp}.prompt.txt`;
+  const fp = path.join(dir, fileName);
+  await fs.writeFile(fp, String(content || ''), 'utf8');
+  return { fileName, path: fp };
+}
+
+export async function readStepPromptLog(userId, workflowName, stepName, fileName) {
+  const dir = stepDir(userId, workflowName, stepName);
+  const fp = path.join(dir, fileName);
+  const text = await fs.readFile(fp, 'utf8');
+  return text;
+}
+
 export async function getLatestStepRunRecord(userId, workflowName, stepName) {
   const dir = stepDir(userId, workflowName, stepName);
   const files = (await fs.readdir(dir)).filter(f => f.endsWith('.json')).sort();

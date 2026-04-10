@@ -209,8 +209,20 @@
               </div>
             </div>
           </div>
-          <div class="run-available-title">Inputs disponibles (connexions)</div>
-          <div class="run-available-inputs" id="edit-available-inputs"></div>
+          <div class="form-section">
+            <div class="form-label">Entrées</div>
+            <div class="run-available-title">Inputs disponibles (connexions)</div>
+            <div class="run-available-inputs" id="edit-available-inputs"></div>
+            <div class="schema-list-head">
+              <span>Nom variable</span>
+              <span>Type</span>
+              <span>Obligatoire</span>
+              <span>Schéma</span>
+              <span></span>
+            </div>
+            <div id="inputs-fields"></div>
+            <button class="schema-add-btn" onclick="addInputField()">+ Add input</button>
+          </div>
           <div id="sysprompt-section">
             <div class="form-label-row">
               <div class="form-label">System Prompt</div>
@@ -227,11 +239,6 @@
             <div class="form-hint">{{var}} = escaped · {{{var}}} = raw · {{ws_output_schema}} = runtime injected</div>
           </div>
           <div class="form-section">
-            <div class="form-label">Inputs</div>
-            <div id="inputs-fields"></div>
-            <button class="schema-add-btn" onclick="addInputField()">+ Add input</button>
-          </div>
-          <div class="form-section">
             <div class="form-label">Outputs</div>
             <div id="outputs-fields"></div>
             <button class="schema-add-btn" onclick="addOutputField()">+ Add output</button>
@@ -242,6 +249,10 @@
       <!-- RUN TAB -->
       <div class="etab-content" id="etab-run">
         <div id="run-panel">
+          <label class="run-format-toggle">
+            <input type="checkbox" id="run-enforce-format" checked>
+            <span>Contrôler le format des entrées à l'exécution</span>
+          </label>
           <div class="run-inputs" id="run-inputs-area"></div>
           <div class="run-actions">
             <button class="run-btn" id="run-step-btn" data-default-label="▶ Run Step Only" onclick="runStepOnly()">▶ Run Step Only</button>
