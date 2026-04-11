@@ -71,7 +71,7 @@
 
   "workflows_node_h3": "Node fields",
   "field_step_id":    "References a ws_name defined in the steps array.",
-  "field_depends_on": "Array of step_id values that must complete before this node runs.",
+  "field_depends_on": "Array of step_id values that must complete before this node runs. Data passed downstream comes explicitly from ws_output_schema fields (no implicit aliases).",
 
   "exec_h2":   "Execute API",
   "openapi_h2": "OpenAPI schema",

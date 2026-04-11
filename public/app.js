@@ -1523,8 +1523,6 @@ function buildInheritedInputs(step, nodeId) {
     const depOutput = _lastStepRuns[depNode.step_id] || _lastStepRuns[depNode.ws_ref];
     if (!depOutput || typeof depOutput !== 'object') continue;
     Object.assign(inherited, depOutput);
-    inherited[depNode.ws_ref] = depOutput;
-    inherited[`${depNode.ws_ref}_output`] = depOutput;
   }
   return inherited;
 }
@@ -1542,10 +1540,31 @@ function getAvailableConnectedInputs(step, nodeId) {
     const depStep = (currentWf.data.steps || []).find(s => s.ws_name === depNode.ws_ref);
     const outProps = depStep?.ws_output_schema?.properties || {};
     Object.keys(outProps).forEach(k => names.add(k));
-    names.add(depNode.ws_ref);
-    names.add(`${depNode.ws_ref}_output`);
   }
   return Array.from(names).sort();
+}
+
+function getDeprecatedDependencyAliases(step, nodeId) {
+  if (!step?.ws_prompt_template || !currentWf || !nodeId) return [];
+  const wf = (currentWf.data.workflows || []).find(w => w.wf_nodes?.length);
+  if (!wf) return [];
+  const node = findWorkflowNode(wf, nodeId);
+  if (!node) return [];
+
+  const aliases = [];
+  for (const depId of (node.depends_on || [])) {
+    const depNode = findWorkflowNode(wf, depId);
+    if (!depNode?.ws_ref) continue;
+    aliases.push(depNode.ws_ref, `${depNode.ws_ref}_output`);
+  }
+
+  const template = step.ws_prompt_template || '';
+  return aliases.filter((alias, idx) => {
+    if (aliases.indexOf(alias) !== idx) return false;
+    const escaped = alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const pattern = new RegExp(`\\{\\{\\{?\\s*${escaped}\\s*\\}\\}?`);
+    return pattern.test(template);
+  });
 }
 
 function updateRunTab(s) {
@@ -1582,9 +1601,16 @@ function updateRunTab(s) {
 
   if (availableEl) {
     const vars = getAvailableConnectedInputs(s, _currentNodeId);
-    availableEl.innerHTML = vars.length
+    const deprecatedAliases = getDeprecatedDependencyAliases(s, _currentNodeId);
+    const varsHtml = vars.length
       ? vars.map(v => `<span class="run-var-chip">{{${v}}}</span>`).join('')
       : '<span class="run-available-empty">Aucune variable disponible (connectez un step entrant).</span>';
+
+    const warningHtml = deprecatedAliases.length
+      ? `<div class="run-available-empty" style="margin-bottom:8px;color:#f59e0b;">⚠️ Alias dépréciés détectés dans le template: ${deprecatedAliases.map(a => `{{${escapeHtml(a)}}}`).join(', ')}. Utilisez uniquement les champs explicites du ws_output_schema.</div>`
+      : '';
+
+    availableEl.innerHTML = `${warningHtml}${varsHtml}`;
   }
 
   renderRunState(s, _currentNodeId);
