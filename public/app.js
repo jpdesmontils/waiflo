@@ -533,7 +533,8 @@ function startWorkflowRename(name = currentWf?.name, e) {
 }
 
 // ── API CLIENT ───────────────────────────────────────────────────
-async function api(path, method='GET', body=null, auth=true) {
+async function api(path, method='GET', body=null, auth=true, options={}) {
+  const { logoutOn401 = true } = options || {};
   const headers = { 'Content-Type':'application/json' };
   const opts = { method, headers };
   if (auth) opts.credentials = 'include';
@@ -541,9 +542,17 @@ async function api(path, method='GET', body=null, auth=true) {
   try {
     const res  = await fetch(path,opts);
     const data = await res.json();
-    if (res.status===401 && auth) doLogout();
+    if (res.status===401 && auth && logoutOn401 && currentUser && !guestMode) doLogout();
     return data;
   } catch(e) { return { error:e.message }; }
+}
+
+function requireAuthUser() {
+  if (guestMode || !currentUser) {
+    showSignupCTA();
+    return false;
+  }
+  return true;
 }
 
 // ── WORKFLOW LIST ────────────────────────────────────────────────
@@ -2198,6 +2207,7 @@ function removeMcpServerRow(index) {
 }
 
 async function validateMcpServer(index) {
+  if (!requireAuthUser()) return;
   const row = readMcpServerRow(index);
   const msg = document.getElementById('s-mcp-msg');
   if (!row.server_label || !row.server_url || !row.api_key) {
@@ -2218,6 +2228,7 @@ async function validateMcpServer(index) {
 }
 
 async function saveMcpServers() {
+  if (!requireAuthUser()) return;
   const msg = document.getElementById('s-mcp-msg');
   _mcpServers = _mcpServers.map((_, i) => readMcpServerRow(i));
   const res = await api('/api/auth/mcp-servers', 'PUT', { mcp_servers: _mcpServers });
@@ -2247,8 +2258,9 @@ function onSettingsProviderChange() {
 }
 
 async function loadProviderKeyStatus() {
+  if (!currentUser || guestMode) return;
   try {
-    const data = await api('/api/auth/me', 'GET');
+    const data = await api('/api/auth/me', 'GET', null, true, { logoutOn401: false });
     if (data.providerKeys) {
       _providerKeyStatus = data.providerKeys;
       updateKeyStatusIndicator();
@@ -2274,6 +2286,7 @@ function updateKeyStatusIndicator() {
 }
 
 async function saveApiKey() {
+  if (!requireAuthUser()) return;
   const provider = document.getElementById('s-provider')?.value || 'anthropic';
   const key = document.getElementById('s-apikey').value.trim();
   const msg = document.getElementById('s-apikey-msg');
@@ -2288,6 +2301,7 @@ async function saveApiKey() {
 }
 
 async function deleteApiKey() {
+  if (!requireAuthUser()) return;
   const provider = document.getElementById('s-provider')?.value || 'anthropic';
   const msg = document.getElementById('s-apikey-msg');
   const res = await api('/api/auth/apikey','DELETE',{ provider });
@@ -2299,6 +2313,7 @@ async function deleteApiKey() {
 }
 
 async function changePassword() {
+  if (!requireAuthUser()) return;
   const currentPassword=document.getElementById('s-oldpw').value, newPassword=document.getElementById('s-newpw').value;
   const msg=document.getElementById('s-pw-msg');
   const res=await api('/api/auth/password','PUT',{ currentPassword,newPassword });
@@ -2385,7 +2400,7 @@ window.addEventListener('load', async () => {
   const root = createRoot(document.getElementById('rf-container'));
   root.render(h(AppGraph,null));
 
-  const me=await api('/api/auth/me');
+  const me=await api('/api/auth/me', 'GET', null, true, { logoutOn401: false });
   if (!me.error) { enterAuthUser(me); return; }
   enterGuestMode(true);
 });
