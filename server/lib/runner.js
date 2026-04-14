@@ -90,6 +90,29 @@ function buildPrompt(template, inputs) {
   return prompt;
 }
 
+function formatProviderExecutionError(err, { provider, model }) {
+  const chunks = [];
+  const baseMessage = err?.message || String(err);
+  chunks.push(baseMessage);
+
+  if (provider || model) {
+    chunks.push(`provider=${provider || 'unknown'}`);
+    chunks.push(`model=${model || 'default'}`);
+  }
+
+  if (err?.status) chunks.push(`http_status=${err.status}`);
+  if (err?.code) chunks.push(`code=${err.code}`);
+  if (err?.cause?.code) chunks.push(`cause_code=${err.cause.code}`);
+
+  const name = String(err?.name || '').toLowerCase();
+  const messageLower = String(baseMessage || '').toLowerCase();
+  if (name.includes('connection') || messageLower.includes('connection error') || err?.cause?.code) {
+    chunks.push('hint=network_or_provider_unreachable');
+  }
+
+  return chunks.join(' | ');
+}
+
 /**
  * Execute a prompt step with SSE streaming.
  * Writes SSE events to res (Express response).
@@ -196,14 +219,15 @@ export async function runPromptStep(step, inputs, user, req, res) {
     };
 
   } catch (err) {
+    const detailedMessage = formatProviderExecutionError(err, { provider, model });
 
     if (stream) {
-      send('error', { message: err.message });
+      send('error', { message: detailedMessage });
       res.end();
     } else {
       res.status(500).json({
         ok: false,
-        error: err.message
+        error: detailedMessage
       });
     }
 
@@ -211,7 +235,7 @@ export async function runPromptStep(step, inputs, user, req, res) {
       fullText: '',
       parsed: null,
       userPrompt,
-      error: err.message
+      error: detailedMessage
     };
   }
 }
