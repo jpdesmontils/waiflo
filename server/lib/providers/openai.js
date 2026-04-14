@@ -33,7 +33,7 @@ export class OpenAIProvider extends cLLM {
 
     const streamObj = await this._client.chat.completions.create({
       model: model || this._defaultModel,
-      max_tokens: maxTokens,
+      // max_tokens: maxTokens,
       temperature,
       messages,
       stream: true,
