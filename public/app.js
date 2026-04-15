@@ -15,6 +15,7 @@ import {
   DEMO_WORKFLOW, PROVIDER_MODEL_HINTS, PROVIDER_KEY_PLACEHOLDERS
 } from './js/constants.js';
 import { wfTs, escapeHtml, syntaxHighlight } from './js/utils.js';
+import { streamSseFrames } from './js/sse.js';
 
 // ── STATE ────────────────────────────────────────────────────────
 let currentUser    = null;
@@ -1829,50 +1830,43 @@ async function executeStep(stepDef, runMode='step_only') {
       const errBody = await resp.json().catch(()=>({ error:`HTTP ${resp.status}` }));
       throw new Error(buildSchemaMismatchLogText(errBody, errBody.error || `HTTP ${resp.status}`));
     }
-    const reader=resp.body.getReader(), decoder=new TextDecoder();
-    let buffer='', full='';
-    while(true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream:true });
-      const parts = buffer.split('\n\n'); buffer = parts.pop();
-      for (const part of parts) {
-        const lines = part.split('\n');
-        const event = lines.find(l=>l.startsWith('event: '))?.slice(7) || 'message';
-        const data  = lines.find(l=>l.startsWith('data: '))?.slice(6);
-        if (!data) continue;
-        const obj = JSON.parse(data);
-        if (event==='token') {
-          full += obj.text;
-          outEl.textContent = full;
-          saveStepRunState(s, _currentNodeId, { status:'running', logOutput:full });
-        } else if (event==='done') {
-          const elapsed = Date.now()-tsStart;
-          if (obj.parsed) {
-            const parsedText = JSON.stringify(obj.parsed, null, 2);
-            outEl.textContent = parsedText;
-            renderOutputVars(varsEl, obj.parsed);
-            rememberStepResult(s, _currentNodeId, obj.parsed);
-            metaEl.innerHTML  = `✓ parsed json · ${elapsed}ms · ${ts()}`;
-            statusEl.textContent='done'; statusEl.className='run-status done';
-            saveStepRunState(s, _currentNodeId, { status:'done', output:parsedText, logOutput:parsedText, logMeta:metaEl.innerHTML, logError:false });
-          } else {
-            outEl.textContent = full;
-            renderOutputVars(varsEl, full);
-            metaEl.innerHTML = `<span style="color:var(--amber)">⚠ json parse failed — raw output</span> · ${elapsed}ms · ${ts()}`;
-            statusEl.textContent='done_raw'; statusEl.className='run-status done';
-            saveStepRunState(s, _currentNodeId, { status:'done_raw', output:full, logOutput:full, logMeta:metaEl.innerHTML, logError:false });
-          }
-        } else if (event==='error') {
-          const elapsed = Date.now()-tsStart;
-          outEl.className='run-output error'; outEl.textContent=obj.message;
-          metaEl.innerHTML=`<span style="color:var(--red)">✕ ${ts()}</span> · ${elapsed}ms`;
-          statusEl.textContent='error'; statusEl.className='run-status error';
-          saveStepRunState(s, _currentNodeId, { status:'error', output:'', logOutput:obj.message, logMeta:metaEl.innerHTML, logError:true });
-          return false;
-        }
+    let full = '';
+    await streamSseFrames(resp.body, ({ event, data: obj }) => {
+      if (event==='token') {
+        full += obj.text;
+        outEl.textContent = full;
+        saveStepRunState(s, _currentNodeId, { status:'running', logOutput:full });
+        return true;
       }
-    }
+      if (event==='done') {
+        const elapsed = Date.now()-tsStart;
+        if (obj.parsed) {
+          const parsedText = JSON.stringify(obj.parsed, null, 2);
+          outEl.textContent = parsedText;
+          renderOutputVars(varsEl, obj.parsed);
+          rememberStepResult(s, _currentNodeId, obj.parsed);
+          metaEl.innerHTML  = `✓ parsed json · ${elapsed}ms · ${ts()}`;
+          statusEl.textContent='done'; statusEl.className='run-status done';
+          saveStepRunState(s, _currentNodeId, { status:'done', output:parsedText, logOutput:parsedText, logMeta:metaEl.innerHTML, logError:false });
+        } else {
+          outEl.textContent = full;
+          renderOutputVars(varsEl, full);
+          metaEl.innerHTML = `<span style="color:var(--amber)">⚠ json parse failed — raw output</span> · ${elapsed}ms · ${ts()}`;
+          statusEl.textContent='done_raw'; statusEl.className='run-status done';
+          saveStepRunState(s, _currentNodeId, { status:'done_raw', output:full, logOutput:full, logMeta:metaEl.innerHTML, logError:false });
+        }
+        return true;
+      }
+      if (event==='error') {
+        const elapsed = Date.now()-tsStart;
+        outEl.className='run-output error'; outEl.textContent=obj.message;
+        metaEl.innerHTML=`<span style="color:var(--red)">✕ ${ts()}</span> · ${elapsed}ms`;
+        statusEl.textContent='error'; statusEl.className='run-status error';
+        saveStepRunState(s, _currentNodeId, { status:'error', output:'', logOutput:obj.message, logMeta:metaEl.innerHTML, logError:true });
+        return false;
+      }
+      return true;
+    });
   } catch(e) {
     const elapsed = Date.now()-tsStart;
     const aborted = e.name === 'AbortError';
@@ -1938,74 +1932,58 @@ async function runWorkflowFromHere() {
     if (!streamResp.ok) throw new Error(`HTTP ${streamResp.status} while opening run stream`);
 
     const wf = (currentWf?.data?.workflows || []).find(w => w.wf_nodes?.length);
-    const reader = streamResp.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
     let finished = false;
-
-    while (!finished) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream:true });
-      const frames = buffer.split('\n\n');
-      buffer = frames.pop();
-
-      for (const frame of frames) {
-        const lines = frame.split('\n');
-        const event = lines.find(l=>l.startsWith('event: '))?.slice(7) || 'message';
-        const raw = lines.find(l=>l.startsWith('data: '))?.slice(6);
-        if (!raw) continue;
-        const data = JSON.parse(raw);
-
-        if (event === 'step_started') {
-          const node = findWorkflowNode(wf, data.step_id);
-          const step = (currentWf.data.steps || []).find(st => st.ws_name === data.ws_ref);
-          if (!node || !step) continue;
-          const stepLabel = data.step_desc || step.ws_name;
-          currentStep = step;
-          _currentNodeId = node.step_id;
-          setRunningGraphState(node.step_id, true);
-          saveStepRunState(step, node.step_id, {
-            status:'running',
-            output:'',
-            lastInputs:data.inputs || {},
-            logOutput:'',
-            logMeta:'backend orchestrated running',
-            logError:false
-          });
-          appendWorkflowExecLog(`${wfTs()} ## ${stepLabel} ## Start${formatWorkflowEventContext(data)}`);
-          continue;
-        }
-
-        if (event === 'step_finished') {
-          const node = findWorkflowNode(wf, data.step_id);
-          const step = (currentWf.data.steps || []).find(st => st.ws_name === data.ws_ref);
-          if (!node || !step) continue;
-          const stepLabel = data.step_desc || step.ws_name;
-          const isError = data.status !== 'done';
-          const outputText = isError
-            ? buildSchemaMismatchLogText(data, data.error || '')
-            : JSON.stringify(data.output ?? '', null, 2);
-          if (!isError) rememberStepResult(step, node.step_id, data.output);
-          saveStepRunState(step, node.step_id, {
-            status: isError ? 'error' : 'done',
-            output: outputText,
-            logOutput: outputText,
-            logMeta: isError ? 'backend orchestrated error' : 'backend orchestrated done',
-            logError: isError
-          });
-          appendWorkflowExecLog(`${wfTs()} ## ${stepLabel} ## End${formatWorkflowEventContext(data)}${isError ? formatDetailedWorkflowError(data) : ''}`);
-          if (_currentNodeId === node.step_id) renderRunState(step, node.step_id);
-          continue;
-        }
-
-        if (event === 'workflow_finished') {
-          appendWorkflowExecLog(`${wfTs()} ## Workflow ## End${formatWorkflowEventContext(data)}${formatDetailedWorkflowError(data)}`);
-          finished = true;
-          break;
-        }
+    await streamSseFrames(streamResp.body, ({ event, data }) => {
+      if (event === 'step_started') {
+        const node = findWorkflowNode(wf, data.step_id);
+        const step = (currentWf.data.steps || []).find(st => st.ws_name === data.ws_ref);
+        if (!node || !step) return true;
+        const stepLabel = data.step_desc || step.ws_name;
+        currentStep = step;
+        _currentNodeId = node.step_id;
+        setRunningGraphState(node.step_id, true);
+        saveStepRunState(step, node.step_id, {
+          status:'running',
+          output:'',
+          lastInputs:data.inputs || {},
+          logOutput:'',
+          logMeta:'backend orchestrated running',
+          logError:false
+        });
+        appendWorkflowExecLog(`${wfTs()} ## ${stepLabel} ## Start${formatWorkflowEventContext(data)}`);
+        return true;
       }
-    }
+
+      if (event === 'step_finished') {
+        const node = findWorkflowNode(wf, data.step_id);
+        const step = (currentWf.data.steps || []).find(st => st.ws_name === data.ws_ref);
+        if (!node || !step) return true;
+        const stepLabel = data.step_desc || step.ws_name;
+        const isError = data.status !== 'done';
+        const outputText = isError
+          ? buildSchemaMismatchLogText(data, data.error || '')
+          : JSON.stringify(data.output ?? '', null, 2);
+        if (!isError) rememberStepResult(step, node.step_id, data.output);
+        saveStepRunState(step, node.step_id, {
+          status: isError ? 'error' : 'done',
+          output: outputText,
+          logOutput: outputText,
+          logMeta: isError ? 'backend orchestrated error' : 'backend orchestrated done',
+          logError: isError
+        });
+        appendWorkflowExecLog(`${wfTs()} ## ${stepLabel} ## End${formatWorkflowEventContext(data)}${isError ? formatDetailedWorkflowError(data) : ''}`);
+        if (_currentNodeId === node.step_id) renderRunState(step, node.step_id);
+        return true;
+      }
+
+      if (event === 'workflow_finished') {
+        appendWorkflowExecLog(`${wfTs()} ## Workflow ## End${formatWorkflowEventContext(data)}${formatDetailedWorkflowError(data)}`);
+        finished = true;
+        return false;
+      }
+
+      return true;
+    });
   } catch (err) {
     const msg = err?.name === 'AbortError' ? 'Execution stopped by user' : (err?.message || 'Workflow execution failed');
     appendWorkflowExecLog(`${wfTs()} ## Workflow ## Error: ${msg}`);

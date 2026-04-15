@@ -38,7 +38,8 @@ function createRun(userId, workflowName) {
     createdAt: new Date().toISOString(),
     events: [],
     clients: new Set(),
-    cancelRequested: false
+    cancelRequested: false,
+    activeStepAbortController: null
   };
   workflowRuns.set(runId, run);
   return run;
@@ -502,7 +503,7 @@ function getDownstreamOrderFromGraph(graph, startNodeId) {
   return order;
 }
 
-async function executeStepForWorkflowRun(step, inputs, req, user) {
+async function executeStepForWorkflowRun(step, inputs, req, user, executionOptions = {}) {
   const wsType = (step.ws_type || 'prompt').toLowerCase();
   const workflowName = req?.workflowNameForRun || 'ad-hoc';
   const userId = req.user?.userId || 'guest';
@@ -549,9 +550,9 @@ async function executeStepForWorkflowRun(step, inputs, req, user) {
   }
 
   let result;
-  if (wsType === 'webpage') result = await runWebpageStep(step, inputs || {});
-  else if (wsType === 'tool') result = await runToolStep(step, inputs || {}, user);
-  else if (wsType === 'api') result = await runApiStep(step, inputs || {});
+  if (wsType === 'webpage') result = await runWebpageStep(step, inputs || {}, executionOptions);
+  else if (wsType === 'tool') result = await runToolStep(step, inputs || {}, user, executionOptions);
+  else if (wsType === 'api') result = await runApiStep(step, inputs || {}, executionOptions);
   else throw new Error(`ws_type "${wsType}" not supported in workflow run`);
 
   if (shouldUseStepCache(wsType)) {
@@ -589,11 +590,22 @@ async function runWorkflowOrchestration(req, run, workflowData, fromStepId, trig
   const outputsByNodeId = {};
   const user = await getUser(req.user.userId);
   let lastFinishedStep = null;
+  const executedNodeIds = new Set();
   req.workflowNameForRun = run.workflowName;
 
   pushRunEvent(run, 'workflow_started', { from_step_id: fromStepId, total_steps: order.length });
 
   for (const nodeId of order) {
+    if (executedNodeIds.has(nodeId)) {
+      pushRunEvent(run, 'step_finished', {
+        step_id: nodeId,
+        status: 'skipped',
+        error: 'Duplicate node detected in execution order'
+      });
+      continue;
+    }
+    executedNodeIds.add(nodeId);
+
     if (run.cancelRequested) {
       run.status = 'stopped';
       pushRunEvent(run, 'workflow_finished', { status: 'stopped', reason: 'cancel_requested' });
@@ -641,7 +653,10 @@ async function runWorkflowOrchestration(req, run, workflowData, fromStepId, trig
     }
 
     try {
-      const result = await executeStepForWorkflowRun(step, mergedInputs, req, user);
+      const stepAbortController = new AbortController();
+      run.activeStepAbortController = stepAbortController;
+      const result = await executeStepForWorkflowRun(step, mergedInputs, req, user, { signal: stepAbortController.signal });
+      run.activeStepAbortController = null;
       outputsByNodeId[nodeId] = result;
 
       await saveStepRunRecord(req.user.userId, run.workflowName, step.ws_name, {
@@ -674,6 +689,7 @@ async function runWorkflowOrchestration(req, run, workflowData, fromStepId, trig
         output: result
       };
     } catch (err) {
+      run.activeStepAbortController = null;
       await saveStepRunRecord(req.user.userId, run.workflowName, step.ws_name, {
         workflowName: run.workflowName,
         nodeId,
@@ -858,6 +874,9 @@ router.post('/runs/:runId/stop', authMiddleware, async (req, res) => {
   const run = workflowRuns.get(runId);
   if (!run || run.userId !== req.user.userId) return res.status(404).json({ error: 'Run not found' });
   run.cancelRequested = true;
+  if (run.activeStepAbortController) {
+    try { run.activeStepAbortController.abort(new Error('workflow_cancelled')); } catch { /* noop */ }
+  }
   res.json({ ok: true, run_id: runId, status: 'stopping' });
 });
 
