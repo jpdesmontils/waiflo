@@ -12,6 +12,7 @@
  * @property {any} output
  * @property {string} prompt
  * @property {Record<string, any>} logMeta
+ * @property {string} callerIp
  * @property {string} createdAt
  */
 
@@ -37,6 +38,7 @@
  * @property {number|null} durationMs
  * @property {number} stepsCount
  * @property {string} lastStep
+ * @property {string} callerIp
  * @property {WorkflowStepView[]} steps
  */
 
