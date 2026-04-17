@@ -7,7 +7,7 @@ import { authMiddleware } from './auth.js';
 import { getUser } from '../lib/users.js';
 import { runPromptStep, runApiStep, runWebpageStep, runToolStep } from '../lib/runner.js';
 import { PROVIDER_META } from '../lib/providers/index.js';
-import { getLatestStepRunRecord, listStepRunRecords, saveStepRunRecord } from '../lib/runStore.js';
+import { clearUserRunLogs, getLatestStepRunRecord, listStepRunRecords, saveStepRunRecord } from '../lib/runStore.js';
 import { CACHE_CONFIG } from '../config.js';
 import { getCachedStepResult, saveCachedStepResult } from '../lib/stepCacheStore.js';
 import { wfPath } from '../lib/utils.js';
@@ -221,6 +221,10 @@ function promptStreamEnabled(req) {
   return !(queryStream === '0' || queryStream === 'false');
 }
 
+function getCallerRemoteAddr(req) {
+  return String(req?.socket?.remoteAddress || req?.connection?.remoteAddress || '').trim();
+}
+
 function sendPromptCacheResponse(req, res, output) {
   const stream = promptStreamEnabled(req);
   if (stream) {
@@ -251,6 +255,7 @@ async function executeResolvedStep(req, res, { step, inputs, context }) {
   const workflowName = context?.workflowName || 'ad-hoc';
   const nodeId = context?.nodeId || step.ws_name;
   const runMode = context?.runMode || 'step_only';
+  const callerIp = getCallerRemoteAddr(req);
 
   // Resolve user — guest fallback if no auth
   let user = null;
@@ -331,6 +336,7 @@ async function executeResolvedStep(req, res, { step, inputs, context }) {
         logOutput: promptRun?.error || promptRun?.fullText || '',
         output: promptRun?.parsed || promptRun?.fullText || '',
         prompt: promptRun?.userPrompt || '',
+        callerIp,
         logMeta: promptRun?.error
           ? 'prompt error'
           : (cacheHit ? `prompt done (cache hit ${cacheKey || ''})`.trim() : `prompt done${cacheKey ? ` (cache store ${cacheKey})` : ''}`),
@@ -360,6 +366,7 @@ async function executeResolvedStep(req, res, { step, inputs, context }) {
           logOutput: JSON.stringify(result, null, 2),
           output: result,
           prompt: '',
+          callerIp,
           logMeta: `${wsType} done`,
           createdAt: new Date().toISOString()
         });
@@ -378,6 +385,7 @@ async function executeResolvedStep(req, res, { step, inputs, context }) {
           logOutput: err.message,
           output: '',
           prompt: '',
+          callerIp,
           logMeta: `${wsType} error`,
           createdAt: new Date().toISOString()
         });
@@ -513,6 +521,7 @@ async function runWorkflowOrchestration(req, run, workflowData, fromStepId, trig
   const order = getDownstreamOrderFromGraph(graph, fromStepId);
   const stepMap = new Map((workflowData?.steps || []).map((step) => [step.ws_name, step]));
   const outputsByNodeId = {};
+  const callerIp = getCallerRemoteAddr(req);
   const user = await getUser(req.user.userId);
   let lastFinishedStep = null;
   req.workflowNameForRun = run.workflowName;
@@ -581,6 +590,7 @@ async function runWorkflowOrchestration(req, run, workflowData, fromStepId, trig
         logOutput: typeof result === 'string' ? result : JSON.stringify(result, null, 2),
         output: result,
         prompt: '',
+        callerIp,
         logMeta: 'workflow orchestrated done',
         createdAt: new Date().toISOString()
       });
@@ -611,6 +621,7 @@ async function runWorkflowOrchestration(req, run, workflowData, fromStepId, trig
         logOutput: err.message,
         output: '',
         prompt: '',
+        callerIp,
         logMeta: 'workflow orchestrated error',
         createdAt: new Date().toISOString()
       });
@@ -807,6 +818,15 @@ router.get('/history/logs', authMiddleware, async (req, res) => {
       workflowName: workflowName || null
     });
     res.json({ ok: true, logs });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.delete('/history/logs', authMiddleware, async (req, res) => {
+  try {
+    const details = await clearUserRunLogs(req.user.userId);
+    res.json({ ok: true, details });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
