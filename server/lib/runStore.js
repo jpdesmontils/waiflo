@@ -127,3 +127,46 @@ export async function pruneWorkflowRunData(userId, workflowName, allowedSteps = 
     .filter(d => d.isDirectory() && !allowed.has(d.name))
     .map(d => fs.rm(path.join(wfDir, d.name), { recursive: true, force: true })));
 }
+
+export async function clearUserRunLogs(userId) {
+  const rootDir = runBaseDir(userId);
+  const details = {
+    deletedFiles: 0,
+    deletedDirs: 0,
+    failed: []
+  };
+
+  async function walkAndDelete(targetPath) {
+    let entries = [];
+    try {
+      entries = await fs.readdir(targetPath, { withFileTypes: true });
+    } catch (err) {
+      if (err.code === 'ENOENT') return;
+      throw err;
+    }
+
+    for (const entry of entries) {
+      const entryPath = path.join(targetPath, entry.name);
+      if (entry.isDirectory()) {
+        await walkAndDelete(entryPath);
+        try {
+          await fs.rmdir(entryPath);
+          details.deletedDirs += 1;
+        } catch (err) {
+          details.failed.push({ path: entryPath, message: err.message });
+        }
+        continue;
+      }
+
+      try {
+        await fs.rm(entryPath, { force: true });
+        details.deletedFiles += 1;
+      } catch (err) {
+        details.failed.push({ path: entryPath, message: err.message });
+      }
+    }
+  }
+
+  await walkAndDelete(rootDir);
+  return details;
+}

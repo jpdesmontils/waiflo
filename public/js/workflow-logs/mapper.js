@@ -52,6 +52,7 @@ export function mapLogsToWorkflowViews(files) {
         id: runId,
         workflowName,
         runMode: orderedRows[0]?.runMode || 'manual',
+        callerIp: orderedRows[orderedRows.length - 1]?.callerIp || '',
         status,
         createdAt: startedAt,
         durationMs,
