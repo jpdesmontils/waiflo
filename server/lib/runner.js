@@ -90,6 +90,29 @@ function buildPrompt(template, inputs) {
   return prompt;
 }
 
+function formatProviderExecutionError(err, { provider, model }) {
+  const chunks = [];
+  const baseMessage = err?.message || String(err);
+  chunks.push(baseMessage);
+
+  if (provider || model) {
+    chunks.push(`provider=${provider || 'unknown'}`);
+    chunks.push(`model=${model || 'default'}`);
+  }
+
+  if (err?.status) chunks.push(`http_status=${err.status}`);
+  if (err?.code) chunks.push(`code=${err.code}`);
+  if (err?.cause?.code) chunks.push(`cause_code=${err.cause.code}`);
+
+  const name = String(err?.name || '').toLowerCase();
+  const messageLower = String(baseMessage || '').toLowerCase();
+  if (name.includes('connection') || messageLower.includes('connection error') || err?.cause?.code) {
+    chunks.push('hint=network_or_provider_unreachable');
+  }
+
+  return chunks.join(' | ');
+}
+
 /**
  * Execute a prompt step with SSE streaming.
  * Writes SSE events to res (Express response).
@@ -196,14 +219,15 @@ export async function runPromptStep(step, inputs, user, req, res) {
     };
 
   } catch (err) {
+    const detailedMessage = formatProviderExecutionError(err, { provider, model });
 
     if (stream) {
-      send('error', { message: err.message });
+      send('error', { message: detailedMessage });
       res.end();
     } else {
       res.status(500).json({
         ok: false,
-        error: err.message
+        error: detailedMessage
       });
     }
 
@@ -211,7 +235,7 @@ export async function runPromptStep(step, inputs, user, req, res) {
       fullText: '',
       parsed: null,
       userPrompt,
-      error: err.message
+      error: detailedMessage
     };
   }
 }
@@ -239,7 +263,7 @@ function renderTemplateDeep(value, vars) {
  * Execute an API step (HTTP GET/POST/etc).
  * Returns { results, total, size } or raw response body.
  */
-export async function runApiStep(step, inputs) {
+export async function runApiStep(step, inputs, executionOptions = {}) {
   const apiConfig = step.ws_api || {};
   let url = renderTemplateString(apiConfig.url || '', inputs);
 
@@ -261,7 +285,29 @@ export async function runApiStep(step, inputs) {
     headers['Content-Type'] = headers['Content-Type'] || 'application/json';
   }
 
-  const response = await fetch(url, fetchOpts);
+  const timeoutMs = Number(apiConfig.timeoutMs || executionOptions.timeoutMs || 30000);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(new Error('api_timeout')), timeoutMs);
+  const parentSignal = executionOptions?.signal;
+  const abortFromParent = () => controller.abort(parentSignal?.reason || new Error('workflow_cancelled'));
+  if (parentSignal) {
+    if (parentSignal.aborted) abortFromParent();
+    else parentSignal.addEventListener('abort', abortFromParent, { once: true });
+  }
+
+  let response;
+  try {
+    response = await fetch(url, { ...fetchOpts, signal: controller.signal });
+  } catch (err) {
+    if (err?.name === 'AbortError') {
+      if (parentSignal?.aborted) throw new Error(`API request aborted (workflow cancelled) — ${url}`);
+      throw new Error(`API request timeout after ${timeoutMs}ms — ${url}`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+    if (parentSignal) parentSignal.removeEventListener('abort', abortFromParent);
+  }
   if (!response.ok) {
     throw new Error(`HTTP ${response.status} — ${response.statusText} — ${url}`);
   }
@@ -273,7 +319,7 @@ export async function runApiStep(step, inputs) {
   return { raw: await response.text() };
 }
 
-async function runWebpageHttpStep(webpageConfig, inputs) {
+async function runWebpageHttpStep(webpageConfig, inputs, executionOptions = {}) {
   const url = renderTemplateString(webpageConfig.url || '', inputs);
   const headers = {
     Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -282,7 +328,29 @@ async function runWebpageHttpStep(webpageConfig, inputs) {
     ...renderTemplateDeep(webpageConfig.headers || {}, inputs)
   };
 
-  const response = await fetch(url, { method: 'GET', headers, redirect: 'follow' });
+  const timeoutMs = Number(webpageConfig.timeoutMs || executionOptions.timeoutMs || 30000);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(new Error('webpage_timeout')), timeoutMs);
+  const parentSignal = executionOptions?.signal;
+  const abortFromParent = () => controller.abort(parentSignal?.reason || new Error('workflow_cancelled'));
+  if (parentSignal) {
+    if (parentSignal.aborted) abortFromParent();
+    else parentSignal.addEventListener('abort', abortFromParent, { once: true });
+  }
+
+  let response;
+  try {
+    response = await fetch(url, { method: 'GET', headers, redirect: 'follow', signal: controller.signal });
+  } catch (err) {
+    if (err?.name === 'AbortError') {
+      if (parentSignal?.aborted) throw new Error(`Webpage fetch aborted (workflow cancelled) — ${url}`);
+      throw new Error(`Webpage fetch timeout after ${timeoutMs}ms — ${url}`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+    if (parentSignal) parentSignal.removeEventListener('abort', abortFromParent);
+  }
   if (!response.ok) {
     throw new Error(`HTTP ${response.status} — ${response.statusText} — ${url}`);
   }
@@ -360,14 +428,14 @@ async function runWebpageBrowserStep(webpageConfig, inputs) {
  * mode=http (default): simple fetch
  * mode=browser: Playwright headless render
  */
-export async function runWebpageStep(step, inputs) {
+export async function runWebpageStep(step, inputs, executionOptions = {}) {
   const webpageConfig = step.ws_webpage || step.ws_api || {};
   const mode = (webpageConfig.mode || 'http').toLowerCase();
 
   if (mode === 'browser') {
     return runWebpageBrowserStep(webpageConfig, inputs || {});
   }
-  return runWebpageHttpStep(webpageConfig, inputs || {});
+  return runWebpageHttpStep(webpageConfig, inputs || {}, executionOptions);
 }
 
 /**
@@ -468,7 +536,7 @@ async function buildMcpRequestHeaders(server, apiKey) {
   return headers;
 }
 
-export async function runToolStep(step, inputs, user) {
+export async function runToolStep(step, inputs, user, executionOptions = {}) {
   const { mcpServerLabel, toolName } = resolveToolConfig(step);
   const servers = Array.isArray(user?.mcpServers) ? user.mcpServers : [];
   const server = servers.find((row) => String(row?.server_label || '').trim() === mcpServerLabel);
@@ -487,6 +555,12 @@ export async function runToolStep(step, inputs, user) {
   const controller = new AbortController();
   const timeoutMs = Number(server.timeoutMs || 30000);
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const parentSignal = executionOptions?.signal;
+  const abortFromParent = () => controller.abort(parentSignal?.reason || new Error('workflow_cancelled'));
+  if (parentSignal) {
+    if (parentSignal.aborted) abortFromParent();
+    else parentSignal.addEventListener('abort', abortFromParent, { once: true });
+  }
 
   try {
     const response = await fetch(endpoint, {
@@ -509,7 +583,14 @@ export async function runToolStep(step, inputs, user) {
     }
 
     return await parseMcpResponse(response);
+  } catch (err) {
+    if (err?.name === 'AbortError') {
+      if (parentSignal?.aborted) throw new Error(`MCP tool "${toolName}" aborted (workflow cancelled)`);
+      throw new Error(`MCP tool "${toolName}" timeout after ${timeoutMs}ms`);
+    }
+    throw err;
   } finally {
     clearTimeout(timer);
+    if (parentSignal) parentSignal.removeEventListener('abort', abortFromParent);
   }
 }
