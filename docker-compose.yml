@@ -17,7 +17,6 @@ services:
       - JWT_SECRET=${JWT_SECRET}
       - MASTER_SECRET=${MASTER_SECRET}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-    restart: unless-stopped
 
 volumes:
   waiflo-data:
