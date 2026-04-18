@@ -1731,13 +1731,40 @@ function renderOutputVars(container, rawOutput) {
     return;
   }
 
-  container.innerHTML = Object.entries(parsed).map(([k, v]) => {
-    const txt = typeof v === 'string' ? v : JSON.stringify(v, null, 2);
-    if (txt.includes('\n')) {
-      return `<details><summary><span class="var-name">${escapeHtml(k)}</span></summary><pre>${escapeHtml(txt)}</pre></details>`;
-    }
-    return `<div class="var-row"><span class="var-name">${escapeHtml(k)}</span><span>${escapeHtml(txt)}</span></div>`;
-  }).join('');
+  container.innerHTML = `<div class="json-tree-root">${renderJsonTreeNodes(parsed)}</div>`;
+}
+
+function renderJsonTreeNodes(value) {
+  if (!value || typeof value !== 'object') return '';
+  const entries = Array.isArray(value)
+    ? value.map((v, i) => [String(i), v])
+    : Object.entries(value);
+  return entries.map(([key, childValue]) => renderJsonTreeNode(key, childValue, 0)).join('');
+}
+
+function renderJsonTreeNode(key, value, depth = 0) {
+  const keyHtml = `<span class="var-name">${escapeHtml(key)}</span>`;
+  if (value === null) {
+    return `<div class="var-row">${keyHtml}<span class="json-tree-leaf">null</span></div>`;
+  }
+
+  if (typeof value !== 'object') {
+    const leafText = typeof value === 'string' ? `"${value}"` : String(value);
+    return `<div class="var-row">${keyHtml}<span class="json-tree-leaf">${escapeHtml(leafText)}</span></div>`;
+  }
+
+  const isArray = Array.isArray(value);
+  const entries = isArray ? value.map((v, i) => [String(i), v]) : Object.entries(value);
+  const countLabel = isArray ? `[${entries.length}]` : `{${entries.length}}`;
+  const childrenHtml = entries.length
+    ? `<div class="json-tree-children">${entries.map(([childKey, childValue]) => renderJsonTreeNode(childKey, childValue, depth + 1)).join('')}</div>`
+    : `<div class="json-tree-children json-tree-empty">empty</div>`;
+  const openAttr = depth === 0 ? ' open' : '';
+
+  return `<details class="json-tree-node"${openAttr}>
+    <summary>${keyHtml}<span class="json-tree-meta">${countLabel}</span></summary>
+    ${childrenHtml}
+  </details>`;
 }
 
 function buildSchemaMismatchLogText(payload, fallbackMessage = '') {
