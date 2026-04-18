@@ -9,7 +9,7 @@ import { runPromptStep, runApiStep, runWebpageStep, runToolStep } from '../lib/r
 import { PROVIDER_META } from '../lib/providers/index.js';
 import { clearUserRunLogs, getLatestStepRunRecord, listStepRunRecords, saveStepRunRecord } from '../lib/runStore.js';
 import { CACHE_CONFIG } from '../config.js';
-import { getCachedStepResult, saveCachedStepResult } from '../lib/stepCacheStore.js';
+import { clearUserStepCache, getCachedStepResult, saveCachedStepResult } from '../lib/stepCacheStore.js';
 import { wfPath } from '../lib/utils.js';
 
 const router = express.Router();
@@ -962,6 +962,15 @@ router.get('/history/logs', authMiddleware, async (req, res) => {
 router.delete('/history/logs', authMiddleware, async (req, res) => {
   try {
     const details = await clearUserRunLogs(req.user.userId);
+    res.json({ ok: true, details });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.delete('/history/cache', authMiddleware, async (req, res) => {
+  try {
+    const details = await clearUserStepCache(req.user.userId);
     res.json({ ok: true, details });
   } catch (err) {
     res.status(500).json({ error: err.message });

@@ -157,6 +157,17 @@ export async function purgeExpiredStepCacheEntries({ now = Date.now(), ttlDays =
   return { scanned: files.length, removed };
 }
 
+export async function clearUserStepCache(userId) {
+  const dir = path.join(CACHE_CONFIG.dir, userSegment(userId));
+  const files = await collectJsonFiles(dir);
+  try {
+    await fs.rm(dir, { recursive: true, force: true });
+  } catch (err) {
+    if (err.code !== 'ENOENT') throw err;
+  }
+  return { deleted: files.length };
+}
+
 let janitorStarted = false;
 
 export function startStepCacheJanitor() {
