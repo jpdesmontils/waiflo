@@ -51,6 +51,7 @@ let _activeRunEdgeIds = new Set();
 // FIX #6 — flag anti-réentrance pour hydrateRunStateFromServer
 let _hydratingNodes = new Set();
 let _workflowRunId = null;
+let _activeWorkflowId = null;
 
 // ══════════════════════════════════════════════════════════════════
 //  REACT FLOW — CUSTOM NODE
@@ -192,7 +193,7 @@ function computeLayout(nodes, edges, direction) {
 // ── buildGraph ───────────────────────────────────────────────────
 function buildGraph(data) {
   const steps    = data.steps || [];
-  const wf       = (data.workflows||[]).find(w=>w.wf_nodes?.length) || null;
+  const wf       = findActiveWorkflow(data);
   const stepsMap = {};
   steps.forEach(s=>(stepsMap[s.ws_name]=s));
   let rawNodes=[], rawEdges=[];
@@ -269,14 +270,36 @@ function buildGraph(data) {
 function fitGraph() { _fitView?.({ padding:0.12, duration:400 }); }
 function setLayout(dir) { rankDir=dir; if(currentWf) buildGraph(currentWf.data); }
 
+function assignWorkflowIds(data) {
+  if (!Array.isArray(data?.workflows)) return;
+  const seen = new Set();
+  data.workflows.forEach(wf => {
+    if (!wf.wf_id || seen.has(wf.wf_id)) {
+      wf.wf_id = crypto.randomUUID();
+    }
+    seen.add(wf.wf_id);
+  });
+}
+
+function findActiveWorkflow(data) {
+  const wfs = data?.workflows || [];
+  if (_activeWorkflowId) {
+    const byId = wfs.find(w => w.wf_id === _activeWorkflowId);
+    if (byId) return byId;
+  }
+  return wfs.find(w => w.wf_nodes?.length) || null;
+}
+
 function ensureWorkflowGraph() {
   if (!currentWf) return null;
   const data = currentWf.data;
   if (!Array.isArray(data.workflows)) data.workflows = [];
 
-  let wf = data.workflows.find(w => Array.isArray(w.wf_nodes));
+  let wf = data.workflows.find(w => w.wf_id && w.wf_id === _activeWorkflowId && Array.isArray(w.wf_nodes));
+  if (!wf) wf = data.workflows.find(w => Array.isArray(w.wf_nodes));
   if (!wf) {
     wf = {
+      wf_id: crypto.randomUUID(),
       wf_name: data.lang_name || currentWf.name || 'main',
       wf_nodes: (data.steps || []).map((step, idx) => ({
         step_id: step.ws_name || `step_${idx+1}`,
@@ -287,7 +310,7 @@ function ensureWorkflowGraph() {
     };
     data.workflows.push(wf);
   }
-
+  if (!wf.wf_id) wf.wf_id = crypto.randomUUID();
   if (!Array.isArray(wf.wf_nodes)) wf.wf_nodes = [];
   return wf;
 }
@@ -723,12 +746,14 @@ async function openWorkflow(name) {
     data=await api(`/api/workflows/${name}`);
     if (data.error) return toast(data.error,'err');
   }
+  assignWorkflowIds(data);
   currentWf={name,data};
   _lastStepRuns = {};
   _stepRunUiState = {};
   _hydratingNodes = new Set();
   _runController = null;
   _isExecuting = false;
+  _activeWorkflowId = null;
   setExecutionUiState(false);
   closeEditor(); buildGraph(data); renderWorkflowList();
   document.getElementById('btn-save').style.display='';
@@ -1248,7 +1273,7 @@ function setRunningGraphState(nodeId, includeDeps = false) {
     if (currentWf) buildGraph(currentWf.data);
     return;
   }
-  const wf = (currentWf.data.workflows || []).find(w => w.wf_nodes?.length);
+  const wf = findActiveWorkflow(currentWf.data);
   if (!wf) return;
   const node = findWorkflowNode(wf, nodeId);
   if (!node) return;
@@ -1935,6 +1960,9 @@ async function runWorkflowFromHere() {
     triggerInputs[k]=val;
   }
 
+  const activeWfForRun = findActiveWorkflow(currentWf.data);
+  _activeWorkflowId = activeWfForRun?.wf_id || null;
+
   setExecutionUiState(true);
   try {
     clearWorkflowExecLogs();
@@ -1944,7 +1972,7 @@ async function runWorkflowFromHere() {
       method: 'POST',
       headers: { 'Content-Type':'application/json' },
       credentials: 'include',
-      body: JSON.stringify({ from_step_id: savedNodeId, inputs: triggerInputs })
+      body: JSON.stringify({ from_step_id: savedNodeId, inputs: triggerInputs, wf_id: _activeWorkflowId })
     });
     const launch = await launchResp.json().catch(() => ({}));
     if (!launchResp.ok || !launch?.run_id) throw new Error(launch.error || `HTTP ${launchResp.status}`);
@@ -1958,7 +1986,7 @@ async function runWorkflowFromHere() {
     });
     if (!streamResp.ok) throw new Error(`HTTP ${streamResp.status} while opening run stream`);
 
-    const wf = (currentWf?.data?.workflows || []).find(w => w.wf_nodes?.length);
+    const wf = findActiveWorkflow(currentWf?.data);
     let finished = false;
     await streamSseFrames(streamResp.body, ({ event, data }) => {
       if (event === 'step_started') {
@@ -2018,6 +2046,7 @@ async function runWorkflowFromHere() {
   } finally {
     _workflowRunId = null;
     _runController = null;
+    _activeWorkflowId = null;
     setExecutionUiState(false);
     clearRunningGraphState();
     // Restaurer l'état de l'éditeur au step initial

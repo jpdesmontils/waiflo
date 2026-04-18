@@ -481,8 +481,10 @@ async function executeResolvedStep(req, res, { step, inputs, context }) {
   return res.status(400).json({ error: `ws_type "${wsType}" not yet executable from this endpoint` });
 }
 
-function buildWorkflowGraph(workflowData) {
-  const wf = (workflowData?.workflows || []).find((row) => Array.isArray(row?.wf_nodes) && row.wf_nodes.length);
+function buildWorkflowGraph(workflowData, wfId) {
+  const wfs = workflowData?.workflows || [];
+  let wf = wfId ? wfs.find((row) => row?.wf_id === wfId && Array.isArray(row?.wf_nodes) && row.wf_nodes.length) : null;
+  if (!wf) wf = wfs.find((row) => Array.isArray(row?.wf_nodes) && row.wf_nodes.length);
   const nodes = wf?.wf_nodes || [];
   const byId = new Map(nodes.map((n) => [n.step_id, n]));
   const children = new Map(nodes.map((n) => [n.step_id, []]));
@@ -632,8 +634,8 @@ function buildInputsFromDependencies(node, byId, outputsByNodeId, triggerInputs)
   return { ...(triggerInputs || {}), ...inherited };
 }
 
-async function runWorkflowOrchestration(req, run, workflowData, fromStepId, triggerInputs) {
-  const graph = buildWorkflowGraph(workflowData);
+async function runWorkflowOrchestration(req, run, workflowData, fromStepId, triggerInputs, wfId) {
+  const graph = buildWorkflowGraph(workflowData, wfId);
   const order = getDownstreamOrderFromGraph(graph, fromStepId);
   const stepMap = new Map((workflowData?.steps || []).map((step) => [step.ws_name, step]));
   const outputsByNodeId = {};
@@ -866,11 +868,12 @@ router.post('/workflows/:workflowName/step', authMiddleware, execLimiter, async 
 
 // ── EXEC WORKFLOW (orchestrated by backend) ──────────────────────
 // POST /api/exec/workflows/:workflowName/run
-// Body: { from_step_id, inputs }
+// Body: { from_step_id, inputs, wf_id }
 router.post('/workflows/:workflowName/run', authMiddleware, execLimiter, async (req, res) => {
   try {
     const workflowName = String(req.params.workflowName || '').trim();
     const fromStepId = String(req.body?.from_step_id || '').trim();
+    const wfId = req.body?.wf_id && typeof req.body.wf_id === 'string' ? req.body.wf_id : null;
     const triggerInputs = (req.body?.inputs && typeof req.body.inputs === 'object' && !Array.isArray(req.body.inputs))
       ? req.body.inputs
       : {};
@@ -887,7 +890,7 @@ router.post('/workflows/:workflowName/run', authMiddleware, execLimiter, async (
       throw err;
     }
 
-    const graph = buildWorkflowGraph(workflowData);
+    const graph = buildWorkflowGraph(workflowData, wfId);
     if (!graph.byId.has(fromStepId)) {
       return res.status(404).json({ error: `from_step_id "${fromStepId}" not found in workflow` });
     }
@@ -895,7 +898,7 @@ router.post('/workflows/:workflowName/run', authMiddleware, execLimiter, async (
     const run = createRun(req.user.userId, workflowName);
     res.status(202).json({ ok: true, run_id: run.runId, status: run.status });
 
-    runWorkflowOrchestration(req, run, workflowData, fromStepId, triggerInputs)
+    runWorkflowOrchestration(req, run, workflowData, fromStepId, triggerInputs, wfId)
       .catch((err) => {
         run.status = 'error';
         pushRunEvent(run, 'workflow_finished', {
