@@ -578,15 +578,35 @@ async function executeStepForWorkflowRun(step, inputs, req, user, executionOptio
 
 function buildInputsFromDependencies(node, byId, outputsByNodeId, triggerInputs) {
   const inherited = {};
+  const parseJsonObjectFromString = (raw) => {
+    if (typeof raw !== 'string') return null;
+    const clean = raw
+      .replace(/^```json\s*/i, '')
+      .replace(/^```\s*/i, '')
+      .replace(/```\s*$/i, '')
+      .trim();
+    if (!clean) return null;
+    try {
+      const parsed = JSON.parse(clean);
+      return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const normalizeDependencyOutput = (depOutput) => {
+    if (depOutput && typeof depOutput === 'object' && !Array.isArray(depOutput)) return depOutput;
+    return parseJsonObjectFromString(depOutput);
+  };
 
   (node.depends_on || []).forEach((depId) => {
     const depNode = byId.get(depId);
-    const depOutput = outputsByNodeId[depId];
-    if (!depNode || !depOutput || typeof depOutput !== 'object') return;
+    const depOutput = normalizeDependencyOutput(outputsByNodeId[depId]);
+    if (!depNode || !depOutput) return;
     Object.assign(inherited, depOutput);
   });
 
-  return { ...inherited, ...(triggerInputs || {}) };
+  return { ...(triggerInputs || {}), ...inherited };
 }
 
 async function runWorkflowOrchestration(req, run, workflowData, fromStepId, triggerInputs) {
