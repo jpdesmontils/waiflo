@@ -16,7 +16,7 @@ export function mapLogsToWorkflowViews(files) {
     const runsById = new Map();
 
     for (const row of rows) {
-      const runId = row.logMeta?.runId || `${workflowName}-${row.runMode}-${row.createdAt.slice(0, 16)}`;
+      const runId = row.runId || row.logMeta?.runId || `${workflowName}-${row.runMode}-${row.createdAt.slice(0, 16)}`;
       if (!runsById.has(runId)) runsById.set(runId, []);
       runsById.get(runId).push(row);
     }
@@ -52,7 +52,7 @@ export function mapLogsToWorkflowViews(files) {
         id: runId,
         workflowName,
         runMode: orderedRows[0]?.runMode || 'manual',
-        callerIp: orderedRows[orderedRows.length - 1]?.callerIp || '',
+        callerIp: orderedRows[0]?.callerIp || '',
         status,
         createdAt: startedAt,
         durationMs,

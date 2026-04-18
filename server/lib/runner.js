@@ -79,15 +79,7 @@ function collectImageUrls(step, inputs) {
 }
 
 function buildPrompt(template, inputs) {
-  let prompt = template;
-  for (const [k, v] of Object.entries(inputs)) {
-    const val = typeof v === 'object' ? JSON.stringify(v, null, 2) : String(v);
-    // triple braces = no escaping
-    prompt = prompt.replaceAll(`{{{${k}}}}`, val);
-    // double braces
-    prompt = prompt.replaceAll(`{{${k}}}`, val);
-  }
-  return prompt;
+  return renderTemplateString(template, inputs);
 }
 
 function formatProviderExecutionError(err, { provider, model }) {
