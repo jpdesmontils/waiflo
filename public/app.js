@@ -1974,7 +1974,7 @@ async function runWorkflowFromHere() {
           output:'',
           lastInputs:data.inputs || {},
           logOutput:'',
-          logMeta:'backend orchestrated running',
+          logMeta:'Traitement en cours ...',
           logError:false
         });
         appendWorkflowExecLog(`${wfTs()} ## ${stepLabel} ## Start${formatWorkflowEventContext(data)}`);
