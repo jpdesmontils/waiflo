@@ -257,7 +257,7 @@ function promptStreamEnabled(req) {
 }
 
 function getCallerRemoteAddr(req) {
-  return String(req?.socket?.remoteAddress || req?.connection?.remoteAddress || '').trim();
+  return String(req?.socket?.remoteAddress || '').trim();
 }
 
 function sendPromptCacheResponse(req, res, output) {
@@ -411,6 +411,7 @@ async function executeResolvedStep(req, res, { step, inputs, context }) {
               logOutput: JSON.stringify(cached.output, null, 2),
               output: cached.output,
               prompt: '',
+              callerIp,
               logMeta: `${wsType} done (cache hit ${cacheKey})`,
               createdAt: new Date().toISOString()
             });
@@ -709,6 +710,7 @@ async function runWorkflowOrchestration(req, run, workflowData, fromStepId, trig
       outputsByNodeId[nodeId] = result;
 
       await saveStepRunRecord(req.user.userId, run.workflowName, step.ws_name, {
+        runId: run.runId,
         workflowName: run.workflowName,
         nodeId,
         stepName: step.ws_name,
@@ -741,6 +743,7 @@ async function runWorkflowOrchestration(req, run, workflowData, fromStepId, trig
     } catch (err) {
       run.activeStepAbortController = null;
       await saveStepRunRecord(req.user.userId, run.workflowName, step.ws_name, {
+        runId: run.runId,
         workflowName: run.workflowName,
         nodeId,
         stepName: step.ws_name,
