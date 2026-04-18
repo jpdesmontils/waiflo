@@ -333,14 +333,14 @@ option { background:var(--panel2); }
 .run-status.error { color:var(--red); border-color:rgba(248,113,113,.35); }
 .run-output-title { font-family:'JetBrains Mono',monospace; font-size:9px; color:var(--dim); letter-spacing:.7px; text-transform:uppercase; }
 .run-output-vars { flex:1; background:var(--panel2); border:1px solid var(--border); border-radius:5px; padding:12px; font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--teal); line-height:1.7; overflow-y:auto; min-height:200px; white-space:pre-wrap; word-break:break-word; }
-.run-output-vars .var-row { margin-bottom:6px; }
+.run-output-vars .var-row { margin:0 0 2px; line-height:1.35; }
 .run-output-vars .var-name { font-weight:700; color:var(--hi); margin-right:6px; }
-.run-output-vars details { margin:6px 0; border:1px solid var(--border); border-radius:4px; padding:4px 6px; }
+.run-output-vars details { margin:2px 0; border:1px solid var(--border); border-radius:4px; padding:2px 4px; }
 .run-output-vars summary { cursor:pointer; color:var(--teal); }
 .run-output-vars pre { margin:6px 0 0; white-space:pre-wrap; word-break:break-word; color:var(--text); }
-.run-output-vars .json-tree-root { display:flex; flex-direction:column; gap:4px; }
-.run-output-vars .json-tree-node { margin:4px 0; border:1px solid var(--border); border-radius:4px; padding:4px 6px; background:rgba(255,255,255,.01); }
-.run-output-vars .json-tree-children { margin-left:14px; border-left:1px dashed var(--border); padding-left:8px; margin-top:4px; }
+.run-output-vars .json-tree-root { display:flex; flex-direction:column; gap:2px; }
+.run-output-vars .json-tree-node { margin:1px 0; border:1px solid var(--border); border-radius:4px; padding:2px 4px; background:transparent; }
+.run-output-vars .json-tree-children { margin-left:8px; border-left:1px dashed var(--border); padding-left:6px; margin-top:2px; }
 .run-output-vars .json-tree-leaf { color:var(--text); }
 .run-output-vars .json-tree-meta { color:var(--dim); margin-left:4px; font-size:9px; }
 .run-output-vars .json-tree-empty { color:var(--dim); font-style:italic; }
