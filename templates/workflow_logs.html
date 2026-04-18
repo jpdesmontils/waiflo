@@ -14,9 +14,11 @@
     <header id="logs-topbar">
       <div class="logo">waiflo <span class="logo-badge">{{logo_badge}}</span></div>
       <div class="topbar-actions">
+        <button id="clear-logs-btn" class="tb-btn danger">{{btn_clear_logs}}</button>
         <a class="tb-btn" href="/editor">{{btn_back_editor}}</a>
       </div>
     </header>
+    <div id="action-banner" class="hidden" role="status" aria-live="polite"></div>
 
     <main id="logs-main">
       <section class="logs-header card">
@@ -97,6 +99,17 @@
         </div>
       </section>
     </main>
+  </div>
+
+  <div id="modal-overlay" class="hidden">
+    <div id="modal">
+      <div class="modal-header">
+        <div class="modal-title" id="modal-title">Modal</div>
+        <button class="modal-close" id="modal-close-btn" aria-label="close">✕</button>
+      </div>
+      <div class="modal-body" id="modal-body"></div>
+      <div class="modal-actions" id="modal-actions"></div>
+    </div>
   </div>
 
   <script type="module" src="js/workflow-logs/page.js"></script>

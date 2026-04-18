@@ -29,9 +29,14 @@ const tabs = [
 ];
 
 function init() {
+  applyEditorTheme();
   bindControls();
   enableResizablePanels();
   loadData();
+}
+
+function t(key, fallback) {
+  return window.LABELS?.[key] || fallback;
 }
 
 function bindControls() {
@@ -59,6 +64,11 @@ function bindControls() {
     render();
   });
   document.getElementById('refresh-btn').addEventListener('click', loadData);
+  document.getElementById('clear-logs-btn').addEventListener('click', onClearLogsClick);
+  document.getElementById('modal-close-btn').addEventListener('click', closeModal);
+  document.getElementById('modal-overlay').addEventListener('click', (event) => {
+    if (event.target === document.getElementById('modal-overlay')) closeModal();
+  });
 }
 
 async function loadData() {
@@ -201,7 +211,7 @@ function renderRuns() {
   container.innerHTML = `
     <table class="table">
       <thead><tr>
-        <th>Date/heure</th><th>Statut</th><th>Steps</th><th>Dernier step</th><th>Durée</th><th>runMode</th>
+        <th>Date/heure</th><th>Statut</th><th>Steps</th><th>Dernier step</th><th>Durée</th><th>runMode</th><th>${escapeHtml(t('label_caller_ip', 'Client IP'))}</th>
       </tr></thead>
       <tbody>
         ${runs.map((run) => `
@@ -212,6 +222,7 @@ function renderRuns() {
             <td>${run.lastStep}</td>
             <td>${run.durationMs ?? '—'} ms</td>
             <td><span class="badge info">${run.runMode}</span></td>
+            <td>${escapeHtml(maskIp(run.callerIp || '')) || '—'}</td>
           </tr>`).join('')}
       </tbody>
     </table>
@@ -317,12 +328,101 @@ function renderSummary(raw) {
     ['Node', raw.nodeId],
     ['Type', raw.wsType],
     ['Run mode', raw.runMode],
+    [t('label_caller_ip', 'Client IP'), maskIp(raw.callerIp || '') || '—'],
     ['Status', raw.status],
     ['Created at', new Date(raw.createdAt).toLocaleString()],
     ['Prompt', raw.prompt]
   ];
 
   return `<div class="detail"><div class="kv-grid">${fields.map(([k, v]) => `<article class="kv-item"><h4>${k}</h4><p>${escapeHtml(String(v ?? '—'))}</p></article>`).join('')}</div></div>`;
+}
+
+function applyEditorTheme() {
+  if (localStorage.getItem('wf_theme') === 'light') {
+    document.documentElement.classList.add('light');
+  } else {
+    document.documentElement.classList.remove('light');
+  }
+}
+
+function maskIp(value) {
+  const ip = String(value || '').trim();
+  if (!ip) return '';
+  if (ip.length <= 3) return '***';
+  return `${ip.slice(0, -3)}***`;
+}
+
+function openConfirmModal({ title, message, warning, onConfirm }) {
+  const overlay = document.getElementById('modal-overlay');
+  const titleNode = document.getElementById('modal-title');
+  const body = document.getElementById('modal-body');
+  const actions = document.getElementById('modal-actions');
+
+  titleNode.textContent = title;
+  body.innerHTML = `<p class="confirm-text">${escapeHtml(message)}</p><p class="confirm-sub">${escapeHtml(warning)}</p>`;
+  actions.innerHTML = `
+    <button class="modal-btn" id="modal-cancel">${escapeHtml(t('modal_cancel', 'Cancel'))}</button>
+    <button class="modal-btn danger" id="modal-confirm">${escapeHtml(t('modal_confirm_delete', 'Delete'))}</button>
+  `;
+
+  actions.querySelector('#modal-cancel').addEventListener('click', closeModal);
+  actions.querySelector('#modal-confirm').addEventListener('click', async () => {
+    closeModal();
+    await onConfirm();
+  });
+
+  overlay.classList.remove('hidden');
+}
+
+function closeModal() {
+  document.getElementById('modal-overlay').classList.add('hidden');
+}
+
+function showBanner(message, tone = 'ok') {
+  const banner = document.getElementById('action-banner');
+  banner.className = '';
+  banner.classList.add(tone === 'err' ? 'err' : 'ok');
+  banner.textContent = message;
+  setTimeout(() => banner.classList.add('hidden'), 7000);
+}
+
+async function onClearLogsClick() {
+  openConfirmModal({
+    title: t('modal_clear_logs_title', 'Confirm log cleanup'),
+    message: t('modal_clear_logs_message', 'Do you want to delete all log files for the current user?'),
+    warning: t('modal_clear_logs_warning', 'This action cannot be undone.'),
+    onConfirm: clearLogs
+  });
+}
+
+async function clearLogs() {
+  try {
+    const response = await fetch('/api/exec/history/logs', {
+      method: 'DELETE',
+      credentials: 'include'
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload?.error || `HTTP ${response.status}`);
+
+    const details = payload?.details || {};
+    const deletedFiles = Number(details.deletedFiles || 0);
+    const deletedDirs = Number(details.deletedDirs || 0);
+    const failedCount = Array.isArray(details.failed) ? details.failed.length : 0;
+    const successMsg = t('banner_logs_cleared', 'Cleanup complete: {deletedFiles} file(s) deleted, {deletedDirs} folder(s) deleted.')
+      .replace('{deletedFiles}', String(deletedFiles))
+      .replace('{deletedDirs}', String(deletedDirs));
+    showBanner(successMsg, failedCount ? 'err' : 'ok');
+
+    if (failedCount) {
+      const failedMsg = t('banner_logs_clear_failed', 'Cleanup finished with errors: {failedCount} failure(s).')
+        .replace('{failedCount}', String(failedCount));
+      console.error('[workflow-logs] clear logs failures:', details.failed);
+      showBanner(`${successMsg} ${failedMsg}`, 'err');
+    }
+    await loadData();
+  } catch (error) {
+    showBanner(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`, 'err');
+  }
 }
 
 function statusBadge(status) {
@@ -360,13 +460,14 @@ async function mountMonacoIfAvailable(raw) {
     window.require.config({ paths: { vs: 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.52.2/min/vs' } });
     window.require(['vs/editor/editor.main'], () => {
       host.innerHTML = '';
+      const monacoTheme = document.documentElement.classList.contains('light') ? 'vs' : 'vs-dark';
       window.monaco.editor.create(host, {
         value: JSON.stringify(raw, null, 2),
         language: 'json',
         readOnly: true,
         minimap: { enabled: false },
         fontSize: 12,
-        theme: 'vs-dark'
+        theme: monacoTheme
       });
     });
   } catch {
