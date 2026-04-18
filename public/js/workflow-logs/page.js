@@ -64,7 +64,12 @@ function bindControls() {
     render();
   });
   document.getElementById('refresh-btn').addEventListener('click', loadData);
-  document.getElementById('clear-logs-btn').addEventListener('click', onClearLogsClick);
+  const clearLogsBtn = document.getElementById('clear-logs-btn');
+  if (!clearLogsBtn.textContent.trim() || clearLogsBtn.textContent.includes('{{')) {
+    clearLogsBtn.textContent = t('btn_clear_logs', 'Clear logs');
+  }
+  clearLogsBtn.classList.remove('hidden');
+  clearLogsBtn.addEventListener('click', onClearLogsClick);
   document.getElementById('modal-close-btn').addEventListener('click', closeModal);
   document.getElementById('modal-overlay').addEventListener('click', (event) => {
     if (event.target === document.getElementById('modal-overlay')) closeModal();
