@@ -1,6 +1,10 @@
 :root {
-  --bg:#080c12; --panel:#0f1722; --panel2:#131d2d; --text:#9cb1ce; --hi:#e6eef8;
-  --border:#22314d; --accent:#f59e0b; --ok:#34d399; --warn:#fbbf24; --bad:#f87171;
+  --bg:#080c12; --panel:#0e1520; --panel2:#131c2b; --text:#8fa3be; --hi:#d4e0ef;
+  --border:#1a2740; --accent:#f59e0b; --ok:#34d399; --warn:#fbbf24; --bad:#f87171;
+}
+:root.light {
+  --bg:#f0f4f8; --panel:#ffffff; --panel2:#f5f7fa; --text:#4a6075; --hi:#1a2a3a;
+  --border:#d6e0ea; --accent:#d97706; --ok:#059669; --warn:#b45309; --bad:#dc2626;
 }
 :root.light {
   --bg:#f0f4f8; --panel:#ffffff; --panel2:#f5f7fa; --text:#4a6075; --hi:#1a2a3a;

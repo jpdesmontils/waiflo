@@ -460,13 +460,14 @@ async function mountMonacoIfAvailable(raw) {
     window.require.config({ paths: { vs: 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.52.2/min/vs' } });
     window.require(['vs/editor/editor.main'], () => {
       host.innerHTML = '';
+      const monacoTheme = document.documentElement.classList.contains('light') ? 'vs' : 'vs-dark';
       window.monaco.editor.create(host, {
         value: JSON.stringify(raw, null, 2),
         language: 'json',
         readOnly: true,
         minimap: { enabled: false },
         fontSize: 12,
-        theme: 'vs-dark'
+        theme: monacoTheme
       });
     });
   } catch {
