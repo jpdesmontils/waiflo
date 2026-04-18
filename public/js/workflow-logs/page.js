@@ -413,17 +413,20 @@ async function clearLogs() {
     const deletedFiles = Number(details.deletedFiles || 0);
     const deletedDirs = Number(details.deletedDirs || 0);
     const failedCount = Array.isArray(details.failed) ? details.failed.length : 0;
-    const successMsg = t('banner_logs_cleared', 'Cleanup complete: {deletedFiles} file(s) deleted, {deletedDirs} folder(s) deleted.')
+    const baseMsg = t('banner_logs_cleared', 'Cleanup complete: {deletedFiles} file(s) deleted, {deletedDirs} folder(s) deleted.')
       .replace('{deletedFiles}', String(deletedFiles))
       .replace('{deletedDirs}', String(deletedDirs));
-    showBanner(successMsg, failedCount ? 'err' : 'ok');
+    let finalMsg = baseMsg;
+    let tone = 'ok';
 
     if (failedCount) {
       const failedMsg = t('banner_logs_clear_failed', 'Cleanup finished with errors: {failedCount} failure(s).')
         .replace('{failedCount}', String(failedCount));
       console.error('[workflow-logs] clear logs failures:', details.failed);
-      showBanner(`${successMsg} ${failedMsg}`, 'err');
+      finalMsg = `${baseMsg} ${failedMsg}`;
+      tone = 'err';
     }
+    showBanner(finalMsg, tone);
     await loadData();
   } catch (error) {
     showBanner(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`, 'err');

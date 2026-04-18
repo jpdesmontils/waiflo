@@ -14,12 +14,18 @@ const partialsCache = new Map();
 
 async function loadLabels(page, lang) {
   const key  = `${page}.${lang}`;
-  if (labelsCache.has(key)) return labelsCache.get(key);
   const filePath = path.join(LABELS_DIR, `labels_${page}.${lang}`);
   try {
+    const stat = await fs.stat(filePath);
+    const cached = labelsCache.get(key);
+    if (cached && cached.mtimeMs === stat.mtimeMs) return cached.data;
+
     const raw    = await fs.readFile(filePath, 'utf-8');
     const parsed = JSON.parse(raw);
-    labelsCache.set(key, parsed);
+    labelsCache.set(key, {
+      mtimeMs: stat.mtimeMs,
+      data: parsed
+    });
     return parsed;
   } catch {
     if (lang !== 'en') return loadLabels(page, 'en');   // fallback to EN
