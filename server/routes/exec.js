@@ -291,6 +291,7 @@ async function executeResolvedStep(req, res, { step, inputs, context }) {
   const nodeId = context?.nodeId || step.ws_name;
   const runMode = context?.runMode || 'step_only';
   const callerIp = getCallerRemoteAddr(req);
+  const runStartedAt = new Date().toISOString();
 
   // Resolve user — guest fallback if no auth
   let user = null;
@@ -372,9 +373,12 @@ async function executeResolvedStep(req, res, { step, inputs, context }) {
         output: promptRun?.parsed || promptRun?.fullText || '',
         prompt: promptRun?.userPrompt || '',
         callerIp,
-        logMeta: promptRun?.error
-          ? 'prompt error'
-          : (cacheHit ? `prompt done (cache hit ${cacheKey || ''})`.trim() : `prompt done${cacheKey ? ` (cache store ${cacheKey})` : ''}`),
+        logMeta: {
+          message: promptRun?.error
+            ? 'prompt error'
+            : (cacheHit ? `prompt done (cache hit ${cacheKey || ''})`.trim() : `prompt done${cacheKey ? ` (cache store ${cacheKey})` : ''}`),
+          runStartedAt
+        },
         createdAt: new Date().toISOString()
       });
     }
@@ -412,7 +416,7 @@ async function executeResolvedStep(req, res, { step, inputs, context }) {
               output: cached.output,
               prompt: '',
               callerIp,
-              logMeta: `${wsType} done (cache hit ${cacheKey})`,
+              logMeta: { message: `${wsType} done (cache hit ${cacheKey})`, runStartedAt },
               createdAt: new Date().toISOString()
             });
           }
@@ -451,7 +455,7 @@ async function executeResolvedStep(req, res, { step, inputs, context }) {
           output: result,
           prompt: '',
           callerIp,
-          logMeta: `${wsType} done`,
+          logMeta: { message: `${wsType} done`, runStartedAt },
           createdAt: new Date().toISOString()
         });
       }
@@ -470,7 +474,7 @@ async function executeResolvedStep(req, res, { step, inputs, context }) {
           output: '',
           prompt: '',
           callerIp,
-          logMeta: `${wsType} error`,
+          logMeta: { message: `${wsType} error`, runStartedAt },
           createdAt: new Date().toISOString()
         });
       }
@@ -722,7 +726,7 @@ async function runWorkflowOrchestration(req, run, workflowData, fromStepId, trig
         output: result,
         prompt: '',
         callerIp,
-        logMeta: 'workflow orchestrated done',
+        logMeta: { message: 'workflow orchestrated done', runStartedAt: run.createdAt },
         createdAt: new Date().toISOString()
       });
 
@@ -755,7 +759,7 @@ async function runWorkflowOrchestration(req, run, workflowData, fromStepId, trig
         output: '',
         prompt: '',
         callerIp,
-        logMeta: 'workflow orchestrated error',
+        logMeta: { message: 'workflow orchestrated error', runStartedAt: run.createdAt },
         createdAt: new Date().toISOString()
       });
 

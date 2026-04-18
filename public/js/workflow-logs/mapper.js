@@ -34,7 +34,8 @@ export function mapLogsToWorkflowViews(files) {
           : stepStatuses.includes('queued') ? 'queued' : 'success';
 
       const startedAt = orderedRows[0]?.logMeta?.runStartedAt || orderedRows[0]?.createdAt;
-      const finishedAt = orderedRows[orderedRows.length - 1]?.logMeta?.runFinishedAt;
+      const finishedAt = orderedRows[orderedRows.length - 1]?.logMeta?.runFinishedAt
+        || orderedRows[orderedRows.length - 1]?.createdAt;
       const durationMs = finishedAt ? (new Date(finishedAt).getTime() - new Date(startedAt).getTime()) : null;
 
       const steps = orderedRows.map((row, index) => ({
