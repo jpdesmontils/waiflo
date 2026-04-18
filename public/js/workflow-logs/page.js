@@ -70,6 +70,12 @@ function bindControls() {
   }
   clearLogsBtn.classList.remove('hidden');
   clearLogsBtn.addEventListener('click', onClearLogsClick);
+  const clearCacheBtn = document.getElementById('clear-cache-btn');
+  if (!clearCacheBtn.textContent.trim() || clearCacheBtn.textContent.includes('{{')) {
+    clearCacheBtn.textContent = t('btn_clear_cache', 'Clear cache');
+  }
+  clearCacheBtn.classList.remove('hidden');
+  clearCacheBtn.addEventListener('click', onClearCacheClick);
   document.getElementById('modal-close-btn').addEventListener('click', closeModal);
   document.getElementById('modal-overlay').addEventListener('click', (event) => {
     if (event.target === document.getElementById('modal-overlay')) closeModal();
@@ -430,6 +436,32 @@ async function clearLogs() {
     await loadData();
   } catch (error) {
     showBanner(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`, 'err');
+  }
+}
+
+async function onClearCacheClick() {
+  openConfirmModal({
+    title: t('modal_clear_cache_title', 'Confirm cache cleanup'),
+    message: t('modal_clear_cache_message', 'Do you want to delete all cached step results for the current user?'),
+    warning: t('modal_clear_logs_warning', 'This action cannot be undone.'),
+    onConfirm: clearCache
+  });
+}
+
+async function clearCache() {
+  try {
+    const response = await fetch('/api/exec/history/cache', {
+      method: 'DELETE',
+      credentials: 'include'
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload?.error || `HTTP ${response.status}`);
+    const deleted = Number(payload?.details?.deleted || 0);
+    const msg = t('banner_cache_cleared', 'Cache cleared: {deleted} entry(ies) deleted.')
+      .replace('{deleted}', String(deleted));
+    showBanner(msg, 'ok');
+  } catch (error) {
+    showBanner(t('banner_cache_clear_failed', 'Cache cleanup failed.'), 'err');
   }
 }
 
