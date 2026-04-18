@@ -38,6 +38,7 @@ function createRun(userId, workflowName) {
     createdAt: new Date().toISOString(),
     events: [],
     clients: new Set(),
+    clientHeartbeats: new Map(),
     cancelRequested: false,
     activeStepAbortController: null
   };
@@ -61,15 +62,36 @@ function pushRunEvent(run, event, data = {}) {
 
 function attachRunClient(run, res) {
   res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+
+  if (typeof res.flushHeaders === 'function') res.flushHeaders();
+  res.write(': stream-open\n\n');
 
   run.events.forEach(({ event, data }) => {
     res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   });
 
   run.clients.add(res);
-  res.on('close', () => run.clients.delete(res));
+
+  const heartbeatInterval = setInterval(() => {
+    try {
+      res.write(`: heartbeat ${Date.now()}\n\n`);
+    } catch {
+      clearInterval(heartbeatInterval);
+      run.clientHeartbeats.delete(res);
+      run.clients.delete(res);
+    }
+  }, 15_000);
+  run.clientHeartbeats.set(res, heartbeatInterval);
+
+  res.on('close', () => {
+    const interval = run.clientHeartbeats.get(res);
+    if (interval) clearInterval(interval);
+    run.clientHeartbeats.delete(res);
+    run.clients.delete(res);
+  });
 }
 
 function validateInputValue(value, schema = {}, path = 'inputs') {
@@ -578,15 +600,35 @@ async function executeStepForWorkflowRun(step, inputs, req, user, executionOptio
 
 function buildInputsFromDependencies(node, byId, outputsByNodeId, triggerInputs) {
   const inherited = {};
+  const parseJsonObjectFromString = (raw) => {
+    if (typeof raw !== 'string') return null;
+    const clean = raw
+      .replace(/^```json\s*/i, '')
+      .replace(/^```\s*/i, '')
+      .replace(/```\s*$/i, '')
+      .trim();
+    if (!clean) return null;
+    try {
+      const parsed = JSON.parse(clean);
+      return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const normalizeDependencyOutput = (depOutput) => {
+    if (depOutput && typeof depOutput === 'object' && !Array.isArray(depOutput)) return depOutput;
+    return parseJsonObjectFromString(depOutput);
+  };
 
   (node.depends_on || []).forEach((depId) => {
     const depNode = byId.get(depId);
-    const depOutput = outputsByNodeId[depId];
-    if (!depNode || !depOutput || typeof depOutput !== 'object') return;
+    const depOutput = normalizeDependencyOutput(outputsByNodeId[depId]);
+    if (!depNode || !depOutput) return;
     Object.assign(inherited, depOutput);
   });
 
-  return { ...inherited, ...(triggerInputs || {}) };
+  return { ...(triggerInputs || {}), ...inherited };
 }
 
 async function runWorkflowOrchestration(req, run, workflowData, fromStepId, triggerInputs) {
