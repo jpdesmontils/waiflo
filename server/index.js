@@ -61,16 +61,18 @@ app.use(cors({ origin: corsOrigin, credentials: true }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.text({ limit: '10mb' }));
 
-// Static assets (CSS, JS, images) — served before page routes
-app.use(express.static(path.join(__dirname, '../public')));
-// JSON schemas (providers catalogue, workflow definitions) — served from root json_schemas/
-app.use('/json_schemas', express.static(path.join(__dirname, '../json_schemas')));
-
 // ── Language detection ────────────────────────────────────────────
 app.use(langMiddleware);
 
 // ── Page routes (server-rendered with Mustache / label substitution)
+// Keep these BEFORE express.static so /workflow-logs always resolves to templates/workflow_logs.html
+// and cannot be shadowed by any future static file with the same route.
 app.use('/', pageRoutes);
+
+// Static assets (CSS, JS, images)
+app.use(express.static(path.join(__dirname, '../public')));
+// JSON schemas (providers catalogue, workflow definitions) — served from root json_schemas/
+app.use('/json_schemas', express.static(path.join(__dirname, '../json_schemas')));
 
 // ── API ───────────────────────────────────────────────────────────
 app.use('/api/auth',                 authRoutes);
