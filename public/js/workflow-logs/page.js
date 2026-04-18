@@ -64,7 +64,18 @@ function bindControls() {
     render();
   });
   document.getElementById('refresh-btn').addEventListener('click', loadData);
-  document.getElementById('clear-logs-btn').addEventListener('click', onClearLogsClick);
+  const clearLogsBtn = document.getElementById('clear-logs-btn');
+  if (!clearLogsBtn.textContent.trim() || clearLogsBtn.textContent.includes('{{')) {
+    clearLogsBtn.textContent = t('btn_clear_logs', 'Clear logs');
+  }
+  clearLogsBtn.classList.remove('hidden');
+  clearLogsBtn.addEventListener('click', onClearLogsClick);
+  const clearCacheBtn = document.getElementById('clear-cache-btn');
+  if (!clearCacheBtn.textContent.trim() || clearCacheBtn.textContent.includes('{{')) {
+    clearCacheBtn.textContent = t('btn_clear_cache', 'Clear cache');
+  }
+  clearCacheBtn.classList.remove('hidden');
+  clearCacheBtn.addEventListener('click', onClearCacheClick);
   document.getElementById('modal-close-btn').addEventListener('click', closeModal);
   document.getElementById('modal-overlay').addEventListener('click', (event) => {
     if (event.target === document.getElementById('modal-overlay')) closeModal();
@@ -408,20 +419,49 @@ async function clearLogs() {
     const deletedFiles = Number(details.deletedFiles || 0);
     const deletedDirs = Number(details.deletedDirs || 0);
     const failedCount = Array.isArray(details.failed) ? details.failed.length : 0;
-    const successMsg = t('banner_logs_cleared', 'Cleanup complete: {deletedFiles} file(s) deleted, {deletedDirs} folder(s) deleted.')
+    const baseMsg = t('banner_logs_cleared', 'Cleanup complete: {deletedFiles} file(s) deleted, {deletedDirs} folder(s) deleted.')
       .replace('{deletedFiles}', String(deletedFiles))
       .replace('{deletedDirs}', String(deletedDirs));
-    showBanner(successMsg, failedCount ? 'err' : 'ok');
+    let finalMsg = baseMsg;
+    let tone = 'ok';
 
     if (failedCount) {
       const failedMsg = t('banner_logs_clear_failed', 'Cleanup finished with errors: {failedCount} failure(s).')
         .replace('{failedCount}', String(failedCount));
       console.error('[workflow-logs] clear logs failures:', details.failed);
-      showBanner(`${successMsg} ${failedMsg}`, 'err');
+      finalMsg = `${baseMsg} ${failedMsg}`;
+      tone = 'err';
     }
+    showBanner(finalMsg, tone);
     await loadData();
   } catch (error) {
     showBanner(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`, 'err');
+  }
+}
+
+async function onClearCacheClick() {
+  openConfirmModal({
+    title: t('modal_clear_cache_title', 'Confirm cache cleanup'),
+    message: t('modal_clear_cache_message', 'Do you want to delete all cached step results for the current user?'),
+    warning: t('modal_clear_logs_warning', 'This action cannot be undone.'),
+    onConfirm: clearCache
+  });
+}
+
+async function clearCache() {
+  try {
+    const response = await fetch('/api/exec/history/cache', {
+      method: 'DELETE',
+      credentials: 'include'
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload?.error || `HTTP ${response.status}`);
+    const deleted = Number(payload?.details?.deleted || 0);
+    const msg = t('banner_cache_cleared', 'Cache cleared: {deleted} entry(ies) deleted.')
+      .replace('{deleted}', String(deleted));
+    showBanner(msg, 'ok');
+  } catch (error) {
+    showBanner(t('banner_cache_clear_failed', 'Cache cleanup failed.'), 'err');
   }
 }
 
@@ -460,13 +500,14 @@ async function mountMonacoIfAvailable(raw) {
     window.require.config({ paths: { vs: 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.52.2/min/vs' } });
     window.require(['vs/editor/editor.main'], () => {
       host.innerHTML = '';
+      const monacoTheme = document.documentElement.classList.contains('light') ? 'vs' : 'vs-dark';
       window.monaco.editor.create(host, {
         value: JSON.stringify(raw, null, 2),
         language: 'json',
         readOnly: true,
         minimap: { enabled: false },
         fontSize: 12,
-        theme: 'vs-dark'
+        theme: monacoTheme
       });
     });
   } catch {

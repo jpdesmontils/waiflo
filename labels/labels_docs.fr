@@ -71,7 +71,7 @@
 
   "workflows_node_h3": "Champs d'un nœud",
   "field_step_id":    "Référence un ws_name déclaré dans le tableau steps.",
-  "field_depends_on": "Tableau de step_id qui doivent se terminer avant que ce nœud s'exécute.",
+  "field_depends_on": "Tableau de step_id qui doivent se terminer avant que ce nœud s'exécute. Les données transmises proviennent explicitement des champs de ws_output_schema (pas d'alias implicites).",
 
   "exec_h2":   "API d'exécution",
   "openapi_h2": "Schéma OpenAPI",

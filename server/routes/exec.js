@@ -9,7 +9,7 @@ import { runPromptStep, runApiStep, runWebpageStep, runToolStep } from '../lib/r
 import { PROVIDER_META } from '../lib/providers/index.js';
 import { clearUserRunLogs, getLatestStepRunRecord, listStepRunRecords, saveStepRunRecord } from '../lib/runStore.js';
 import { CACHE_CONFIG } from '../config.js';
-import { getCachedStepResult, saveCachedStepResult } from '../lib/stepCacheStore.js';
+import { clearUserStepCache, getCachedStepResult, saveCachedStepResult } from '../lib/stepCacheStore.js';
 import { wfPath } from '../lib/utils.js';
 
 const router = express.Router();
@@ -38,7 +38,9 @@ function createRun(userId, workflowName) {
     createdAt: new Date().toISOString(),
     events: [],
     clients: new Set(),
-    cancelRequested: false
+    clientHeartbeats: new Map(),
+    cancelRequested: false,
+    activeStepAbortController: null
   };
   workflowRuns.set(runId, run);
   return run;
@@ -60,15 +62,36 @@ function pushRunEvent(run, event, data = {}) {
 
 function attachRunClient(run, res) {
   res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+
+  if (typeof res.flushHeaders === 'function') res.flushHeaders();
+  res.write(': stream-open\n\n');
 
   run.events.forEach(({ event, data }) => {
     res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   });
 
   run.clients.add(res);
-  res.on('close', () => run.clients.delete(res));
+
+  const heartbeatInterval = setInterval(() => {
+    try {
+      res.write(`: heartbeat ${Date.now()}\n\n`);
+    } catch {
+      clearInterval(heartbeatInterval);
+      run.clientHeartbeats.delete(res);
+      run.clients.delete(res);
+    }
+  }, 15_000);
+  run.clientHeartbeats.set(res, heartbeatInterval);
+
+  res.on('close', () => {
+    const interval = run.clientHeartbeats.get(res);
+    if (interval) clearInterval(interval);
+    run.clientHeartbeats.delete(res);
+    run.clients.delete(res);
+  });
 }
 
 function validateInputValue(value, schema = {}, path = 'inputs') {
@@ -194,7 +217,7 @@ function normalizeErrorDetails(err) {
   };
 }
 
-function shouldUsePromptCache(wsType) {
+function shouldUseStepCache(wsType) {
   if (!CACHE_CONFIG.enabled) return false;
   if (CACHE_CONFIG.cachePromptOnly) return wsType === 'prompt';
   return true;
@@ -209,11 +232,23 @@ function cacheMetaFromStep(step) {
 }
 
 function cacheKeyParamsFromStep(step) {
-  return {
-    promptTemplate: step?.ws_prompt_template || '',
-    systemPrompt: step?.ws_system_prompt || '',
-    outputSchema: step?.ws_output_schema || {}
-  };
+  const wsType = (step?.ws_type || 'prompt').toLowerCase();
+  if (wsType === 'prompt') {
+    return {
+      promptTemplate: step?.ws_prompt_template || '',
+      systemPrompt: step?.ws_system_prompt || '',
+      outputSchema: step?.ws_output_schema || {}
+    };
+  }
+  if (wsType === 'api') return { api: step?.ws_api || {} };
+  if (wsType === 'webpage') return { webpage: step?.ws_webpage || step?.ws_api || {} };
+  if (wsType === 'tool') {
+    return {
+      tool: step?.ws_tool || {},
+      tools: step?.ws_tools || []
+    };
+  }
+  return {};
 }
 
 function promptStreamEnabled(req) {
@@ -222,7 +257,7 @@ function promptStreamEnabled(req) {
 }
 
 function getCallerRemoteAddr(req) {
-  return String(req?.socket?.remoteAddress || req?.connection?.remoteAddress || '').trim();
+  return String(req?.socket?.remoteAddress || '').trim();
 }
 
 function sendPromptCacheResponse(req, res, output) {
@@ -282,7 +317,7 @@ async function executeResolvedStep(req, res, { step, inputs, context }) {
     let cacheKey = null;
     let promptRun = null;
 
-    if (shouldUsePromptCache(wsType)) {
+    if (shouldUseStepCache(wsType)) {
       const cached = await getCachedStepResult({
         userId: req.user?.userId || 'guest',
         workflowName,
@@ -309,7 +344,7 @@ async function executeResolvedStep(req, res, { step, inputs, context }) {
       // Streaming SSE
       promptRun = await runPromptStep(step, inputs || {}, user, req, res);
 
-      if (!promptRun?.error && shouldUsePromptCache(wsType)) {
+      if (!promptRun?.error && shouldUseStepCache(wsType)) {
         const saved = await saveCachedStepResult({
           userId: req.user?.userId || 'guest',
           workflowName,
@@ -350,10 +385,59 @@ async function executeResolvedStep(req, res, { step, inputs, context }) {
   if (wsType === 'api' || wsType === 'webpage' || wsType === 'tool') {
     // Synchronous HTTP
     try {
+      let cacheHit = false;
+      let cacheKey = null;
+      if (shouldUseStepCache(wsType)) {
+        const cached = await getCachedStepResult({
+          userId: req.user?.userId || 'guest',
+          workflowName,
+          stepName: step.ws_name,
+          wsType,
+          inputs: inputs || {},
+          keyParams: cacheKeyParamsFromStep(step)
+        });
+        if (cached.hit) {
+          cacheHit = true;
+          cacheKey = cached.key;
+          if (req.user?.userId) {
+            await saveStepRunRecord(req.user.userId, workflowName, step.ws_name, {
+              workflowName,
+              nodeId,
+              stepName: step.ws_name,
+              wsType,
+              runMode,
+              inputs: inputs || {},
+              status: 'done',
+              logOutput: JSON.stringify(cached.output, null, 2),
+              output: cached.output,
+              prompt: '',
+              callerIp,
+              logMeta: `${wsType} done (cache hit ${cacheKey})`,
+              createdAt: new Date().toISOString()
+            });
+          }
+          return res.json({ ok: true, result: cached.output, cache_hit: true });
+        }
+      }
+
       let result;
       if (wsType === 'webpage') result = await runWebpageStep(step, inputs || {});
       else if (wsType === 'tool') result = await runToolStep(step, inputs || {}, user);
       else result = await runApiStep(step, inputs || {});
+
+      if (shouldUseStepCache(wsType)) {
+        const saved = await saveCachedStepResult({
+          userId: req.user?.userId || 'guest',
+          workflowName,
+          stepName: step.ws_name,
+          wsType,
+          inputs: inputs || {},
+          output: result,
+          meta: cacheMetaFromStep(step),
+          keyParams: cacheKeyParamsFromStep(step)
+        });
+        cacheKey = saved.key;
+      }
       if (req.user?.userId) {
         await saveStepRunRecord(req.user.userId, workflowName, step.ws_name, {
           workflowName,
@@ -397,8 +481,10 @@ async function executeResolvedStep(req, res, { step, inputs, context }) {
   return res.status(400).json({ error: `ws_type "${wsType}" not yet executable from this endpoint` });
 }
 
-function buildWorkflowGraph(workflowData) {
-  const wf = (workflowData?.workflows || []).find((row) => Array.isArray(row?.wf_nodes) && row.wf_nodes.length);
+function buildWorkflowGraph(workflowData, wfId) {
+  const wfs = workflowData?.workflows || [];
+  let wf = wfId ? wfs.find((row) => row?.wf_id === wfId && Array.isArray(row?.wf_nodes) && row.wf_nodes.length) : null;
+  if (!wf) wf = wfs.find((row) => Array.isArray(row?.wf_nodes) && row.wf_nodes.length);
   const nodes = wf?.wf_nodes || [];
   const byId = new Map(nodes.map((n) => [n.step_id, n]));
   const children = new Map(nodes.map((n) => [n.step_id, []]));
@@ -448,23 +534,24 @@ function getDownstreamOrderFromGraph(graph, startNodeId) {
   return order;
 }
 
-async function executeStepForWorkflowRun(step, inputs, req, user) {
+async function executeStepForWorkflowRun(step, inputs, req, user, executionOptions = {}) {
   const wsType = (step.ws_type || 'prompt').toLowerCase();
   const workflowName = req?.workflowNameForRun || 'ad-hoc';
+  const userId = req.user?.userId || 'guest';
+
+  if (shouldUseStepCache(wsType)) {
+    const cached = await getCachedStepResult({
+      userId,
+      workflowName,
+      stepName: step.ws_name,
+      wsType,
+      inputs: inputs || {},
+      keyParams: cacheKeyParamsFromStep(step)
+    });
+    if (cached.hit) return cached.output;
+  }
 
   if (wsType === 'prompt') {
-    if (shouldUsePromptCache(wsType)) {
-      const cached = await getCachedStepResult({
-        userId: req.user?.userId || 'guest',
-        workflowName,
-        stepName: step.ws_name,
-        wsType,
-        inputs: inputs || {},
-        keyParams: cacheKeyParamsFromStep(step)
-      });
-      if (cached.hit) return cached.output;
-    }
-
     const fakeReq = { query: {} };
     const fakeRes = {
       statusCode: 200,
@@ -478,10 +565,9 @@ async function executeStepForWorkflowRun(step, inputs, req, user) {
     const promptRun = await runPromptStep(step, inputs || {}, user, fakeReq, fakeRes);
     if (promptRun?.error) throw new Error(promptRun.error);
     const result = promptRun?.parsed || promptRun?.fullText || '';
-
-    if (shouldUsePromptCache(wsType)) {
+    if (shouldUseStepCache(wsType)) {
       await saveCachedStepResult({
-        userId: req.user?.userId || 'guest',
+        userId,
         workflowName,
         stepName: step.ws_name,
         wsType,
@@ -491,44 +577,87 @@ async function executeStepForWorkflowRun(step, inputs, req, user) {
         keyParams: cacheKeyParamsFromStep(step)
       });
     }
-
     return result;
   }
 
-  if (wsType === 'webpage') return runWebpageStep(step, inputs || {});
-  if (wsType === 'tool') return runToolStep(step, inputs || {}, user);
-  if (wsType === 'api') return runApiStep(step, inputs || {});
-  throw new Error(`ws_type "${wsType}" not supported in workflow run`);
+  let result;
+  if (wsType === 'webpage') result = await runWebpageStep(step, inputs || {}, executionOptions);
+  else if (wsType === 'tool') result = await runToolStep(step, inputs || {}, user, executionOptions);
+  else if (wsType === 'api') result = await runApiStep(step, inputs || {}, executionOptions);
+  else throw new Error(`ws_type "${wsType}" not supported in workflow run`);
+
+  if (shouldUseStepCache(wsType)) {
+    await saveCachedStepResult({
+      userId,
+      workflowName,
+      stepName: step.ws_name,
+      wsType,
+      inputs: inputs || {},
+      output: result,
+      meta: cacheMetaFromStep(step),
+      keyParams: cacheKeyParamsFromStep(step)
+    });
+  }
+  return result;
 }
 
 function buildInputsFromDependencies(node, byId, outputsByNodeId, triggerInputs) {
   const inherited = {};
+  const parseJsonObjectFromString = (raw) => {
+    if (typeof raw !== 'string') return null;
+    const clean = raw
+      .replace(/^```json\s*/i, '')
+      .replace(/^```\s*/i, '')
+      .replace(/```\s*$/i, '')
+      .trim();
+    if (!clean) return null;
+    try {
+      const parsed = JSON.parse(clean);
+      return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const normalizeDependencyOutput = (depOutput) => {
+    if (depOutput && typeof depOutput === 'object' && !Array.isArray(depOutput)) return depOutput;
+    return parseJsonObjectFromString(depOutput);
+  };
 
   (node.depends_on || []).forEach((depId) => {
     const depNode = byId.get(depId);
-    const depOutput = outputsByNodeId[depId];
-    if (!depNode || !depOutput || typeof depOutput !== 'object') return;
+    const depOutput = normalizeDependencyOutput(outputsByNodeId[depId]);
+    if (!depNode || !depOutput) return;
     Object.assign(inherited, depOutput);
-    inherited[depNode.ws_ref] = depOutput;
-    inherited[`${depNode.ws_ref}_output`] = depOutput;
   });
 
-  return { ...inherited, ...(triggerInputs || {}) };
+  return { ...(triggerInputs || {}), ...inherited };
 }
 
-async function runWorkflowOrchestration(req, run, workflowData, fromStepId, triggerInputs) {
-  const graph = buildWorkflowGraph(workflowData);
+async function runWorkflowOrchestration(req, run, workflowData, fromStepId, triggerInputs, wfId) {
+  const graph = buildWorkflowGraph(workflowData, wfId);
   const order = getDownstreamOrderFromGraph(graph, fromStepId);
   const stepMap = new Map((workflowData?.steps || []).map((step) => [step.ws_name, step]));
   const outputsByNodeId = {};
   const callerIp = getCallerRemoteAddr(req);
   const user = await getUser(req.user.userId);
   let lastFinishedStep = null;
+  const executedNodeIds = new Set();
   req.workflowNameForRun = run.workflowName;
 
   pushRunEvent(run, 'workflow_started', { from_step_id: fromStepId, total_steps: order.length });
 
   for (const nodeId of order) {
+    if (executedNodeIds.has(nodeId)) {
+      pushRunEvent(run, 'step_finished', {
+        step_id: nodeId,
+        status: 'skipped',
+        error: 'Duplicate node detected in execution order'
+      });
+      continue;
+    }
+    executedNodeIds.add(nodeId);
+
     if (run.cancelRequested) {
       run.status = 'stopped';
       pushRunEvent(run, 'workflow_finished', { status: 'stopped', reason: 'cancel_requested' });
@@ -576,10 +705,14 @@ async function runWorkflowOrchestration(req, run, workflowData, fromStepId, trig
     }
 
     try {
-      const result = await executeStepForWorkflowRun(step, mergedInputs, req, user);
+      const stepAbortController = new AbortController();
+      run.activeStepAbortController = stepAbortController;
+      const result = await executeStepForWorkflowRun(step, mergedInputs, req, user, { signal: stepAbortController.signal });
+      run.activeStepAbortController = null;
       outputsByNodeId[nodeId] = result;
 
       await saveStepRunRecord(req.user.userId, run.workflowName, step.ws_name, {
+        runId: run.runId,
         workflowName: run.workflowName,
         nodeId,
         stepName: step.ws_name,
@@ -610,7 +743,9 @@ async function runWorkflowOrchestration(req, run, workflowData, fromStepId, trig
         output: result
       };
     } catch (err) {
+      run.activeStepAbortController = null;
       await saveStepRunRecord(req.user.userId, run.workflowName, step.ws_name, {
+        runId: run.runId,
         workflowName: run.workflowName,
         nodeId,
         stepName: step.ws_name,
@@ -733,11 +868,12 @@ router.post('/workflows/:workflowName/step', authMiddleware, execLimiter, async 
 
 // ── EXEC WORKFLOW (orchestrated by backend) ──────────────────────
 // POST /api/exec/workflows/:workflowName/run
-// Body: { from_step_id, inputs }
+// Body: { from_step_id, inputs, wf_id }
 router.post('/workflows/:workflowName/run', authMiddleware, execLimiter, async (req, res) => {
   try {
     const workflowName = String(req.params.workflowName || '').trim();
     const fromStepId = String(req.body?.from_step_id || '').trim();
+    const wfId = req.body?.wf_id && typeof req.body.wf_id === 'string' ? req.body.wf_id : null;
     const triggerInputs = (req.body?.inputs && typeof req.body.inputs === 'object' && !Array.isArray(req.body.inputs))
       ? req.body.inputs
       : {};
@@ -754,7 +890,7 @@ router.post('/workflows/:workflowName/run', authMiddleware, execLimiter, async (
       throw err;
     }
 
-    const graph = buildWorkflowGraph(workflowData);
+    const graph = buildWorkflowGraph(workflowData, wfId);
     if (!graph.byId.has(fromStepId)) {
       return res.status(404).json({ error: `from_step_id "${fromStepId}" not found in workflow` });
     }
@@ -762,7 +898,7 @@ router.post('/workflows/:workflowName/run', authMiddleware, execLimiter, async (
     const run = createRun(req.user.userId, workflowName);
     res.status(202).json({ ok: true, run_id: run.runId, status: run.status });
 
-    runWorkflowOrchestration(req, run, workflowData, fromStepId, triggerInputs)
+    runWorkflowOrchestration(req, run, workflowData, fromStepId, triggerInputs, wfId)
       .catch((err) => {
         run.status = 'error';
         pushRunEvent(run, 'workflow_finished', {
@@ -795,6 +931,9 @@ router.post('/runs/:runId/stop', authMiddleware, async (req, res) => {
   const run = workflowRuns.get(runId);
   if (!run || run.userId !== req.user.userId) return res.status(404).json({ error: 'Run not found' });
   run.cancelRequested = true;
+  if (run.activeStepAbortController) {
+    try { run.activeStepAbortController.abort(new Error('workflow_cancelled')); } catch { /* noop */ }
+  }
   res.json({ ok: true, run_id: runId, status: 'stopping' });
 });
 
@@ -826,6 +965,15 @@ router.get('/history/logs', authMiddleware, async (req, res) => {
 router.delete('/history/logs', authMiddleware, async (req, res) => {
   try {
     const details = await clearUserRunLogs(req.user.userId);
+    res.json({ ok: true, details });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.delete('/history/cache', authMiddleware, async (req, res) => {
+  try {
+    const details = await clearUserStepCache(req.user.userId);
     res.json({ ok: true, details });
   } catch (err) {
     res.status(500).json({ error: err.message });

@@ -1,6 +1,10 @@
 :root {
-  --bg:#080c12; --panel:#0f1722; --panel2:#131d2d; --text:#9cb1ce; --hi:#e6eef8;
-  --border:#22314d; --accent:#f59e0b; --ok:#34d399; --warn:#fbbf24; --bad:#f87171;
+  --bg:#080c12; --panel:#0e1520; --panel2:#131c2b; --text:#8fa3be; --hi:#d4e0ef;
+  --border:#1a2740; --accent:#f59e0b; --ok:#34d399; --warn:#fbbf24; --bad:#f87171;
+}
+:root.light {
+  --bg:#f0f4f8; --panel:#ffffff; --panel2:#f5f7fa; --text:#4a6075; --hi:#1a2a3a;
+  --border:#d6e0ea; --accent:#d97706; --ok:#059669; --warn:#b45309; --bad:#dc2626;
 }
 :root.light {
   --bg:#f0f4f8; --panel:#ffffff; --panel2:#f5f7fa; --text:#4a6075; --hi:#1a2a3a;
@@ -14,6 +18,7 @@ body{font-family:'Figtree',sans-serif;background:var(--bg);color:var(--text)}
 .logo{font-family:'Syne',sans-serif;font-size:16px;color:var(--hi);display:flex;gap:8px;align-items:center}
 .logo-badge{font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--accent);border:1px solid rgba(245,158,11,.25);padding:1px 6px;border-radius:3px}
 .tb-btn{color:var(--text);text-decoration:none;border:1px solid var(--border);padding:6px 10px;border-radius:6px;font-family:'JetBrains Mono',monospace;font-size:11px}
+#clear-logs-btn{display:inline-flex;align-items:center;justify-content:center;background:transparent;appearance:none}
 #logs-main{padding:14px;display:flex;flex-direction:column;gap:12px;min-height:0;flex:1}
 .topbar-actions{display:flex;gap:8px}
 .card{background:var(--panel);border:1px solid var(--border);border-radius:10px}
