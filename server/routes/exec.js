@@ -77,7 +77,7 @@ function attachRunClient(run, res) {
 
   const heartbeatInterval = setInterval(() => {
     try {
-      res.write(`event: heartbeat\ndata: ${JSON.stringify({ message: 'Traitement en cours ...' })}\n\n`);
+      res.write(`: heartbeat ${Date.now()}\n\n`);
     } catch {
       clearInterval(heartbeatInterval);
       run.clientHeartbeats.delete(res);
