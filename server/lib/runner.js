@@ -656,26 +656,51 @@ async function runAgentToolStep(step, inputs, user, executionOptions = {}) {
 
   const messages = [{ role: 'user', content: String(userPrompt) }];
   let lastToolResult = null;
+  let lastAssistantText = null;
+  const agentTrace = [];
 
   for (let turn = 0; turn < maxTurns; turn++) {
     const response = await llmProvider.callWithTools({ model, system, messages, tools, temperature: temp, maxTokens: maxTok });
+    const turnTrace = { turn: turn + 1, llm_response_type: response?.type || 'unknown', tool_calls: [] };
 
-    if (response.type === 'text') break;
+    if (response.type === 'text') {
+      lastAssistantText = String(response.text || '').trim();
+      turnTrace.assistant_text = lastAssistantText;
+      agentTrace.push(turnTrace);
+      break;
+    }
 
     // Execute each tool call sequentially and collect results.
     const resultsForHistory = [];
     for (const call of response.calls) {
       lastToolResult = await callMcpTool(server, call.name, call.arguments, executionOptions);
       resultsForHistory.push({ call_id: call.id, content: JSON.stringify(lastToolResult) });
+      const raw = JSON.stringify(lastToolResult);
+      turnTrace.tool_calls.push({
+        call_id: call.id,
+        name: call.name,
+        arguments: call.arguments || {},
+        raw_result_truncated: raw.length > 2000 ? `${raw.slice(0, 2000)}…[truncated ${raw.length - 2000} chars]` : raw
+      });
     }
 
     messages.push({ role: 'assistant_tool_calls', calls: response.calls });
     for (const r of resultsForHistory) {
       messages.push({ role: 'tool_result', call_id: r.call_id, content: r.content });
     }
+    agentTrace.push(turnTrace);
   }
 
-  return lastToolResult;
+  if (lastToolResult !== null && lastToolResult !== undefined) {
+    return { result: lastToolResult, agentTrace, agentOutcome: 'tool_result' };
+  }
+  let parsedText = null;
+  try { parsedText = JSON.parse(lastAssistantText); } catch { parsedText = null; }
+  return {
+    result: parsedText ?? lastAssistantText ?? null,
+    agentTrace,
+    agentOutcome: parsedText ? 'llm_text_json' : 'llm_text_raw'
+  };
 }
 
 export async function runToolStep(step, inputs, user, executionOptions = {}) {
