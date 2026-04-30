@@ -958,9 +958,9 @@ function populateEditor(s) {
   populateToolServerSelect(s.ws_tool?.mcp_server_label || '');
   document.getElementById('f-tool-mode').value = s.ws_tool?.mode || 'direct';
   onToolMcpServerChange(s.ws_tool?.tool_name || '');
-  document.getElementById('f-tool-max-turns').value = Math.max(1, Number(s.ws_tool?.max_turns ?? 1));
+  document.getElementById('f-tool-max-turns').value = Math.max(1, Number(s.ws_tool?.max_turns ?? 2));
   document.getElementById('f-tool-agent-instructions').value = s.ws_tool?.agent_instructions || '';
-  onToolModeChange();
+  handleToolModeChange();
 
   const apiAdv = document.getElementById('api-advanced-content');
   const apiAdvBtn = document.getElementById('api-advanced-toggle');
@@ -1072,7 +1072,7 @@ function collectStep() {
       const mcp_server_label = document.getElementById('f-tool-mcp-server')?.value || '';
       const mode = document.getElementById('f-tool-mode')?.value || 'direct';
       const tool_name = document.getElementById('f-tool-name')?.value || '';
-      const maxTurnsRaw = Number(document.getElementById('f-tool-max-turns')?.value ?? 1);
+      const maxTurnsRaw = Number(document.getElementById('f-tool-max-turns')?.value ?? 2);
       const max_turns = Math.max(1, Number.isFinite(maxTurnsRaw) ? Math.trunc(maxTurnsRaw) : 1);
       const agent_instructions = document.getElementById('f-tool-agent-instructions')?.value || '';
       s.ws_tool = { mcp_server_label, mode };
@@ -1394,7 +1394,7 @@ function onToolModeChange() {
   if (agentInstructionsSection) agentInstructionsSection.style.display = mode === 'agent' ? '' : 'none';
 }
 
-function onToolModeChange() {
+function handleToolModeChange() {
   const mode = document.getElementById('f-tool-mode')?.value || 'direct';
   const toolField = document.getElementById('f-tool-name')?.closest('.form-section');
   const maxTurnsSection = document.getElementById('tool-agent-max-turns-section');
@@ -2317,7 +2317,7 @@ Object.assign(window,{
   deleteWorkflow, copyWfJson, applyWfJson, closeWfJson, onWfJsonInput, copyWfJsonByName,
   openJsonFullscreen, closeJsonFullscreen, jfsCopy, jfsApply, jfsValidate,
   saveApiKey, deleteApiKey, changePassword, switchSettingsTab, addMcpServerRow, removeMcpServerRow, validateMcpServer, saveMcpServers,
-  onProviderChange, onSettingsProviderChange, onToolMcpServerChange, onToolModeChange, setLanguage,
+  onProviderChange, onSettingsProviderChange, onToolMcpServerChange, onToolModeChange: handleToolModeChange, setLanguage,
   startWorkflowRename
 });
 
