@@ -528,20 +528,10 @@ async function buildMcpRequestHeaders(server, apiKey) {
   return headers;
 }
 
-export async function runToolStep(step, inputs, user, executionOptions = {}) {
-  const { mcpServerLabel, toolName } = resolveToolConfig(step);
-  const servers = Array.isArray(user?.mcpServers) ? user.mcpServers : [];
-  const server = servers.find((row) => String(row?.server_label || '').trim() === mcpServerLabel);
-
-  if (!server) throw new Error(`MCP server "${mcpServerLabel}" not found in your settings`);
-
+// Execute a single MCP tool/call RPC. Shared by direct and agent modes.
+async function callMcpTool(server, toolName, toolArgs, executionOptions = {}) {
   const endpoint = String(server.server_url || '').trim();
-  if (!endpoint) throw new Error(`MCP server "${mcpServerLabel}" has no server_url configured`);
-  if (!server.apiKeyEnc) throw new Error(`MCP server "${mcpServerLabel}" has no API key configured`);
-
-  const apiKey = await decrypt(server.apiKeyEnc);
-  const toolSchema = await getSharedToolSchema(endpoint, toolName);
-  const toolArgs = buildToolArguments(inputs, toolSchema);
+  const apiKey = server.apiKeyEnc ? await decrypt(server.apiKeyEnc) : '';
   const headers = await buildMcpRequestHeaders(server, apiKey);
 
   const controller = new AbortController();
@@ -562,18 +552,12 @@ export async function runToolStep(step, inputs, user, executionOptions = {}) {
         jsonrpc: '2.0',
         id: `waiflo-tool-${Date.now()}`,
         method: 'tools/call',
-        params: {
-          name: toolName,
-          arguments: toolArgs
-        }
+        params: { name: toolName, arguments: toolArgs }
       }),
       signal: controller.signal
     });
 
-    if (!response.ok) {
-      throw new Error(`MCP HTTP ${response.status} ${response.statusText}`);
-    }
-
+    if (!response.ok) throw new Error(`MCP HTTP ${response.status} ${response.statusText}`);
     return await parseMcpResponse(response);
   } catch (err) {
     if (err?.name === 'AbortError') {
@@ -585,4 +569,132 @@ export async function runToolStep(step, inputs, user, executionOptions = {}) {
     clearTimeout(timer);
     if (parentSignal) parentSignal.removeEventListener('abort', abortFromParent);
   }
+}
+
+// Return normalized tool definitions for the server.
+// Uses the cached list from the user record; falls back to a runtime tools/list RPC.
+async function resolveServerTools(server) {
+  if (Array.isArray(server.tools) && server.tools.length > 0) {
+    return server.tools.map(t => ({
+      name: t.name,
+      description: t.description || '',
+      inputSchema: t.inputSchema || t.parameters || { type: 'object', properties: {} },
+    }));
+  }
+
+  const endpoint = String(server.server_url || '').trim();
+  const apiKey = server.apiKeyEnc ? await decrypt(server.apiKeyEnc) : '';
+  const headers = await buildMcpRequestHeaders(server, apiKey);
+
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ jsonrpc: '2.0', id: 'tools-list', method: 'tools/list', params: {} }),
+  });
+
+  if (!response.ok) throw new Error(`MCP tools/list failed: HTTP ${response.status}`);
+  const result = await parseMcpResponse(response);
+  const rawTools = Array.isArray(result?.tools) ? result.tools : (Array.isArray(result) ? result : []);
+
+  return rawTools.map(t => ({
+    name: t.name,
+    description: t.description || '',
+    inputSchema: t.inputSchema || t.parameters || { type: 'object', properties: {} },
+  }));
+}
+
+const DEFAULT_AGENT_INSTRUCTIONS = (tools) => {
+  const list = tools.map(t => `- ${t.name}: ${t.description || '(no description)'}`).join('\n');
+  return `You have access to the following tools on the connected MCP server:\n${list}\n\nCall the most appropriate tool based on the user request. If a tool call is needed, use it. Return the result without modification.`;
+};
+
+function buildAgentSystemPrompt(step, tools) {
+  const wsTool = step.ws_tool || {};
+  const userContext = (step.ws_system_prompt || '').trim();
+  const instructions = (wsTool.agent_instructions || '').trim() || DEFAULT_AGENT_INSTRUCTIONS(tools);
+  return [userContext, instructions].filter(Boolean).join('\n\n');
+}
+
+async function runAgentToolStep(step, inputs, user, executionOptions = {}) {
+  const wsTool = step.ws_tool || {};
+  const mcpServerLabel = String(wsTool.mcp_server_label || wsTool.server_label || '').trim();
+  const maxTurns = Math.max(1, Number(wsTool.max_turns ?? 1));
+
+  if (!mcpServerLabel) throw new Error('tool step (agent mode) requires ws_tool.mcp_server_label');
+
+  const llm = step.ws_llm || {};
+  const provider = (llm.provider || 'anthropic').toLowerCase();
+
+  if (provider === 'perplexity') {
+    throw new Error('Perplexity does not support native tool-use. Use anthropic, openai, or mistral for agent mode.');
+  }
+
+  const meta = PROVIDER_META[provider] || PROVIDER_META.anthropic;
+  const model = llm.model || meta.defaultModel;
+  const temp = llm.temperature ?? 0;
+  const maxTok = llm.max_tokens || 2048;
+
+  const servers = Array.isArray(user?.mcpServers) ? user.mcpServers : [];
+  const server = servers.find(r => String(r?.server_label || '').trim() === mcpServerLabel);
+  if (!server) throw new Error(`MCP server "${mcpServerLabel}" not found in your settings`);
+
+  const endpoint = String(server.server_url || '').trim();
+  if (!endpoint) throw new Error(`MCP server "${mcpServerLabel}" has no server_url configured`);
+
+  const tools = await resolveServerTools(server);
+  if (!tools.length) throw new Error(`No tools found on MCP server "${mcpServerLabel}"`);
+
+  const system = buildAgentSystemPrompt(step, tools);
+
+  let apiKey = await resolveApiKey(user, provider);
+  const llmProvider = createProvider(provider, apiKey);
+  apiKey = null;
+
+  // Derive user prompt from inputs: prefer explicit prompt/query fields, else serialize all inputs.
+  const userPrompt = inputs.prompt ?? inputs.user_prompt ?? inputs.query
+    ?? JSON.stringify(inputs);
+
+  const messages = [{ role: 'user', content: String(userPrompt) }];
+  let lastToolResult = null;
+
+  for (let turn = 0; turn < maxTurns; turn++) {
+    const response = await llmProvider.callWithTools({ model, system, messages, tools, temperature: temp, maxTokens: maxTok });
+
+    if (response.type === 'text') break;
+
+    // Execute each tool call sequentially and collect results.
+    const resultsForHistory = [];
+    for (const call of response.calls) {
+      lastToolResult = await callMcpTool(server, call.name, call.arguments, executionOptions);
+      resultsForHistory.push({ call_id: call.id, content: JSON.stringify(lastToolResult) });
+    }
+
+    messages.push({ role: 'assistant_tool_calls', calls: response.calls });
+    for (const r of resultsForHistory) {
+      messages.push({ role: 'tool_result', call_id: r.call_id, content: r.content });
+    }
+  }
+
+  return lastToolResult;
+}
+
+export async function runToolStep(step, inputs, user, executionOptions = {}) {
+  const mode = step?.ws_tool?.mode || 'direct';
+  if (mode === 'agent') return runAgentToolStep(step, inputs, user, executionOptions);
+
+  // --- direct mode (existing behaviour) ---
+  const { mcpServerLabel, toolName } = resolveToolConfig(step);
+  const servers = Array.isArray(user?.mcpServers) ? user.mcpServers : [];
+  const server = servers.find((row) => String(row?.server_label || '').trim() === mcpServerLabel);
+
+  if (!server) throw new Error(`MCP server "${mcpServerLabel}" not found in your settings`);
+
+  const endpoint = String(server.server_url || '').trim();
+  if (!endpoint) throw new Error(`MCP server "${mcpServerLabel}" has no server_url configured`);
+  if (!server.apiKeyEnc) throw new Error(`MCP server "${mcpServerLabel}" has no API key configured`);
+
+  const toolSchema = await getSharedToolSchema(endpoint, toolName);
+  const toolArgs = buildToolArguments(inputs, toolSchema);
+
+  return callMcpTool(server, toolName, toolArgs, executionOptions);
 }
