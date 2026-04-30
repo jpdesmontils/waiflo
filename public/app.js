@@ -960,6 +960,9 @@ function populateEditor(s) {
   });
   populateToolServerSelect(s.ws_tool?.mcp_server_label || '');
   onToolMcpServerChange(s.ws_tool?.tool_name || '');
+  document.getElementById('f-tool-mode').value = s.ws_tool?.mode || 'direct';
+  document.getElementById('f-tool-max-turns').value = s.ws_tool?.max_turns ?? 1;
+  document.getElementById('f-tool-agent-instructions').value = s.ws_tool?.agent_instructions || '';
 
   const apiAdv = document.getElementById('api-advanced-content');
   const apiAdvBtn = document.getElementById('api-advanced-toggle');
@@ -976,26 +979,40 @@ function populateEditor(s) {
 
 function onTypeChange() {
   const t=document.getElementById('f-type').value;
-  const p=t==='prompt'||t==='tool', a=t==='api'||t==='webpage', w=t==='webpage', tool=t==='tool';
-  document.getElementById('llm-section').style.display       = p?'':'none';
-  document.getElementById('sysprompt-section').style.display = p?'':'none';
-  document.getElementById('template-section').style.display  = p?'':'none';
-  document.getElementById('api-section').style.display       = a?'':'none';
-  document.getElementById('tool-section').style.display      = tool?'':'none';
-  document.getElementById('method-section').style.display    = w?'none':'';
-  document.getElementById('url-hint').textContent            = w
+  const isPrompt=t==='prompt', isTool=t==='tool', isApi=t==='api'||t==='webpage', isWebpage=t==='webpage';
+  // template-section only for prompt steps
+  document.getElementById('template-section').style.display  = isPrompt?'':'none';
+  // llm + sysprompt: always shown for prompt; for tool delegated to onToolModeChange()
+  if (!isTool) {
+    document.getElementById('llm-section').style.display       = isPrompt?'':'none';
+    document.getElementById('sysprompt-section').style.display = isPrompt?'':'none';
+  }
+  document.getElementById('api-section').style.display       = isApi?'':'none';
+  document.getElementById('tool-section').style.display      = isTool?'':'none';
+  document.getElementById('method-section').style.display    = isWebpage?'none':'';
+  document.getElementById('url-hint').textContent            = isWebpage
     ? 'Fetches browser-like raw HTML from this URL. Use {{input_name}} for dynamic params.'
     : 'Use {{input_name}} for dynamic params';
 
   const apiBody = document.getElementById('api-body-section');
-  if (apiBody) apiBody.style.display = w ? 'none' : '';
+  if (apiBody) apiBody.style.display = isWebpage ? 'none' : '';
   const webpageModeSection = document.getElementById('webpage-mode-section');
-  if (webpageModeSection) webpageModeSection.style.display = w ? '' : 'none';
+  if (webpageModeSection) webpageModeSection.style.display = isWebpage ? '' : 'none';
   const webpageBrowserOptions = document.getElementById('webpage-browser-options');
   if (webpageBrowserOptions) {
     const mode = document.getElementById('f-webpage-mode')?.value || 'http';
-    webpageBrowserOptions.style.display = w && mode === 'browser' ? '' : 'none';
+    webpageBrowserOptions.style.display = isWebpage && mode === 'browser' ? '' : 'none';
   }
+  if (isTool) onToolModeChange();
+}
+
+function onToolModeChange() {
+  const mode = document.getElementById('f-tool-mode')?.value || 'direct';
+  const isAgent = mode === 'agent';
+  document.getElementById('tool-direct-fields').style.display = isAgent ? 'none' : '';
+  document.getElementById('tool-agent-fields').style.display  = isAgent ? '' : 'none';
+  document.getElementById('llm-section').style.display        = isAgent ? '' : 'none';
+  document.getElementById('sysprompt-section').style.display  = isAgent ? '' : 'none';
 }
 
 function onProviderChange(currentModel) {
@@ -1057,9 +1074,18 @@ function collectStep() {
     s.ws_prompt_template=document.getElementById('f-template').value;
     if (type==='tool') {
       const mcp_server_label = document.getElementById('f-tool-mcp-server')?.value || '';
-      const tool_name = document.getElementById('f-tool-name')?.value || '';
-      s.ws_tool = { mcp_server_label, tool_name };
-      s.ws_tools = tool_name ? [tool_name] : [];
+      const mode = document.getElementById('f-tool-mode')?.value || 'direct';
+      const ws_tool = { mcp_server_label, mode };
+      if (mode === 'direct') {
+        const tool_name = document.getElementById('f-tool-name')?.value || '';
+        ws_tool.tool_name = tool_name;
+        s.ws_tools = tool_name ? [tool_name] : [];
+      } else {
+        ws_tool.max_turns = parseInt(document.getElementById('f-tool-max-turns')?.value || '1', 10) || 1;
+        const agentInstr = (document.getElementById('f-tool-agent-instructions')?.value || '').trim();
+        if (agentInstr) ws_tool.agent_instructions = agentInstr;
+      }
+      s.ws_tool = ws_tool;
     }
   }
   if (type==='api') {
@@ -1124,8 +1150,8 @@ function applyStepEdit() {
   if (!s) return;
   if (!s.ws_name) return toast('ws_name is required','err');
 
-  // Validate that input variables are referenced in the prompt
-  if ((s.ws_type === 'prompt' || s.ws_type === 'tool') && s.ws_inputs_schema?.properties) {
+  // Validate that input variables are referenced in the prompt (prompt steps only)
+  if (s.ws_type === 'prompt' && s.ws_inputs_schema?.properties) {
     const inputNames = Object.keys(s.ws_inputs_schema.properties);
     if (inputNames.length > 0) {
       const promptText = (s.ws_system_prompt || '') + ' ' + (s.ws_prompt_template || '');
@@ -1398,9 +1424,9 @@ function toggleApiAdvancedSection() {
   btn.textContent = `${btn.textContent.replace(/[▾▸]/g, '').trim()} ${collapsed ? '▸' : '▾'}`;
 }
 
-function toggleToolAdvancedSection() {
-  const content = document.getElementById('tool-advanced-content');
-  const btn = document.getElementById('tool-advanced-toggle');
+function toggleToolAgentAdvSection() {
+  const content = document.getElementById('tool-agent-adv-content');
+  const btn = document.getElementById('tool-agent-adv-toggle');
   if (!content || !btn) return;
   const collapsed = content.classList.toggle('collapsed');
   btn.textContent = `${btn.textContent.replace(/[▾▸]/g, '').trim()} ${collapsed ? '▸' : '▾'}`;
@@ -2348,7 +2374,7 @@ Object.assign(window,{
   openNewStepEditor, openStepEditor,
   applyStepEdit, deleteCurrentStep, closeEditor, switchEditorTab,
   addInputField, addOutputField, onTypeChange,
-  toggleTechSection, toggleApiAdvancedSection, toggleToolAdvancedSection, toggleEditorMaximize,
+  toggleTechSection, toggleApiAdvancedSection, toggleToolAgentAdvSection, toggleEditorMaximize,
   toggleSyspromptSection, toggleTemplateSection, startRightPanelResize,
   runStepOnly, runWorkflowFromHere, stopExecution, closeModal, showSignupCTA,
   confirmEdgeDelete, toggleWorkflowExecLogs, toggleRightPanel,
@@ -2356,7 +2382,7 @@ Object.assign(window,{
   deleteWorkflow, copyWfJson, applyWfJson, closeWfJson, onWfJsonInput, copyWfJsonByName,
   openJsonFullscreen, closeJsonFullscreen, jfsCopy, jfsApply, jfsValidate,
   saveApiKey, deleteApiKey, changePassword, switchSettingsTab, addMcpServerRow, removeMcpServerRow, validateMcpServer, saveMcpServers,
-  onProviderChange, onSettingsProviderChange, onToolMcpServerChange, setLanguage,
+  onProviderChange, onSettingsProviderChange, onToolMcpServerChange, onToolModeChange, setLanguage,
   startWorkflowRename
 });
 
