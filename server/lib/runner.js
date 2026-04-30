@@ -656,17 +656,15 @@ async function runAgentToolStep(step, inputs, user, executionOptions = {}) {
 
   const messages = [{ role: 'user', content: String(userPrompt) }];
   let lastToolResult = null;
-  let lastAssistantText = null;
-  const agentTrace = [];
+  let textResponse = '';
+  const callHistory = [];
 
   for (let turn = 0; turn < maxTurns; turn++) {
     const response = await llmProvider.callWithTools({ model, system, messages, tools, temperature: temp, maxTokens: maxTok });
     const turnTrace = { turn: turn + 1, llm_response_type: response?.type || 'unknown', tool_calls: [] };
 
     if (response.type === 'text') {
-      lastAssistantText = String(response.text || '').trim();
-      turnTrace.assistant_text = lastAssistantText;
-      agentTrace.push(turnTrace);
+      textResponse = String(response.content || '').trim();
       break;
     }
 
@@ -692,16 +690,20 @@ async function runAgentToolStep(step, inputs, user, executionOptions = {}) {
     agentTrace.push(turnTrace);
   }
 
-  if (lastToolResult !== null && lastToolResult !== undefined) {
-    return { result: lastToolResult, agentTrace, agentOutcome: 'tool_result' };
+  if (!callHistory.length) {
+    return {
+      mcp_explainer: textResponse
+        ? `Aucun appel MCP exécuté. Explication agent: ${textResponse}`
+        : "Aucun appel MCP exécuté par l'agent."
+    };
   }
-  let parsedText = null;
-  try { parsedText = JSON.parse(lastAssistantText); } catch { parsedText = null; }
-  return {
-    result: parsedText ?? lastAssistantText ?? null,
-    agentTrace,
-    agentOutcome: parsedText ? 'llm_text_json' : 'llm_text_raw'
-  };
+
+  const summary = `Appels MCP exécutés (${callHistory.length}): ${callHistory.map(c => c.tool).join(', ')}`;
+  if (lastToolResult && typeof lastToolResult === 'object' && !Array.isArray(lastToolResult)) {
+    return { ...lastToolResult, mcp_explainer: summary };
+  }
+
+  return { mcp_result: lastToolResult, mcp_explainer: summary };
 }
 
 export async function runToolStep(step, inputs, user, executionOptions = {}) {
