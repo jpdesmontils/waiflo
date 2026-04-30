@@ -646,7 +646,19 @@ function buildInputsFromDependencies(node, byId, outputsByNodeId, triggerInputs)
   };
 
   const normalizeDependencyOutput = (depOutput) => {
-    if (depOutput && typeof depOutput === 'object' && !Array.isArray(depOutput)) return depOutput;
+    // Primary case: direct object output from previous step.
+    if (depOutput && typeof depOutput === 'object' && !Array.isArray(depOutput)) {
+      // Compatibility: some runners wrap payloads in { result }, { parsed } or { output }.
+      const candidates = [depOutput, depOutput.result, depOutput.parsed, depOutput.output];
+      for (const candidate of candidates) {
+        if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) return candidate;
+        const parsed = parseJsonObjectFromString(candidate);
+        if (parsed) return parsed;
+      }
+      return null;
+    }
+
+    // Fallback: textual JSON payload.
     return parseJsonObjectFromString(depOutput);
   };
 
