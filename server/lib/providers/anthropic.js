@@ -28,6 +28,78 @@ export class AnthropicProvider extends cLLM {
     this._client = new Anthropic({ apiKey });
   }
 
+  // Convert normalized messages to Anthropic API format.
+  _toAnthropicMessages(messages) {
+    const out = [];
+    let pendingToolResults = [];
+
+    for (const msg of messages) {
+      if (msg.role === 'user') {
+        if (pendingToolResults.length) {
+          out.push({ role: 'user', content: pendingToolResults });
+          pendingToolResults = [];
+        }
+        out.push({ role: 'user', content: msg.content });
+      } else if (msg.role === 'assistant') {
+        out.push({ role: 'assistant', content: msg.content });
+      } else if (msg.role === 'assistant_tool_calls') {
+        out.push({
+          role: 'assistant',
+          content: msg.calls.map(c => ({
+            type: 'tool_use',
+            id: c.id,
+            name: c.name,
+            input: c.arguments,
+          })),
+        });
+      } else if (msg.role === 'tool_result') {
+        // Anthropic batches all tool results into a single user turn.
+        pendingToolResults.push({
+          type: 'tool_result',
+          tool_use_id: msg.call_id,
+          content: msg.content,
+        });
+      }
+    }
+
+    if (pendingToolResults.length) {
+      out.push({ role: 'user', content: pendingToolResults });
+    }
+
+    return out;
+  }
+
+  // Convert normalized tool definitions to Anthropic format.
+  _toAnthropicTools(tools) {
+    return tools.map(t => ({
+      name: t.name,
+      description: t.description || '',
+      input_schema: t.inputSchema || { type: 'object', properties: {} },
+    }));
+  }
+
+  async callWithTools({ model, system, messages, tools, temperature = 0, maxTokens = 2048 }) {
+    const response = await this._client.messages.create({
+      model,
+      max_tokens: maxTokens,
+      temperature,
+      system: system || '',
+      tools: this._toAnthropicTools(tools),
+      messages: this._toAnthropicMessages(messages),
+    });
+
+    const toolUseBlocks = response.content.filter(b => b.type === 'tool_use');
+    if (toolUseBlocks.length > 0) {
+      return {
+        type: 'tool_calls',
+        calls: toolUseBlocks.map(b => ({ id: b.id, name: b.name, arguments: b.input })),
+      };
+    }
+
+    const text = response.content.filter(b => b.type === 'text').map(b => b.text).join('');
+    return { type: 'text', text };
+  }
+
   async *stream({ model, system, userPrompt, imageUrls = [], temperature = 0, maxTokens = 2048 }) {
     const content = [{ type: 'text', text: userPrompt }];
 
