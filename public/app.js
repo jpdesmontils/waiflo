@@ -42,11 +42,8 @@ let _isExecuting = false;
 let _runStepDefaultLabel = '▶ Run Step Only';
 let _runFlowDefaultLabel = '▶ Run Workflow From Here';
 let _edgeDeletePrompt = null;
-let _workflowExecLogs = [];
 let _activeRunNodeIds = new Set();
 let _lastEditorTab = 'edit';
-let _logsPanelDrag = null;
-const WF_LOGS_PANEL_POS_KEY = 'wf_logs_panel_pos';
 let _activeRunEdgeIds = new Set();
 // FIX #6 — flag anti-réentrance pour hydrateRunStateFromServer
 let _hydratingNodes = new Set();
@@ -1223,57 +1220,6 @@ function setExecutionUiState(running) {
   }
 }
 
-function appendWorkflowExecLog(line) {
-  _workflowExecLogs.push(line);
-  const pre = document.getElementById('wf-exec-logs-content');
-  if (pre) { pre.textContent = _workflowExecLogs.join('\n'); pre.scrollTop = pre.scrollHeight; }
-}
-
-function formatWorkflowEventContext(data = {}) {
-  const parts = [];
-  if (data.step_id) parts.push(`step_id=${data.step_id}`);
-  if (data.ws_ref) parts.push(`ws_ref=${data.ws_ref}`);
-  if (data.step_desc) parts.push(`step_desc=${data.step_desc}`);
-  if (data.status) parts.push(`status=${data.status}`);
-  if (data.last_step?.ws_ref) parts.push(`last_ws_ref=${data.last_step.ws_ref}`);
-  if (data.last_step?.step_desc) parts.push(`last_step_desc=${data.last_step.step_desc}`);
-  return parts.length ? ` [${parts.join(' | ')}]` : '';
-}
-
-function formatDetailedWorkflowError(data = {}) {
-  const chunks = [];
-  if (data.error) chunks.push(`error=${data.error}`);
-  if (Array.isArray(data.details) && data.details.length) {
-    chunks.push(`details=${data.details.join(' ; ')}`);
-  }
-  if (data.error_details?.code) chunks.push(`code=${data.error_details.code}`);
-  const causes = data.error_details?.causes;
-  if (Array.isArray(causes) && causes.length) {
-    const causeText = causes
-      .map((cause, idx) => `#${idx + 1} ${cause.name || 'Error'}: ${cause.message}${cause.code ? ` (code=${cause.code})` : ''}`)
-      .join(' -> ');
-    chunks.push(`causes=${causeText}`);
-  }
-  return chunks.length ? ` | ${chunks.join(' | ')}` : '';
-}
-
-// FIX #11 — fonctions exposées dans window (étaient manquantes)
-async function copyWorkflowExecLogs() {
-  const txt = _workflowExecLogs.join('\n');
-  if (!txt) { toast('No logs to copy', 'err'); return; }
-  try {
-    await navigator.clipboard.writeText(txt);
-    toast('Workflow logs copied', 'ok');
-  } catch {
-    toast('Clipboard unavailable', 'err');
-  }
-}
-
-function clearWorkflowExecLogs() {
-  _workflowExecLogs = [];
-  const pre = document.getElementById('wf-exec-logs-content');
-  if (pre) pre.textContent = '';
-}
 
 function setRunningGraphState(nodeId, includeDeps = false) {
   _activeRunNodeIds = new Set();
@@ -1306,10 +1252,6 @@ function clearRunningGraphState() {
   if (currentWf) buildGraph(currentWf.data);
 }
 
-function toggleWorkflowExecLogs() {
-  // Conservé pour compatibilité : les logs restent désormais toujours visibles.
-}
-
 // FIX #10 — nettoyer les textareas maximisées quand le panneau est masqué
 function setRightPanelVisible(visible) {
   const panel = document.getElementById('right-panel');
@@ -1340,72 +1282,6 @@ function updateFloatingAddStepPosition() {
   btn.style.left = '50%';
   btn.style.bottom = '12px';
   btn.style.top = 'auto';
-}
-
-function initWorkflowLogsPanel() {
-  const panel = document.getElementById('wf-exec-logs');
-  const header = document.getElementById('wf-exec-logs-header');
-  if (!panel || !header) return;
-
-  const persistPanelFrame = () => {
-    const rect = panel.getBoundingClientRect();
-    localStorage.setItem(WF_LOGS_PANEL_POS_KEY, JSON.stringify({
-      left: Math.round(rect.left),
-      top: Math.round(rect.top),
-      width: Math.round(rect.width),
-      height: Math.round(rect.height)
-    }));
-  };
-
-  const onMove = (ev) => {
-    if (!_logsPanelDrag) return;
-    const width = panel.offsetWidth;
-    const height = panel.offsetHeight;
-    const maxLeft = Math.max(0, window.innerWidth - width);
-    const maxTop = Math.max(0, window.innerHeight - height);
-    const left = Math.min(maxLeft, Math.max(0, ev.clientX - _logsPanelDrag.dx));
-    const top = Math.min(maxTop, Math.max(0, ev.clientY - _logsPanelDrag.dy));
-    panel.style.left = `${left}px`;
-    panel.style.top = `${top}px`;
-    panel.style.right = 'auto';
-    panel.style.bottom = 'auto';
-    persistPanelFrame();
-    updateFloatingAddStepPosition();
-  };
-
-  const onUp = () => {
-    _logsPanelDrag = null;
-    persistPanelFrame();
-    document.removeEventListener('mousemove', onMove);
-    document.removeEventListener('mouseup', onUp);
-  };
-
-  header.addEventListener('mousedown', (ev) => {
-    if (ev.target.closest('.wf-log-action')) return;
-    const rect = panel.getBoundingClientRect();
-    _logsPanelDrag = { dx: ev.clientX - rect.left, dy: ev.clientY - rect.top };
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', onUp);
-  });
-
-  try {
-    const saved = JSON.parse(localStorage.getItem(WF_LOGS_PANEL_POS_KEY) || 'null');
-    if (saved && Number.isFinite(saved.left) && Number.isFinite(saved.top)) {
-      panel.style.left = `${Math.max(0, saved.left)}px`;
-      panel.style.top = `${Math.max(0, saved.top)}px`;
-      panel.style.right = 'auto';
-      panel.style.bottom = 'auto';
-      if (Number.isFinite(saved.width)) panel.style.width = `${Math.max(360, saved.width)}px`;
-      if (Number.isFinite(saved.height)) panel.style.height = `${Math.max(120, saved.height)}px`;
-    }
-  } catch (_) {}
-
-  if (window.ResizeObserver) {
-    const ro = new ResizeObserver(() => { persistPanelFrame(); updateFloatingAddStepPosition(); });
-    ro.observe(panel);
-  }
-  window.addEventListener('resize', updateFloatingAddStepPosition);
-  updateFloatingAddStepPosition();
 }
 
 function switchEditorTab(tab) {
@@ -1981,9 +1857,7 @@ async function runWorkflowFromHere() {
 
   setExecutionUiState(true);
   try {
-    clearWorkflowExecLogs();
     clearRunningGraphState();
-    appendWorkflowExecLog(`${wfTs()} ## Workflow ## Start from ${savedNodeId} (backend orchestrator)`);
     const launchResp = await fetch(`/api/exec/workflows/${encodeURIComponent(currentWf.name)}/run`, {
       method: 'POST',
       headers: { 'Content-Type':'application/json' },
@@ -2021,7 +1895,6 @@ async function runWorkflowFromHere() {
           logMeta:'backend orchestrated running',
           logError:false
         });
-        appendWorkflowExecLog(`${wfTs()} ## ${stepLabel} ## Start${formatWorkflowEventContext(data)}`);
         return true;
       }
 
@@ -2042,13 +1915,11 @@ async function runWorkflowFromHere() {
           logMeta: isError ? 'backend orchestrated error' : 'backend orchestrated done',
           logError: isError
         });
-        appendWorkflowExecLog(`${wfTs()} ## ${stepLabel} ## End${formatWorkflowEventContext(data)}${isError ? formatDetailedWorkflowError(data) : ''}`);
         if (_currentNodeId === node.step_id) renderRunState(step, node.step_id);
         return true;
       }
 
       if (event === 'workflow_finished') {
-        appendWorkflowExecLog(`${wfTs()} ## Workflow ## End${formatWorkflowEventContext(data)}${formatDetailedWorkflowError(data)}`);
         finished = true;
         return false;
       }
@@ -2057,7 +1928,6 @@ async function runWorkflowFromHere() {
     });
   } catch (err) {
     const msg = err?.name === 'AbortError' ? 'Execution stopped by user' : (err?.message || 'Workflow execution failed');
-    appendWorkflowExecLog(`${wfTs()} ## Workflow ## Error: ${msg}`);
     toast(msg, 'err');
   } finally {
     _workflowRunId = null;
@@ -2385,7 +2255,6 @@ function toast(msg,type='ok') {
 }
 
 // ── WINDOW EXPORTS ───────────────────────────────────────────────
-// FIX #11 — copyWorkflowExecLogs et clearWorkflowExecLogs ajoutées
 Object.assign(window,{
   doLogout, openSettings, saveWorkflow, downloadWorkflow, newWorkflow, importWorkflow,
   toggleLeft, toggleTheme, fitGraph, setLayout, duplicateWorkflow,
@@ -2395,8 +2264,7 @@ Object.assign(window,{
   toggleTechSection, toggleApiAdvancedSection, toggleToolAdvancedSection, toggleEditorMaximize,
   toggleSyspromptSection, toggleTemplateSection, startRightPanelResize,
   runStepOnly, runWorkflowFromHere, stopExecution, closeModal, showSignupCTA,
-  confirmEdgeDelete, toggleWorkflowExecLogs, toggleRightPanel,
-  copyWorkflowExecLogs, clearWorkflowExecLogs,
+  confirmEdgeDelete, toggleRightPanel,
   deleteWorkflow, copyWfJson, applyWfJson, closeWfJson, onWfJsonInput, copyWfJsonByName,
   openJsonFullscreen, closeJsonFullscreen, jfsCopy, jfsApply, jfsValidate,
   saveApiKey, deleteApiKey, changePassword, switchSettingsTab, addMcpServerRow, removeMcpServerRow, validateMcpServer, saveMcpServers,
@@ -2428,7 +2296,6 @@ window.addEventListener('load', async () => {
     _providersConfig = cfg;
   } catch { /* fallback sur PROVIDER_MODEL_HINTS */ }
 
-  initWorkflowLogsPanel();
   setRightPanelVisible(false);
 
   const root = createRoot(document.getElementById('rf-container'));
