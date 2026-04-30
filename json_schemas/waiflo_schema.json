@@ -98,7 +98,8 @@
           "enum": [
             "prompt",
             "api",
-            "transform"
+            "transform",
+            "tool"
           ]
         },
         "ws_inputs_schema": {
@@ -128,6 +129,9 @@
             }
           },
           "required": ["method", "url"]
+        },
+        "ws_tool": {
+          "$ref": "#/$defs/ws_tool"
         },
         "ws_retry": {
           "$ref": "#/$defs/retry"
@@ -162,8 +166,63 @@
               "ws_api"
             ]
           }
+        },
+        {
+          "if": {
+            "properties": {
+              "ws_type": { "const": "tool" }
+            }
+          },
+          "then": {
+            "required": ["ws_tool"]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "ws_type": { "const": "tool" },
+              "ws_tool": {
+                "properties": { "mode": { "const": "direct" } }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "ws_tool": { "required": ["mcp_server_label", "tool_name"] }
+            }
+          }
         }
       ]
+    },
+
+    "ws_tool": {
+      "type": "object",
+      "required": ["mcp_server_label"],
+      "properties": {
+        "mcp_server_label": {
+          "type": "string"
+        },
+        "tool_name": {
+          "type": "string",
+          "description": "Required in direct mode. Ignored in agent mode."
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["direct", "agent"],
+          "default": "direct",
+          "description": "direct: calls a single named tool; agent: LLM picks the right tool from the MCP server."
+        },
+        "max_turns": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1,
+          "description": "Agent mode only. Maximum number of LLM+tool-call turns before stopping."
+        },
+        "agent_instructions": {
+          "type": "string",
+          "description": "Agent mode only. Overrides the generic tool-selection instructions appended to ws_system_prompt. Leave empty to use the built-in default."
+        }
+      }
     },
 
     "input_ref": {

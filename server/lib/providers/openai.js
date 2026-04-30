@@ -16,6 +16,72 @@ export class OpenAIProvider extends cLLM {
     this._supportsImages = supportsImages;
   }
 
+  // Convert normalized messages to OpenAI API format.
+  _toOpenAIMessages(system, messages) {
+    const out = [];
+    if (system) out.push({ role: 'system', content: system });
+
+    for (const msg of messages) {
+      if (msg.role === 'user') {
+        out.push({ role: 'user', content: msg.content });
+      } else if (msg.role === 'assistant') {
+        out.push({ role: 'assistant', content: msg.content });
+      } else if (msg.role === 'assistant_tool_calls') {
+        out.push({
+          role: 'assistant',
+          content: null,
+          tool_calls: msg.calls.map(c => ({
+            id: c.id,
+            type: 'function',
+            function: { name: c.name, arguments: JSON.stringify(c.arguments) },
+          })),
+        });
+      } else if (msg.role === 'tool_result') {
+        out.push({ role: 'tool', tool_call_id: msg.call_id, content: msg.content });
+      }
+    }
+
+    return out;
+  }
+
+  // Convert normalized tool definitions to OpenAI format.
+  _toOpenAITools(tools) {
+    return tools.map(t => ({
+      type: 'function',
+      function: {
+        name: t.name,
+        description: t.description || '',
+        parameters: t.inputSchema || { type: 'object', properties: {} },
+      },
+    }));
+  }
+
+  async callWithTools({ model, system, messages, tools, temperature = 0, maxTokens = 2048 }) {
+    const response = await this._client.chat.completions.create({
+      model: model || this._defaultModel,
+      temperature,
+      tools: this._toOpenAITools(tools),
+      tool_choice: 'auto',
+      messages: this._toOpenAIMessages(system, messages),
+    });
+
+    const choice = response.choices?.[0];
+    const toolCalls = choice?.message?.tool_calls;
+
+    if (toolCalls?.length > 0) {
+      return {
+        type: 'tool_calls',
+        calls: toolCalls.map(tc => ({
+          id: tc.id,
+          name: tc.function.name,
+          arguments: JSON.parse(tc.function.arguments || '{}'),
+        })),
+      };
+    }
+
+    return { type: 'text', text: choice?.message?.content || '' };
+  }
+
   async *stream({ model, system, userPrompt, imageUrls = [], temperature = 0, maxTokens = 2048 }) {
     const messages = [];
     if (system) messages.push({ role: 'system', content: system });
