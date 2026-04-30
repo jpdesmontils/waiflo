@@ -656,16 +656,22 @@ async function runAgentToolStep(step, inputs, user, executionOptions = {}) {
 
   const messages = [{ role: 'user', content: String(userPrompt) }];
   let lastToolResult = null;
+  let textResponse = '';
+  const callHistory = [];
 
   for (let turn = 0; turn < maxTurns; turn++) {
     const response = await llmProvider.callWithTools({ model, system, messages, tools, temperature: temp, maxTokens: maxTok });
 
-    if (response.type === 'text') break;
+    if (response.type === 'text') {
+      textResponse = String(response.content || '').trim();
+      break;
+    }
 
     // Execute each tool call sequentially and collect results.
     const resultsForHistory = [];
     for (const call of response.calls) {
       lastToolResult = await callMcpTool(server, call.name, call.arguments, executionOptions);
+      callHistory.push({ tool: call.name, arguments: call.arguments || {} });
       resultsForHistory.push({ call_id: call.id, content: JSON.stringify(lastToolResult) });
     }
 
@@ -675,7 +681,20 @@ async function runAgentToolStep(step, inputs, user, executionOptions = {}) {
     }
   }
 
-  return lastToolResult;
+  if (!callHistory.length) {
+    return {
+      mcp_explainer: textResponse
+        ? `Aucun appel MCP exécuté. Explication agent: ${textResponse}`
+        : "Aucun appel MCP exécuté par l'agent."
+    };
+  }
+
+  const summary = `Appels MCP exécutés (${callHistory.length}): ${callHistory.map(c => c.tool).join(', ')}`;
+  if (lastToolResult && typeof lastToolResult === 'object' && !Array.isArray(lastToolResult)) {
+    return { ...lastToolResult, mcp_explainer: summary };
+  }
+
+  return { mcp_result: lastToolResult, mcp_explainer: summary };
 }
 
 export async function runToolStep(step, inputs, user, executionOptions = {}) {
