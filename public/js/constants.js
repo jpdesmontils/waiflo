@@ -9,6 +9,7 @@ export const TYPE_COLORS = {
   webpage: '#22d3ee',
   transform: '#60a5fa',
   tool: '#a78bfa',
+  custom: '#fb923c',
   script: '#fb923c'
 };
 
