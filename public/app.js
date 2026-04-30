@@ -961,7 +961,7 @@ function populateEditor(s) {
   populateToolServerSelect(s.ws_tool?.mcp_server_label || '');
   document.getElementById('f-tool-mode').value = s.ws_tool?.mode || 'direct';
   onToolMcpServerChange(s.ws_tool?.tool_name || '');
-  document.getElementById('f-tool-max-turns').value = Math.max(1, Number(s.ws_tool?.max_turns ?? 1));
+  document.getElementById('f-tool-max-turns').value = Math.max(1, Number(s.ws_tool?.max_turns ?? 2));
   document.getElementById('f-tool-agent-instructions').value = s.ws_tool?.agent_instructions || '';
   onToolModeChange();
 
@@ -1075,7 +1075,7 @@ function collectStep() {
       const mcp_server_label = document.getElementById('f-tool-mcp-server')?.value || '';
       const mode = document.getElementById('f-tool-mode')?.value || 'direct';
       const tool_name = document.getElementById('f-tool-name')?.value || '';
-      const maxTurnsRaw = Number(document.getElementById('f-tool-max-turns')?.value ?? 1);
+      const maxTurnsRaw = Number(document.getElementById('f-tool-max-turns')?.value ?? 2);
       const max_turns = Math.max(1, Number.isFinite(maxTurnsRaw) ? Math.trunc(maxTurnsRaw) : 1);
       const agent_instructions = document.getElementById('f-tool-agent-instructions')?.value || '';
       s.ws_tool = { mcp_server_label, mode };
@@ -1862,7 +1862,7 @@ async function executeStep(stepDef, runMode='step_only') {
     ? { ws_ref: s.ws_name, step_id: _currentNodeId, inputs: finalInputs }
     : { step:s, inputs: finalInputs, context:{ workflowName: currentWf?.name, nodeId:_currentNodeId, runMode } };
 
-  if (['api','webpage'].includes((s.ws_type||'').toLowerCase())) {
+  if (['api','webpage','tool','custom'].includes((s.ws_type||'').toLowerCase())) {
     const headers = { 'Content-Type':'application/json' };
     let res;
     try {
