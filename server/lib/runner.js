@@ -674,6 +674,7 @@ async function runAgentToolStep(step, inputs, user, executionOptions = {}) {
     const resultsForHistory = [];
     for (const call of response.calls) {
       lastToolResult = await callMcpTool(server, call.name, call.arguments, executionOptions);
+      callHistory.push({ tool: call.name, arguments: call.arguments || {} });
       resultsForHistory.push({ call_id: call.id, content: JSON.stringify(lastToolResult) });
       const raw = JSON.stringify(lastToolResult);
       turnTrace.tool_calls.push({
