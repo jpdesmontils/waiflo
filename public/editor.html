@@ -195,36 +195,19 @@
           </div>
           <div id="tool-section" style="display:none">
             <div class="form-section">
-              <div class="form-label">Mode</div>
-              <select class="form-select" id="f-tool-mode" onchange="onToolModeChange()">
-                <option value="direct">direct — appel direct d'un tool nommé</option>
-                <option value="agent">agent — le LLM choisit le bon tool</option>
-              </select>
-            </div>
-            <div class="form-section">
-              <div class="form-label">MCP Server</div>
-              <select class="form-select" id="f-tool-mcp-server" onchange="onToolMcpServerChange()"></select>
-            </div>
-            <div class="form-section" id="tool-direct-fields">
-              <div class="form-label">Tool</div>
-              <select class="form-select" id="f-tool-name"></select>
-            </div>
-            <div id="tool-agent-fields" style="display:none">
-              <div class="form-section">
-                <div class="form-label">Max turns</div>
-                <input class="form-input" id="f-tool-max-turns" type="number" min="1" max="20" value="1">
-                <div class="form-hint">Nombre maximum de tours LLM + appel tool (1 = single turn).</div>
-              </div>
-              <div class="form-section">
-                <button class="tech-toggle" id="tool-agent-adv-toggle" type="button" onclick="toggleToolAgentAdvSection()">Instructions agent (avancé) ▸</button>
-                <div id="tool-agent-adv-content" class="collapsed" style="margin-top:8px;display:flex;flex-direction:column;gap:10px;">
-                  <div class="form-label">Agent instructions</div>
-                  <textarea class="form-textarea" id="f-tool-agent-instructions" placeholder="Remplace les instructions génériques injectées automatiquement. Vide = utiliser le défaut."></textarea>
-                  <div class="form-hint">Le runner injecte la liste des tools disponibles dans le system prompt. Ce champ permet de la remplacer.</div>
+              <button class="tech-toggle" id="tool-advanced-toggle" type="button" onclick="toggleToolAdvancedSection()">Paramètres ws_tool avancés ▸</button>
+              <div id="tool-advanced-content" class="collapsed" style="margin-top:8px;display:flex;flex-direction:column;gap:10px;">
+                <div class="form-section">
+                  <div class="form-label">MCP Server</div>
+                  <select class="form-select" id="f-tool-mcp-server" onchange="onToolMcpServerChange()"></select>
                 </div>
+                <div class="form-section">
+                  <div class="form-label">Tool MCP découvert</div>
+                  <select class="form-select" id="f-tool-name"></select>
+                </div>
+                <div class="form-hint">Le serveur MCP est configuré dans Paramètres → Configuration MCP.</div>
               </div>
             </div>
-            <div class="form-hint">Serveur MCP configuré dans Paramètres → Configuration MCP.</div>
           </div>
           <div class="run-available-title">Inputs disponibles (connexions)</div>
           <div class="run-available-inputs" id="edit-available-inputs"></div>
