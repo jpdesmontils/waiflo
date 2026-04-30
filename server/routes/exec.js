@@ -426,8 +426,19 @@ async function executeResolvedStep(req, res, { step, inputs, context }) {
       }
 
       let result;
+      let agentTrace = null;
+      let agentOutcome = null;
       if (wsType === 'webpage') result = await runWebpageStep(step, inputs || {});
-      else if (wsType === 'tool') result = await runToolStep(step, inputs || {}, user);
+      else if (wsType === 'tool') {
+        const toolRun = await runToolStep(step, inputs || {}, user);
+        if (toolRun && typeof toolRun === 'object' && Object.prototype.hasOwnProperty.call(toolRun, 'result') && Array.isArray(toolRun.agentTrace)) {
+          result = toolRun.result;
+          agentTrace = toolRun.agentTrace;
+          agentOutcome = toolRun.agentOutcome || null;
+        } else {
+          result = toolRun;
+        }
+      }
       else if (wsType === 'custom') result = await runCustomStep(step, inputs || {}, { req, user, workflowName, nodeId, runMode });
       else result = await runApiStep(step, inputs || {});
 
@@ -445,6 +456,16 @@ async function executeResolvedStep(req, res, { step, inputs, context }) {
         cacheKey = saved.key;
       }
       if (req.user?.userId) {
+        const withAgentLog = (wsType === 'tool' && Array.isArray(agentTrace))
+          ? JSON.stringify({
+            result,
+            agent_mode_log: {
+              outcome: agentOutcome || 'unknown',
+              note: 'Outcome may be pure LLM text/JSON when no MCP tool call is made.',
+              turns: agentTrace
+            }
+          }, null, 2)
+          : JSON.stringify(result, null, 2);
         await saveStepRunRecord(req.user.userId, workflowName, step.ws_name, {
           workflowName,
           nodeId,
@@ -453,7 +474,7 @@ async function executeResolvedStep(req, res, { step, inputs, context }) {
           runMode,
           inputs: inputs || {},
           status: 'done',
-          logOutput: JSON.stringify(result, null, 2),
+          logOutput: withAgentLog,
           output: result,
           prompt: '',
           callerIp,
