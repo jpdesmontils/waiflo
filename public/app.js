@@ -958,7 +958,7 @@ function populateEditor(s) {
   populateToolServerSelect(s.ws_tool?.mcp_server_label || '');
   document.getElementById('f-tool-mode').value = s.ws_tool?.mode || 'direct';
   onToolMcpServerChange(s.ws_tool?.tool_name || '');
-  document.getElementById('f-tool-max-turns').value = Math.max(1, Number(s.ws_tool?.max_turns ?? 2));
+  document.getElementById('f-tool-max-turns').value = Math.max(1, Number(s.ws_tool?.max_turns ?? 1));
   document.getElementById('f-tool-agent-instructions').value = s.ws_tool?.agent_instructions || '';
   onToolModeChange();
 
@@ -1072,7 +1072,7 @@ function collectStep() {
       const mcp_server_label = document.getElementById('f-tool-mcp-server')?.value || '';
       const mode = document.getElementById('f-tool-mode')?.value || 'direct';
       const tool_name = document.getElementById('f-tool-name')?.value || '';
-      const maxTurnsRaw = Number(document.getElementById('f-tool-max-turns')?.value ?? 2);
+      const maxTurnsRaw = Number(document.getElementById('f-tool-max-turns')?.value ?? 1);
       const max_turns = Math.max(1, Number.isFinite(maxTurnsRaw) ? Math.trunc(maxTurnsRaw) : 1);
       const agent_instructions = document.getElementById('f-tool-agent-instructions')?.value || '';
       s.ws_tool = { mcp_server_label, mode };
@@ -1152,6 +1152,18 @@ function applyStepEdit() {
     if (mode === 'direct' && !s.ws_tool?.tool_name) return toast('ws_tool.tool_name is required in direct mode','err');
     if (mode === 'agent' && (s.ws_llm?.provider || '').toLowerCase() === 'perplexity') {
       return toast('Perplexity ne supporte pas le mode agent tool-use. Utilise anthropic, openai ou mistral.','err');
+    }
+    if (mode === 'direct') {
+      const selectedTool = getSelectedMcpTool();
+      const schema = selectedTool && typeof selectedTool === 'object'
+        ? (selectedTool.inputSchema || selectedTool.parameters || {})
+        : {};
+      const required = Array.isArray(schema?.required) ? schema.required : [];
+      const declaredInputs = Object.keys(s.ws_inputs_schema?.properties || {});
+      const missingInStepInputs = required.filter((k) => !declaredInputs.includes(k));
+      if (missingInStepInputs.length) {
+        return toast(`Mode direct: inputs requis manquants dans le step (${missingInStepInputs.join(', ')})`,'err');
+      }
     }
   }
 
@@ -1343,6 +1355,43 @@ function onToolMcpServerChange(selectedTool = '') {
     const name = typeof t === 'string' ? t : (t?.name || 'unnamed_tool');
     return `<option value="${name}"${name===pick?' selected':''}>${name}</option>`;
   }).join('');
+  syncDirectToolInputsSchemaFromSelectedTool();
+}
+
+
+function getSelectedMcpTool() {
+  const mcpLabel = document.getElementById('f-tool-mcp-server')?.value || '';
+  const toolName = document.getElementById('f-tool-name')?.value || '';
+  const srv = (_mcpServers || []).find(x => x.server_label === mcpLabel);
+  const tools = Array.isArray(srv?.tools) ? srv.tools : [];
+  return tools.find((t) => (typeof t === 'string' ? t : t?.name) === toolName) || null;
+}
+
+function syncDirectToolInputsSchemaFromSelectedTool() {
+  const mode = document.getElementById('f-tool-mode')?.value || 'direct';
+  if (mode !== 'direct') return;
+  const tool = getSelectedMcpTool();
+  if (!tool || typeof tool !== 'object') return;
+  const schema = (tool.inputSchema || tool.parameters || {});
+  const props = (schema && typeof schema.properties === 'object' && !Array.isArray(schema.properties)) ? schema.properties : {};
+  const required = Array.isArray(schema.required) ? schema.required : [];
+  const current = readSchemaFields('inputs-fields');
+  const mergedProps = { ...(current.properties || {}) };
+  for (const [k, def] of Object.entries(props)) {
+    if (!mergedProps[k]) mergedProps[k] = { type: def?.type || 'string' };
+  }
+  const mergedRequired = Array.from(new Set([...(current.required || []), ...required]));
+  renderSchemaFields('inputs-fields', mergedProps, mergedRequired);
+}
+
+function onToolModeChange() {
+  const mode = document.getElementById('f-tool-mode')?.value || 'direct';
+  const toolField = document.getElementById('f-tool-name')?.closest('.form-section');
+  const maxTurnsSection = document.getElementById('tool-agent-max-turns-section');
+  const agentInstructionsSection = document.getElementById('tool-agent-instructions-section');
+  if (toolField) toolField.style.display = mode === 'direct' ? '' : 'none';
+  if (maxTurnsSection) maxTurnsSection.style.display = mode === 'agent' ? '' : 'none';
+  if (agentInstructionsSection) agentInstructionsSection.style.display = mode === 'agent' ? '' : 'none';
 }
 
 function onToolModeChange() {
@@ -2285,6 +2334,7 @@ document.getElementById('modal-overlay').addEventListener('click',e=>{ if(e.targ
 // ── INIT ─────────────────────────────────────────────────────────
 window.addEventListener('load', async () => {
   document.getElementById('f-webpage-mode')?.addEventListener('change', () => onTypeChange());
+  document.getElementById('f-tool-name')?.addEventListener('change', () => syncDirectToolInputsSchemaFromSelectedTool());
 
   if (localStorage.getItem('wf_theme')==='light') {
     document.documentElement.classList.add('light');
