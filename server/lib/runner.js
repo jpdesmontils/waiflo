@@ -661,6 +661,7 @@ async function runAgentToolStep(step, inputs, user, executionOptions = {}) {
 
   for (let turn = 0; turn < maxTurns; turn++) {
     const response = await llmProvider.callWithTools({ model, system, messages, tools, temperature: temp, maxTokens: maxTok });
+    const turnTrace = { turn: turn + 1, llm_response_type: response?.type || 'unknown', tool_calls: [] };
 
     if (response.type === 'text') {
       textResponse = String(response.content || '').trim();
@@ -673,12 +674,20 @@ async function runAgentToolStep(step, inputs, user, executionOptions = {}) {
       lastToolResult = await callMcpTool(server, call.name, call.arguments, executionOptions);
       callHistory.push({ tool: call.name, arguments: call.arguments || {} });
       resultsForHistory.push({ call_id: call.id, content: JSON.stringify(lastToolResult) });
+      const raw = JSON.stringify(lastToolResult);
+      turnTrace.tool_calls.push({
+        call_id: call.id,
+        name: call.name,
+        arguments: call.arguments || {},
+        raw_result_truncated: raw.length > 2000 ? `${raw.slice(0, 2000)}…[truncated ${raw.length - 2000} chars]` : raw
+      });
     }
 
     messages.push({ role: 'assistant_tool_calls', calls: response.calls });
     for (const r of resultsForHistory) {
       messages.push({ role: 'tool_result', call_id: r.call_id, content: r.content });
     }
+    agentTrace.push(turnTrace);
   }
 
   if (!callHistory.length) {
