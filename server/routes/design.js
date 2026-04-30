@@ -11,6 +11,7 @@
 
 import express from 'express';
 import fs      from 'fs/promises';
+import path    from 'path';
 import { authMiddleware } from './auth.js';
 import { deleteStepRunData } from '../lib/runStore.js';
 import { ensureUserDir } from '../lib/users.js';
@@ -50,11 +51,30 @@ function validateStep(step) {
   if (!step || typeof step !== 'object') return 'step must be an object';
   if (!step.ws_name || typeof step.ws_name !== 'string') return 'ws_name (string) is required';
   if (!/^[a-zA-Z0-9_\-]+$/.test(step.ws_name)) return 'ws_name must only contain letters, numbers, _ or -';
-  const validTypes = ['prompt', 'api', 'webpage', 'transform', 'script', 'tool'];
+  const validTypes = ['prompt', 'api', 'webpage', 'transform', 'tool', 'custom'];
   if (step.ws_type && !validTypes.includes(step.ws_type)) {
     return `ws_type must be one of: ${validTypes.join(', ')}`;
   }
   return null;
+}
+
+const USER_CUSTOM_STEPS_DIR = path.resolve(process.cwd(), 'waiflo-data/steps/custom');
+const EXAMPLE_CUSTOM_MODULE = 'cExampleCustomStep.js';
+const EXAMPLE_CUSTOM_STEPS_DIR = path.resolve(process.cwd(), 'server/lib/steps/custom');
+
+function userCustomStepsDir(userId) {
+  return path.join(USER_CUSTOM_STEPS_DIR, userId);
+}
+
+async function listCustomStepClasses(userId) {
+  const dir = userCustomStepsDir(userId);
+  await fs.mkdir(dir, { recursive: true });
+  const entries = await fs.readdir(dir, { withFileTypes: true });
+  const userModules = entries
+    .filter((entry) => entry.isFile() && entry.name.endsWith('.js'))
+    .map((entry) => entry.name)
+    .sort((a, b) => a.localeCompare(b));
+  return [EXAMPLE_CUSTOM_MODULE, ...userModules.filter((name) => name !== EXAMPLE_CUSTOM_MODULE)];
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -139,6 +159,60 @@ wfRouter.patch('/', async (req, res) => {
 
 export const stepRouter = express.Router();
 stepRouter.use(authMiddleware);
+
+stepRouter.get('/custom-classes', async (req, res) => {
+  try {
+    const classes = await listCustomStepClasses(req.user.userId);
+    res.json({ ok: true, classes });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+stepRouter.get('/custom-classes/:moduleName', async (req, res) => {
+  try {
+    const moduleName = String(req.params.moduleName || '').trim();
+    if (!moduleName.endsWith('.js')) return res.status(400).json({ error: 'moduleName must end with .js' });
+    const userPath = path.resolve(userCustomStepsDir(req.user.userId), moduleName);
+    const baseDir = userCustomStepsDir(req.user.userId);
+    const rel = path.relative(baseDir, userPath);
+    if (rel.startsWith('..') || path.isAbsolute(rel)) return res.status(400).json({ error: 'Invalid moduleName path' });
+    let code = null;
+    try {
+      code = await fs.readFile(userPath, 'utf8');
+    } catch (err) {
+      if (err.code !== 'ENOENT') throw err;
+      if (moduleName === EXAMPLE_CUSTOM_MODULE) {
+        code = await fs.readFile(path.join(EXAMPLE_CUSTOM_STEPS_DIR, EXAMPLE_CUSTOM_MODULE), 'utf8');
+      } else {
+        throw err;
+      }
+    }
+    res.json({ ok: true, module: moduleName, code });
+  } catch (err) {
+    if (err.code === 'ENOENT') return res.status(404).json({ error: 'Custom class not found' });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+stepRouter.put('/custom-classes/:moduleName', async (req, res) => {
+  try {
+    const moduleName = String(req.params.moduleName || '').trim();
+    const code = String(req.body?.code || '');
+    if (!moduleName.endsWith('.js')) return res.status(400).json({ error: 'moduleName must end with .js' });
+    if (moduleName === EXAMPLE_CUSTOM_MODULE) return res.status(400).json({ error: 'Example class is read-only' });
+    if (!code.trim()) return res.status(400).json({ error: 'code is required' });
+    const dir = userCustomStepsDir(req.user.userId);
+    await fs.mkdir(dir, { recursive: true });
+    const userPath = path.resolve(dir, moduleName);
+    const rel = path.relative(dir, userPath);
+    if (rel.startsWith('..') || path.isAbsolute(rel)) return res.status(400).json({ error: 'Invalid moduleName path' });
+    await fs.writeFile(userPath, code, 'utf8');
+    res.json({ ok: true, module: moduleName, savedAt: new Date().toISOString() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 /**
  * POST /api/workflow-step/design

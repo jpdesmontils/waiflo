@@ -11,6 +11,7 @@ import { clearUserRunLogs, getLatestStepRunRecord, listStepRunRecords, saveStepR
 import { CACHE_CONFIG } from '../config.js';
 import { clearUserStepCache, getCachedStepResult, saveCachedStepResult } from '../lib/stepCacheStore.js';
 import { wfPath } from '../lib/utils.js';
+import { runCustomStep } from '../lib/customStepRunner.js';
 
 const router = express.Router();
 const workflowRuns = new Map();
@@ -386,7 +387,7 @@ async function executeResolvedStep(req, res, { step, inputs, context }) {
     return;
   }
 
-  if (wsType === 'api' || wsType === 'webpage' || wsType === 'tool') {
+  if (wsType === 'api' || wsType === 'webpage' || wsType === 'tool' || wsType === 'custom') {
     // Synchronous HTTP
     try {
       let cacheHit = false;
@@ -427,6 +428,7 @@ async function executeResolvedStep(req, res, { step, inputs, context }) {
       let result;
       if (wsType === 'webpage') result = await runWebpageStep(step, inputs || {});
       else if (wsType === 'tool') result = await runToolStep(step, inputs || {}, user);
+      else if (wsType === 'custom') result = await runCustomStep(step, inputs || {}, { req, user, workflowName, nodeId, runMode });
       else result = await runApiStep(step, inputs || {});
 
       if (shouldUseStepCache(wsType)) {
@@ -586,6 +588,7 @@ async function executeStepForWorkflowRun(step, inputs, req, user, executionOptio
   if (wsType === 'webpage') result = await runWebpageStep(step, inputs || {}, executionOptions);
   else if (wsType === 'tool') result = await runToolStep(step, inputs || {}, user, executionOptions);
   else if (wsType === 'api') result = await runApiStep(step, inputs || {}, executionOptions);
+  else if (wsType === 'custom') result = await runCustomStep(step, inputs || {}, executionOptions);
   else throw new Error(`ws_type "${wsType}" not supported in workflow run`);
 
   if (shouldUseStepCache(wsType)) {
