@@ -531,6 +531,7 @@ async function buildMcpRequestHeaders(server, apiKey) {
 // Execute a single MCP tool/call RPC. Shared by direct and agent modes.
 async function callMcpTool(server, toolName, toolArgs, executionOptions = {}) {
   const endpoint = String(server.server_url || '').trim();
+  console.log(`[DEBUG][callMcpTool] ENTERED tool="${toolName}" endpoint="${endpoint}" args=${JSON.stringify(toolArgs || {}).slice(0, 300)}`);
   const apiKey = server.apiKeyEnc ? await decrypt(server.apiKeyEnc) : '';
   const headers = await buildMcpRequestHeaders(server, apiKey);
 
@@ -558,7 +559,9 @@ async function callMcpTool(server, toolName, toolArgs, executionOptions = {}) {
     });
 
     if (!response.ok) throw new Error(`MCP HTTP ${response.status} ${response.statusText}`);
-    return await parseMcpResponse(response);
+    const mcpResult = await parseMcpResponse(response);
+    console.log(`[DEBUG][callMcpTool] tool="${toolName}" response OK, result keys=${Object.keys(mcpResult || {}).join(',') || typeof mcpResult}`);
+    return mcpResult;
   } catch (err) {
     if (err?.name === 'AbortError') {
       if (parentSignal?.aborted) throw new Error(`MCP tool "${toolName}" aborted (workflow cancelled)`);
@@ -644,6 +647,8 @@ async function runAgentToolStep(step, inputs, user, executionOptions = {}) {
   const tools = await resolveServerTools(server);
   if (!tools.length) throw new Error(`No tools found on MCP server "${mcpServerLabel}"`);
 
+  console.log(`[DEBUG][agent] step="${step.ws_name}" provider=${provider} model=${model} maxTurns=${maxTurns} tools=[${tools.map(t => t.name).join(', ')}]`);
+
   const system = buildAgentSystemPrompt(step, tools);
 
   let apiKey = await resolveApiKey(user, provider);
@@ -654,26 +659,38 @@ async function runAgentToolStep(step, inputs, user, executionOptions = {}) {
   const userPrompt = inputs.prompt ?? inputs.user_prompt ?? inputs.query
     ?? JSON.stringify(inputs);
 
+  console.log(`[DEBUG][agent] userPrompt (truncated): ${String(userPrompt).slice(0, 300)}`);
+
   const messages = [{ role: 'user', content: String(userPrompt) }];
   let lastToolResult = null;
   let lastAssistantText = null;
   const agentTrace = [];
 
   for (let turn = 0; turn < maxTurns; turn++) {
+    console.log(`[DEBUG][agent] turn=${turn + 1}/${maxTurns} — calling LLM (${provider}/${model}) with ${tools.length} tools, ${messages.length} messages`);
     const response = await llmProvider.callWithTools({ model, system, messages, tools, temperature: temp, maxTokens: maxTok });
+    console.log(`[DEBUG][agent] turn=${turn + 1} LLM response type="${response?.type}" calls=${response?.calls?.length ?? 0}`);
     const turnTrace = { turn: turn + 1, llm_response_type: response?.type || 'unknown', tool_calls: [] };
 
     if (response.type === 'text') {
       lastAssistantText = String(response.text || '').trim();
+      console.log(`[DEBUG][agent] turn=${turn + 1} LLM returned TEXT (no tool call). text="${lastAssistantText.slice(0, 200)}"`);
       turnTrace.assistant_text = lastAssistantText;
       agentTrace.push(turnTrace);
+      break;
+    }
+
+    if (!response.calls?.length) {
+      console.warn(`[DEBUG][agent] turn=${turn + 1} WARNING: response type="${response.type}" but calls array is empty/missing. Full response:`, JSON.stringify(response));
       break;
     }
 
     // Execute each tool call sequentially and collect results.
     const resultsForHistory = [];
     for (const call of response.calls) {
+      console.log(`[DEBUG][agent] turn=${turn + 1} calling MCP tool "${call.name}" args=${JSON.stringify(call.arguments || {}).slice(0, 300)}`);
       lastToolResult = await callMcpTool(server, call.name, call.arguments, executionOptions);
+      console.log(`[DEBUG][agent] turn=${turn + 1} tool "${call.name}" result (truncated): ${JSON.stringify(lastToolResult).slice(0, 300)}`);
       resultsForHistory.push({ call_id: call.id, content: JSON.stringify(lastToolResult) });
       const raw = JSON.stringify(lastToolResult);
       turnTrace.tool_calls.push({
@@ -705,10 +722,14 @@ async function runAgentToolStep(step, inputs, user, executionOptions = {}) {
 
 export async function runToolStep(step, inputs, user, executionOptions = {}) {
   const mode = step?.ws_tool?.mode || 'direct';
+  console.log(`[DEBUG][runToolStep] step="${step?.ws_name}" mode="${mode}" ws_tool=${JSON.stringify(step?.ws_tool || {})}`);
+
   if (mode === 'agent') return runAgentToolStep(step, inputs, user, executionOptions);
 
   // --- direct mode (existing behaviour) ---
   const { mcpServerLabel, toolName } = resolveToolConfig(step);
+  console.log(`[DEBUG][direct] mcpServerLabel="${mcpServerLabel}" toolName="${toolName}"`);
+
   const servers = Array.isArray(user?.mcpServers) ? user.mcpServers : [];
   const server = servers.find((row) => String(row?.server_label || '').trim() === mcpServerLabel);
 
@@ -721,5 +742,6 @@ export async function runToolStep(step, inputs, user, executionOptions = {}) {
   const toolSchema = await getSharedToolSchema(endpoint, toolName);
   const toolArgs = buildToolArguments(inputs, toolSchema);
 
+  console.log(`[DEBUG][direct] calling MCP tool "${toolName}" args=${JSON.stringify(toolArgs).slice(0, 300)}`);
   return callMcpTool(server, toolName, toolArgs, executionOptions);
 }

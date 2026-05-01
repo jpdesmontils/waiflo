@@ -79,17 +79,24 @@ export class AnthropicProvider extends cLLM {
   }
 
   async callWithTools({ model, system, messages, tools, temperature = 0, maxTokens = 2048 }) {
+    const anthropicTools = this._toAnthropicTools(tools);
+    const anthropicMessages = this._toAnthropicMessages(messages);
+    console.log(`[DEBUG][Anthropic.callWithTools] model=${model} tools=${anthropicTools.map(t => t.name).join(',')} messages=${anthropicMessages.length} maxTokens=${maxTokens}`);
+
     const response = await this._client.messages.create({
       model,
       max_tokens: maxTokens,
       temperature,
       system: system || '',
-      tools: this._toAnthropicTools(tools),
-      messages: this._toAnthropicMessages(messages),
+      tools: anthropicTools,
+      messages: anthropicMessages,
     });
+
+    console.log(`[DEBUG][Anthropic.callWithTools] stop_reason="${response.stop_reason}" content_blocks=${response.content?.length} types=${response.content?.map(b => b.type).join(',')}`);
 
     const toolUseBlocks = response.content.filter(b => b.type === 'tool_use');
     if (toolUseBlocks.length > 0) {
+      console.log(`[DEBUG][Anthropic.callWithTools] => tool_calls: [${toolUseBlocks.map(b => b.name).join(', ')}]`);
       return {
         type: 'tool_calls',
         calls: toolUseBlocks.map(b => ({ id: b.id, name: b.name, arguments: b.input })),
@@ -97,6 +104,7 @@ export class AnthropicProvider extends cLLM {
     }
 
     const text = response.content.filter(b => b.type === 'text').map(b => b.text).join('');
+    console.log(`[DEBUG][Anthropic.callWithTools] => text (no tool_use). stop_reason="${response.stop_reason}" text="${text.slice(0, 200)}"`);
     return { type: 'text', text };
   }
 
