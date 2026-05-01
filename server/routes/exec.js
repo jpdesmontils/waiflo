@@ -669,7 +669,37 @@ function buildInputsFromDependencies(node, byId, outputsByNodeId, triggerInputs)
     Object.assign(inherited, depOutput);
   });
 
-  return { ...(triggerInputs || {}), ...inherited };
+  // Resolve explicit node-level inputs. Values matching $input[.field]
+  // or $steps.nodeId[.field] are dereferenced; other values are used as-is.
+  const resolvedNodeInputs = {};
+  const INPUT_REF_RE = /^\$(input|steps\.([a-zA-Z0-9_-]+))((?:\.[a-zA-Z0-9_-]+)*)$/;
+  for (const [k, v] of Object.entries(node.inputs || {})) {
+    if (typeof v !== 'string') {
+      resolvedNodeInputs[k] = v;
+      continue;
+    }
+    const m = v.match(INPUT_REF_RE);
+    if (!m) {
+      resolvedNodeInputs[k] = v;
+      continue;
+    }
+    const [, root, nodeId, pathStr] = m;
+    const path = pathStr ? pathStr.slice(1).split('.') : [];
+    let base;
+    if (root === 'input') {
+      base = triggerInputs || {};
+    } else {
+      base = normalizeDependencyOutput(outputsByNodeId[nodeId]) || {};
+    }
+    let resolved = base;
+    for (const key of path) {
+      if (resolved == null || typeof resolved !== 'object') { resolved = undefined; break; }
+      resolved = resolved[key];
+    }
+    if (resolved !== undefined) resolvedNodeInputs[k] = resolved;
+  }
+
+  return { ...(triggerInputs || {}), ...inherited, ...resolvedNodeInputs };
 }
 
 async function runWorkflowOrchestration(req, run, workflowData, fromStepId, triggerInputs) {
