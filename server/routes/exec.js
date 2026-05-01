@@ -11,6 +11,7 @@ import { clearUserRunLogs, getLatestStepRunRecord, listStepRunRecords, saveStepR
 import { CACHE_CONFIG } from '../config.js';
 import { clearUserStepCache, getCachedStepResult, saveCachedStepResult } from '../lib/stepCacheStore.js';
 import { wfPath } from '../lib/utils.js';
+import { runCustomStep } from '../lib/customStepRunner.js';
 
 const router = express.Router();
 const workflowRuns = new Map();
@@ -386,7 +387,7 @@ async function executeResolvedStep(req, res, { step, inputs, context }) {
     return;
   }
 
-  if (wsType === 'api' || wsType === 'webpage' || wsType === 'tool') {
+  if (wsType === 'api' || wsType === 'webpage' || wsType === 'tool' || wsType === 'custom') {
     // Synchronous HTTP
     try {
       let cacheHit = false;
@@ -425,8 +426,20 @@ async function executeResolvedStep(req, res, { step, inputs, context }) {
       }
 
       let result;
+      let agentTrace = null;
+      let agentOutcome = null;
       if (wsType === 'webpage') result = await runWebpageStep(step, inputs || {});
-      else if (wsType === 'tool') result = await runToolStep(step, inputs || {}, user);
+      else if (wsType === 'tool') {
+        const toolRun = await runToolStep(step, inputs || {}, user);
+        if (toolRun && typeof toolRun === 'object' && Object.prototype.hasOwnProperty.call(toolRun, 'result') && Array.isArray(toolRun.agentTrace)) {
+          result = toolRun.result;
+          agentTrace = toolRun.agentTrace;
+          agentOutcome = toolRun.agentOutcome || null;
+        } else {
+          result = toolRun;
+        }
+      }
+      else if (wsType === 'custom') result = await runCustomStep(step, inputs || {}, { req, user, workflowName, nodeId, runMode });
       else result = await runApiStep(step, inputs || {});
 
       if (shouldUseStepCache(wsType)) {
@@ -443,6 +456,16 @@ async function executeResolvedStep(req, res, { step, inputs, context }) {
         cacheKey = saved.key;
       }
       if (req.user?.userId) {
+        const withAgentLog = (wsType === 'tool' && Array.isArray(agentTrace))
+          ? JSON.stringify({
+            result,
+            agent_mode_log: {
+              outcome: agentOutcome || 'unknown',
+              note: 'Outcome may be pure LLM text/JSON when no MCP tool call is made.',
+              turns: agentTrace
+            }
+          }, null, 2)
+          : JSON.stringify(result, null, 2);
         await saveStepRunRecord(req.user.userId, workflowName, step.ws_name, {
           workflowName,
           nodeId,
@@ -451,7 +474,7 @@ async function executeResolvedStep(req, res, { step, inputs, context }) {
           runMode,
           inputs: inputs || {},
           status: 'done',
-          logOutput: JSON.stringify(result, null, 2),
+          logOutput: withAgentLog,
           output: result,
           prompt: '',
           callerIp,
@@ -588,6 +611,7 @@ async function executeStepForWorkflowRun(step, inputs, req, user, executionOptio
   if (wsType === 'webpage') result = await runWebpageStep(step, inputs || {}, executionOptions);
   else if (wsType === 'tool') result = await runToolStep(step, inputs || {}, user, executionOptions);
   else if (wsType === 'api') result = await runApiStep(step, inputs || {}, executionOptions);
+  else if (wsType === 'custom') result = await runCustomStep(step, inputs || {}, executionOptions);
   else throw new Error(`ws_type "${wsType}" not supported in workflow run`);
 
   if (shouldUseStepCache(wsType)) {
@@ -624,7 +648,19 @@ function buildInputsFromDependencies(node, byId, outputsByNodeId, triggerInputs)
   };
 
   const normalizeDependencyOutput = (depOutput) => {
-    if (depOutput && typeof depOutput === 'object' && !Array.isArray(depOutput)) return depOutput;
+    // Primary case: direct object output from previous step.
+    if (depOutput && typeof depOutput === 'object' && !Array.isArray(depOutput)) {
+      // Compatibility: some runners wrap payloads in { result }, { parsed } or { output }.
+      const candidates = [depOutput, depOutput.result, depOutput.parsed, depOutput.output];
+      for (const candidate of candidates) {
+        if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) return candidate;
+        const parsed = parseJsonObjectFromString(candidate);
+        if (parsed) return parsed;
+      }
+      return null;
+    }
+
+    // Fallback: textual JSON payload.
     return parseJsonObjectFromString(depOutput);
   };
 
