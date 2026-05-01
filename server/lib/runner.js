@@ -778,19 +778,22 @@ async function runAgentToolStep(step, inputs, user, executionOptions = {}) {
 
   const mcpToolsUsed = agentTrace.flatMap(t => (t.tool_calls || []).map(c => c.name));
 
+  const attachAgentMeta = (payload, outcome) => {
+    if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
+      return { ...payload, agentTrace, agentOutcome: outcome };
+    }
+    return { output: payload, agentTrace, agentOutcome: outcome };
+  };
+
   if (lastToolResult !== null && lastToolResult !== undefined) {
     const formatted = await formatToolResultWithLlm(lastToolResult, step, user, mcpToolsUsed);
-    return { result: formatted, agentTrace, agentOutcome: 'tool_result' };
+    return attachAgentMeta(formatted, 'tool_result');
   }
   let parsedText = null;
   try { parsedText = JSON.parse(lastAssistantText); } catch { parsedText = null; }
   const rawForFormat = parsedText ?? lastAssistantText ?? null;
   const formatted = await formatToolResultWithLlm(rawForFormat, step, user, mcpToolsUsed);
-  return {
-    result: formatted,
-    agentTrace,
-    agentOutcome: parsedText ? 'llm_text_json' : 'llm_text_raw'
-  };
+  return attachAgentMeta(formatted, parsedText ? 'llm_text_json' : 'llm_text_raw');
 }
 
 export async function runToolStep(step, inputs, user, executionOptions = {}) {
