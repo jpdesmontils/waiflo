@@ -61,10 +61,15 @@ export class OpenAIProvider extends cLLM {
     const openaiMessages = this._toOpenAIMessages(system, messages);
     console.log(`[DEBUG][OpenAI.callWithTools] model=${model || this._defaultModel} tools=${openaiTools.map(t => t.function.name).join(',')} messages=${openaiMessages.length} maxTokens=${maxTokens}`);
 
+    const effectiveModel = model || this._defaultModel;
+    // Reasoning models (o1, o3, o4-*) require max_completion_tokens instead of max_tokens.
+    const isReasoningModel = /^o\d/.test(effectiveModel);
+    const tokenParam = isReasoningModel ? { max_completion_tokens: maxTokens } : { max_tokens: maxTokens };
+
     const response = await this._client.chat.completions.create({
-      model: model || this._defaultModel,
+      model: effectiveModel,
       temperature,
-      max_tokens: maxTokens,
+      ...tokenParam,
       tools: openaiTools,
       tool_choice: 'auto',
       messages: openaiMessages,
@@ -103,10 +108,14 @@ export class OpenAIProvider extends cLLM {
       content: effectiveImageUrls.length ? userContent : userPrompt
     });
 
+    const effectiveModel = model || this._defaultModel;
+    const isReasoningModel = /^o\d/.test(effectiveModel);
+    const tokenParam = isReasoningModel ? { max_completion_tokens: maxTokens } : { max_tokens: maxTokens };
+
     const streamObj = await this._client.chat.completions.create({
-      model: model || this._defaultModel,
-      // max_tokens: maxTokens,
+      model: effectiveModel,
       temperature,
+      ...tokenParam,
       messages,
       stream: true,
     });
