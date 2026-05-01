@@ -78,16 +78,22 @@ export class AnthropicProvider extends cLLM {
     }));
   }
 
-  async callWithTools({ model, system, messages, tools, temperature = 0, maxTokens = 2048 }) {
+  async callWithTools({ model, system, messages, tools, temperature = 0, maxTokens = 2048, forceToolUse = false }) {
     const anthropicTools = this._toAnthropicTools(tools);
     const anthropicMessages = this._toAnthropicMessages(messages);
-    console.log(`[DEBUG][Anthropic.callWithTools] model=${model} tools=${anthropicTools.map(t => t.name).join(',')} messages=${anthropicMessages.length} maxTokens=${maxTokens}`);
+    console.log(`[DEBUG][Anthropic.callWithTools] model=${model} tools=${anthropicTools.map(t => t.name).join(',')} messages=${anthropicMessages.length} maxTokens=${maxTokens} forceToolUse=${forceToolUse}`);
+
+    // tool_choice: 'any' forces the model to call at least one tool.
+    // Only applied on the first turn (when there are no prior tool_result messages).
+    const hasPriorToolResults = messages.some(m => m.role === 'tool_result');
+    const toolChoice = (forceToolUse && !hasPriorToolResults) ? { type: 'any' } : { type: 'auto' };
 
     const response = await this._client.messages.create({
       model,
       max_tokens: maxTokens,
       temperature,
       system: system || '',
+      tool_choice: toolChoice,
       tools: anthropicTools,
       messages: anthropicMessages,
     });
