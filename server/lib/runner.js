@@ -611,6 +611,72 @@ const DEFAULT_AGENT_INSTRUCTIONS = (tools) => {
   return `You have access to the following tools on the connected MCP server:\n${list}\n\nCall the most appropriate tool based on the user request. If a tool call is needed, use it. Return the result without modification.`;
 };
 
+/**
+ * Post-process a raw MCP tool result through the LLM to produce output
+ * conforming to ws_output_schema. Uses ws_system_prompt (which carries the
+ * business mapping rules) as the system context, then appends the schema
+ * requirement. mcp_tools_used is injected directly from the caller — no LLM
+ * guess needed.
+ *
+ * Throws if ws_llm.provider is absent while ws_output_schema has properties,
+ * or if the LLM returns invalid JSON.
+ */
+async function formatToolResultWithLlm(rawResult, step, user, mcpToolsUsed = []) {
+  const schema = step?.ws_output_schema;
+  if (!schema?.properties || !Object.keys(schema.properties).length) return rawResult;
+
+  const llmCfg = step.ws_llm || {};
+  if (!llmCfg.provider) {
+    throw new Error(
+      `Tool step "${step.ws_name || '?'}" defines ws_output_schema but has no ws_llm.provider. ` +
+      `Add a ws_llm block to enable output schema formatting.`
+    );
+  }
+
+  const provider = llmCfg.provider.toLowerCase();
+  const meta = PROVIDER_META[provider] || PROVIDER_META.anthropic;
+  const model = llmCfg.model || meta.defaultModel;
+  const temp = llmCfg.temperature ?? 0;
+  const maxTok = llmCfg.max_tokens || 2048;
+
+  const schemaBlock =
+    `Output schema — return a JSON object that strictly conforms to this:\n` +
+    `${JSON.stringify(schema, null, 2)}\n\n` +
+    `Return ONLY valid JSON. No markdown fences, no explanation.`;
+  const system = [step.ws_system_prompt || '', schemaBlock].filter(Boolean).join('\n\n');
+
+  // Inform the LLM which fields are pre-populated so it does not fabricate them.
+  const prePopulated = {};
+  if (Object.prototype.hasOwnProperty.call(schema.properties, 'mcp_tools_used')) {
+    prePopulated.mcp_tools_used = mcpToolsUsed;
+  }
+  const preHint = Object.keys(prePopulated).length
+    ? `\n\nThe following fields are already determined — include them verbatim in your JSON:\n${JSON.stringify(prePopulated, null, 2)}`
+    : '';
+
+  const userPrompt =
+    `Full MCP tool response to format:\n${JSON.stringify(rawResult, null, 2)}${preHint}`;
+
+  let apiKey = await resolveApiKey(user, provider);
+  const llmProvider = createProvider(provider, apiKey);
+  apiKey = null;
+
+  let fullText = '';
+  for await (const chunk of llmProvider.stream({ model, system, userPrompt, temperature: temp, maxTokens: maxTok })) {
+    fullText += chunk.text || chunk.delta || chunk.content || '';
+  }
+
+  const clean = fullText.replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim();
+  const parsed = JSON.parse(clean); // explicit error — do not swallow
+
+  // Force mcp_tools_used from the known call trace, not from LLM output.
+  if (Object.prototype.hasOwnProperty.call(schema.properties, 'mcp_tools_used')) {
+    parsed.mcp_tools_used = mcpToolsUsed;
+  }
+
+  return parsed;
+}
+
 function buildAgentSystemPrompt(step, tools) {
   const wsTool = step.ws_tool || {};
   const userContext = (step.ws_system_prompt || '').trim();
@@ -710,13 +776,18 @@ async function runAgentToolStep(step, inputs, user, executionOptions = {}) {
     agentTrace.push(turnTrace);
   }
 
+  const mcpToolsUsed = agentTrace.flatMap(t => (t.tool_calls || []).map(c => c.name));
+
   if (lastToolResult !== null && lastToolResult !== undefined) {
-    return { result: lastToolResult, agentTrace, agentOutcome: 'tool_result' };
+    const formatted = await formatToolResultWithLlm(lastToolResult, step, user, mcpToolsUsed);
+    return { result: formatted, agentTrace, agentOutcome: 'tool_result' };
   }
   let parsedText = null;
   try { parsedText = JSON.parse(lastAssistantText); } catch { parsedText = null; }
+  const rawForFormat = parsedText ?? lastAssistantText ?? null;
+  const formatted = await formatToolResultWithLlm(rawForFormat, step, user, mcpToolsUsed);
   return {
-    result: parsedText ?? lastAssistantText ?? null,
+    result: formatted,
     agentTrace,
     agentOutcome: parsedText ? 'llm_text_json' : 'llm_text_raw'
   };
@@ -745,5 +816,6 @@ export async function runToolStep(step, inputs, user, executionOptions = {}) {
   const toolArgs = buildToolArguments(inputs, toolSchema);
 
   console.log(`[DEBUG][direct] calling MCP tool "${toolName}" args=${JSON.stringify(toolArgs).slice(0, 300)}`);
-  return callMcpTool(server, toolName, toolArgs, executionOptions);
+  const rawResult = await callMcpTool(server, toolName, toolArgs, executionOptions);
+  return formatToolResultWithLlm(rawResult, step, user, [toolName]);
 }
