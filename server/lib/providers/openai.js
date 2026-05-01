@@ -57,16 +57,22 @@ export class OpenAIProvider extends cLLM {
   }
 
   async callWithTools({ model, system, messages, tools, temperature = 0, maxTokens = 2048 }) {
+    const openaiTools = this._toOpenAITools(tools);
+    const openaiMessages = this._toOpenAIMessages(system, messages);
+    console.log(`[DEBUG][OpenAI.callWithTools] model=${model || this._defaultModel} tools=${openaiTools.map(t => t.function.name).join(',')} messages=${openaiMessages.length} maxTokens=${maxTokens}`);
+
     const response = await this._client.chat.completions.create({
       model: model || this._defaultModel,
       temperature,
-      tools: this._toOpenAITools(tools),
+      max_tokens: maxTokens,
+      tools: openaiTools,
       tool_choice: 'auto',
-      messages: this._toOpenAIMessages(system, messages),
+      messages: openaiMessages,
     });
 
     const choice = response.choices?.[0];
     const toolCalls = choice?.message?.tool_calls;
+    console.log(`[DEBUG][OpenAI.callWithTools] finish_reason="${choice?.finish_reason}" toolCalls=${toolCalls?.length ?? 0}`);
 
     if (toolCalls?.length > 0) {
       return {
