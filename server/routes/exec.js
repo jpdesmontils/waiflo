@@ -110,14 +110,28 @@ function validateInputValue(value, schema = {}, path = 'inputs') {
   else if (type === 'object' && (typeof value !== 'object' || Array.isArray(value))) fail('must be an object');
   else if (type === 'array' && !Array.isArray(value)) fail('must be an array');
   else if (type === 'image_url') {
-    if (typeof value !== 'string') fail('must be an URL string for type image_url');
-    else {
+    const validateOneUrl = (u) => {
+      if (typeof u !== 'string') return 'must be a URL string';
       try {
-        const parsed = new URL(value);
-        if (!['http:', 'https:'].includes(parsed.protocol)) fail('must use http:// or https://');
+        const p = new URL(u);
+        if (!['http:', 'https:'].includes(p.protocol)) return 'must use http:// or https://';
       } catch {
-        fail('must be a valid URL');
+        return 'must be a valid URL';
       }
+      return null;
+    };
+    if (Array.isArray(value)) {
+      value.forEach((item, i) => {
+        const url = (item && typeof item === 'object') ? item.url : item;
+        const err = validateOneUrl(url);
+        if (err) fail(`[${i}]: ${err}`);
+      });
+    } else if (value && typeof value === 'object' && typeof value.url === 'string') {
+      const err = validateOneUrl(value.url);
+      if (err) fail(err);
+    } else {
+      const err = validateOneUrl(value);
+      if (err) fail(err);
     }
   }
 
@@ -559,6 +573,22 @@ function getDownstreamOrderFromGraph(graph, startNodeId) {
   return order;
 }
 
+function applyOutputPassthrough(step, result, inputs) {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) return result;
+  const outProps = step?.ws_output_schema?.properties;
+  if (!outProps || typeof outProps !== 'object') return result;
+  const safeInputs = (inputs && typeof inputs === 'object') ? inputs : {};
+  const patched = { ...result };
+  let changed = false;
+  for (const key of Object.keys(outProps)) {
+    if (!(key in patched) && key in safeInputs && safeInputs[key] !== undefined) {
+      patched[key] = safeInputs[key];
+      changed = true;
+    }
+  }
+  return changed ? patched : result;
+}
+
 async function executeStepForWorkflowRun(step, inputs, req, user, executionOptions = {}) {
   const wsType = (step.ws_type || 'prompt').toLowerCase();
   const workflowName = req?.workflowNameForRun || 'ad-hoc';
@@ -589,7 +619,8 @@ async function executeStepForWorkflowRun(step, inputs, req, user, executionOptio
     };
     const promptRun = await runPromptStep(step, inputs || {}, user, fakeReq, fakeRes);
     if (promptRun?.error) throw new Error(promptRun.error);
-    const result = promptRun?.parsed || promptRun?.fullText || '';
+    const rawResult = promptRun?.parsed || promptRun?.fullText || '';
+    const result = applyOutputPassthrough(step, rawResult, inputs);
     if (shouldUseStepCache(wsType)) {
       await saveCachedStepResult({
         userId,
@@ -611,6 +642,8 @@ async function executeStepForWorkflowRun(step, inputs, req, user, executionOptio
   else if (wsType === 'api') result = await runApiStep(step, inputs || {}, executionOptions);
   else if (wsType === 'custom') result = await runCustomStep(step, inputs || {}, executionOptions);
   else throw new Error(`ws_type "${wsType}" not supported in workflow run`);
+
+  result = applyOutputPassthrough(step, result, inputs);
 
   if (shouldUseStepCache(wsType)) {
     await saveCachedStepResult({
