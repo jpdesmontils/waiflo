@@ -56,15 +56,12 @@ export class OpenAIProvider extends cLLM {
     }));
   }
 
-  async callWithTools({ model, system, messages, tools, temperature = 0, maxTokens = 2048, forceToolUse = false }) {
+  async callWithTools({ model, system, messages, tools, temperature = 0, forceToolUse = false }) {
     const openaiTools = this._toOpenAITools(tools);
     const openaiMessages = this._toOpenAIMessages(system, messages);
-    console.log(`[DEBUG][OpenAI.callWithTools] model=${model || this._defaultModel} tools=${openaiTools.map(t => t.function.name).join(',')} messages=${openaiMessages.length} maxTokens=${maxTokens} forceToolUse=${forceToolUse}`);
+    console.log(`[DEBUG][OpenAI.callWithTools] model=${model || this._defaultModel} tools=${openaiTools.map(t => t.function.name).join(',')} messages=${openaiMessages.length} forceToolUse=${forceToolUse}`);
 
     const effectiveModel = model || this._defaultModel;
-    // Reasoning models (o1, o3, o4-*) require max_completion_tokens instead of max_tokens.
-    const isReasoningModel = /^o\d/.test(effectiveModel);
-    const tokenParam = isReasoningModel ? { max_completion_tokens: maxTokens } : { max_tokens: maxTokens };
 
     // 'required' forces the model to call at least one tool; only on first turn.
     const hasPriorToolResults = messages.some(m => m.role === 'tool_result');
@@ -73,7 +70,6 @@ export class OpenAIProvider extends cLLM {
     const response = await this._client.chat.completions.create({
       model: effectiveModel,
       temperature,
-      ...tokenParam,
       tools: openaiTools,
       tool_choice: toolChoice,
       messages: openaiMessages,
@@ -97,7 +93,7 @@ export class OpenAIProvider extends cLLM {
     return { type: 'text', text: choice?.message?.content || '' };
   }
 
-  async *stream({ model, system, userPrompt, imageUrls = [], temperature = 0, maxTokens = 2048 }) {
+  async *stream({ model, system, userPrompt, imageUrls = [], temperature = 0 }) {
     const messages = [];
     if (system) messages.push({ role: 'system', content: system });
 
@@ -113,13 +109,10 @@ export class OpenAIProvider extends cLLM {
     });
 
     const effectiveModel = model || this._defaultModel;
-    const isReasoningModel = /^o\d/.test(effectiveModel);
-    const tokenParam = isReasoningModel ? { max_completion_tokens: maxTokens } : { max_tokens: maxTokens };
 
     const streamObj = await this._client.chat.completions.create({
       model: effectiveModel,
       temperature,
-      ...tokenParam,
       messages,
       stream: true,
     });
