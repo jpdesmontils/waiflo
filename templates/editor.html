@@ -225,6 +225,13 @@
                   <div class="form-label">Agent instructions (optionnel)</div>
                   <textarea class="form-textarea" id="f-tool-agent-instructions" placeholder="Instructions de sélection/exécution tool. Si vide, la consigne par défaut sera utilisée."></textarea>
                 </div>
+                <div class="form-section" id="tool-agent-force-section" style="display:none">
+                  <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+                    <input type="checkbox" id="f-tool-force-tool-use" />
+                    <span class="form-label" style="margin:0">Forcer l'appel outil</span>
+                  </label>
+                  <div class="form-hint">Si coché, le LLM est contraint d'appeler un outil au 1er tour (tool_choice=any/required). Évite que le modèle réponde depuis sa connaissance interne.</div>
+                </div>
                 <div class="form-hint">Le serveur MCP est configuré dans Paramètres → Configuration MCP.</div>
               </div>
             </div>

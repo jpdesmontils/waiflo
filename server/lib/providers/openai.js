@@ -56,17 +56,26 @@ export class OpenAIProvider extends cLLM {
     }));
   }
 
-  async callWithTools({ model, system, messages, tools, temperature = 0, maxTokens = 2048 }) {
+  async callWithTools({ model, system, messages, tools, temperature = 0, maxTokens = 2048, forceToolUse = false }) {
     const openaiTools = this._toOpenAITools(tools);
     const openaiMessages = this._toOpenAIMessages(system, messages);
-    console.log(`[DEBUG][OpenAI.callWithTools] model=${model || this._defaultModel} tools=${openaiTools.map(t => t.function.name).join(',')} messages=${openaiMessages.length} maxTokens=${maxTokens}`);
+    console.log(`[DEBUG][OpenAI.callWithTools] model=${model || this._defaultModel} tools=${openaiTools.map(t => t.function.name).join(',')} messages=${openaiMessages.length} maxTokens=${maxTokens} forceToolUse=${forceToolUse}`);
+
+    const effectiveModel = model || this._defaultModel;
+    // Reasoning models (o1, o3, o4-*) require max_completion_tokens instead of max_tokens.
+    const isReasoningModel = /^o\d/.test(effectiveModel);
+    const tokenParam = isReasoningModel ? { max_completion_tokens: maxTokens } : { max_tokens: maxTokens };
+
+    // 'required' forces the model to call at least one tool; only on first turn.
+    const hasPriorToolResults = messages.some(m => m.role === 'tool_result');
+    const toolChoice = (forceToolUse && !hasPriorToolResults) ? 'required' : 'auto';
 
     const response = await this._client.chat.completions.create({
-      model: model || this._defaultModel,
+      model: effectiveModel,
       temperature,
-      max_tokens: maxTokens,
+      ...tokenParam,
       tools: openaiTools,
-      tool_choice: 'auto',
+      tool_choice: toolChoice,
       messages: openaiMessages,
     });
 
@@ -103,10 +112,14 @@ export class OpenAIProvider extends cLLM {
       content: effectiveImageUrls.length ? userContent : userPrompt
     });
 
+    const effectiveModel = model || this._defaultModel;
+    const isReasoningModel = /^o\d/.test(effectiveModel);
+    const tokenParam = isReasoningModel ? { max_completion_tokens: maxTokens } : { max_tokens: maxTokens };
+
     const streamObj = await this._client.chat.completions.create({
-      model: model || this._defaultModel,
-      // max_tokens: maxTokens,
+      model: effectiveModel,
       temperature,
+      ...tokenParam,
       messages,
       stream: true,
     });

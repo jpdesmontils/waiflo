@@ -960,6 +960,7 @@ function populateEditor(s) {
   onToolMcpServerChange(s.ws_tool?.tool_name || '');
   document.getElementById('f-tool-max-turns').value = Math.max(1, Number(s.ws_tool?.max_turns ?? 2));
   document.getElementById('f-tool-agent-instructions').value = s.ws_tool?.agent_instructions || '';
+  document.getElementById('f-tool-force-tool-use').checked = s.ws_tool?.force_tool_use === true;
   onToolModeChange();
 
   const apiAdv = document.getElementById('api-advanced-content');
@@ -1075,6 +1076,7 @@ function collectStep() {
       const maxTurnsRaw = Number(document.getElementById('f-tool-max-turns')?.value ?? 2);
       const max_turns = Math.max(1, Number.isFinite(maxTurnsRaw) ? Math.trunc(maxTurnsRaw) : 1);
       const agent_instructions = document.getElementById('f-tool-agent-instructions')?.value || '';
+      const force_tool_use = document.getElementById('f-tool-force-tool-use')?.checked === true;
       s.ws_tool = { mcp_server_label, mode };
       if (mode === 'direct') {
         s.ws_tool.tool_name = tool_name;
@@ -1082,6 +1084,7 @@ function collectStep() {
       } else {
         s.ws_tool.max_turns = max_turns;
         if (agent_instructions.trim()) s.ws_tool.agent_instructions = agent_instructions;
+        if (force_tool_use) s.ws_tool.force_tool_use = true;
       }
     }
   }
@@ -1350,9 +1353,11 @@ function onToolModeChange() {
   const toolField = document.getElementById('f-tool-name')?.closest('.form-section');
   const maxTurnsSection = document.getElementById('tool-agent-max-turns-section');
   const agentInstructionsSection = document.getElementById('tool-agent-instructions-section');
+  const forceSection = document.getElementById('tool-agent-force-section');
   if (toolField) toolField.style.display = mode === 'direct' ? '' : 'none';
   if (maxTurnsSection) maxTurnsSection.style.display = mode === 'agent' ? '' : 'none';
   if (agentInstructionsSection) agentInstructionsSection.style.display = mode === 'agent' ? '' : 'none';
+  if (forceSection) forceSection.style.display = mode === 'agent' ? '' : 'none';
 }
 
 const _textareaFullscreenLabels = {

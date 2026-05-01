@@ -622,6 +622,8 @@ async function runAgentToolStep(step, inputs, user, executionOptions = {}) {
   const wsTool = step.ws_tool || {};
   const mcpServerLabel = String(wsTool.mcp_server_label || wsTool.server_label || '').trim();
   const maxTurns = Math.max(1, Number(wsTool.max_turns ?? 1));
+  // force_tool_use: true forces the LLM to call at least one MCP tool on the first turn.
+  const forceToolUse = wsTool.force_tool_use === true || wsTool.force_tool_use === 'true';
 
   if (!mcpServerLabel) throw new Error('tool step (agent mode) requires ws_tool.mcp_server_label');
 
@@ -647,7 +649,7 @@ async function runAgentToolStep(step, inputs, user, executionOptions = {}) {
   const tools = await resolveServerTools(server);
   if (!tools.length) throw new Error(`No tools found on MCP server "${mcpServerLabel}"`);
 
-  console.log(`[DEBUG][agent] step="${step.ws_name}" provider=${provider} model=${model} maxTurns=${maxTurns} tools=[${tools.map(t => t.name).join(', ')}]`);
+  console.log(`[DEBUG][agent] step="${step.ws_name}" provider=${provider} model=${model} maxTurns=${maxTurns} forceToolUse=${forceToolUse} tools=[${tools.map(t => t.name).join(', ')}]`);
 
   const system = buildAgentSystemPrompt(step, tools);
 
@@ -668,7 +670,7 @@ async function runAgentToolStep(step, inputs, user, executionOptions = {}) {
 
   for (let turn = 0; turn < maxTurns; turn++) {
     console.log(`[DEBUG][agent] turn=${turn + 1}/${maxTurns} — calling LLM (${provider}/${model}) with ${tools.length} tools, ${messages.length} messages`);
-    const response = await llmProvider.callWithTools({ model, system, messages, tools, temperature: temp, maxTokens: maxTok });
+    const response = await llmProvider.callWithTools({ model, system, messages, tools, temperature: temp, maxTokens: maxTok, forceToolUse });
     console.log(`[DEBUG][agent] turn=${turn + 1} LLM response type="${response?.type}" calls=${response?.calls?.length ?? 0}`);
     const turnTrace = { turn: turn + 1, llm_response_type: response?.type || 'unknown', tool_calls: [] };
 
