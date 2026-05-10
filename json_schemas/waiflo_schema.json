@@ -98,8 +98,10 @@
           "enum": [
             "prompt",
             "api",
+            "webpage",
             "transform",
-            "tool"
+            "tool",
+            "custom"
           ]
         },
         "ws_inputs_schema": {
@@ -126,12 +128,86 @@
             },
             "url": {
               "type": "string"
+            },
+            "headers": {
+              "type": "object",
+              "additionalProperties": true
+            },
+            "query": {
+              "type": "object",
+              "additionalProperties": true
+            },
+            "body": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": true
+                },
+                {
+                  "type": "array"
+                },
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "boolean"
+                }
+              ]
             }
           },
           "required": ["method", "url"]
         },
+        "ws_webpage": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string"
+            },
+            "mode": {
+              "type": "string",
+              "enum": ["http", "browser"]
+            },
+            "headers": {
+              "type": "object",
+              "additionalProperties": true
+            },
+            "waitUntil": {
+              "type": "string"
+            },
+            "timeoutMs": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "waitForSelector": {
+              "type": "string"
+            },
+            "viewport": {
+              "type": "object",
+              "properties": {
+                "width": { "type": "integer", "minimum": 1 },
+                "height": { "type": "integer", "minimum": 1 }
+              },
+              "required": ["width", "height"]
+            },
+            "userAgent": {
+              "type": "string"
+            }
+          },
+          "required": ["url"]
+        },
         "ws_tool": {
           "$ref": "#/$defs/ws_tool"
+        },
+        "ws_custom": {
+          "type": "object",
+          "properties": {
+            "class_name": {
+              "type": "string"
+            }
+          }
         },
         "ws_retry": {
           "$ref": "#/$defs/retry"
@@ -170,11 +246,33 @@
         {
           "if": {
             "properties": {
+              "ws_type": { "const": "webpage" }
+            }
+          },
+          "then": {
+            "required": [
+              "ws_webpage"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
               "ws_type": { "const": "tool" }
             }
           },
           "then": {
             "required": ["ws_tool"]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "ws_type": { "const": "custom" }
+            }
+          },
+          "then": {
+            "required": ["ws_custom"]
           }
         },
         {
@@ -221,6 +319,10 @@
         "agent_instructions": {
           "type": "string",
           "description": "Agent mode only. Overrides the generic tool-selection instructions appended to ws_system_prompt. Leave empty to use the built-in default."
+        },
+        "force_tool_use": {
+          "type": "boolean",
+          "description": "Agent mode only. If true, forces at least one tool call at the first turn."
         }
       }
     },
